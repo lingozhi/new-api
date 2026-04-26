@@ -211,7 +211,7 @@ const TwoFASetting = ({ t }) => {
       <Card className='!rounded-xl' style={{ width: '100%' }}>
         <div className='space-y-3'>
           <div className='flex items-center justify-between'>
-            <Text strong className='text-slate-700 dark:text-slate-200'>
+            <Text strong className='text-slate-700'>
               {title}
             </Text>
           </div>
@@ -222,7 +222,7 @@ const TwoFASetting = ({ t }) => {
                 <div className='flex items-center justify-between'>
                   <Text
                     code
-                    className='text-sm font-mono text-slate-700 dark:text-slate-200'
+                    className='text-sm font-mono text-slate-700'
                   >
                     {code}
                   </Text>
@@ -369,10 +369,10 @@ const TwoFASetting = ({ t }) => {
       <Card className='!rounded-xl w-full'>
         <div className='flex flex-col sm:flex-row items-start sm:justify-between gap-4'>
           <div className='flex items-start w-full sm:w-auto'>
-            <div className='w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-4 flex-shrink-0'>
+            <div className='w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mr-4 flex-shrink-0'>
               <IconShield
                 size='large'
-                className='text-slate-600 dark:text-slate-300'
+                className='text-slate-600'
               />
             </div>
             <div className='flex-1'>
@@ -493,7 +493,7 @@ const TwoFASetting = ({ t }) => {
             <div className='rounded-xl'>
               {currentStep === 0 && (
                 <div>
-                  <Paragraph className='text-gray-600 dark:text-gray-300 mb-4'>
+                  <Paragraph className='text-gray-600 mb-4'>
                     {t(
                       '使用认证器应用（如 Google Authenticator、Microsoft Authenticator）扫描下方二维码：',
                     )}
@@ -503,8 +503,8 @@ const TwoFASetting = ({ t }) => {
                       <QRCodeSVG value={setupData.qr_code_data} size={180} />
                     </div>
                   </div>
-                  <div className='bg-blue-50 dark:bg-blue-900 rounded-lg p-3'>
-                    <Text className='text-blue-800 dark:text-blue-200 text-sm'>
+                  <div className='bg-blue-50 rounded-lg p-3'>
+                    <Text className='text-blue-800 text-sm'>
                       {t('或手动输入密钥：')}
                       <Text code copyable className='ml-2'>
                         {setupData.secret}
@@ -578,11 +578,11 @@ const TwoFASetting = ({ t }) => {
             <div>
               <Text
                 strong
-                className='block mb-2 text-slate-700 dark:text-slate-200'
+                className='block mb-2 text-slate-700'
               >
                 {t('禁用后的影响：')}
               </Text>
-              <ul className='space-y-2 text-sm text-slate-600 dark:text-slate-300'>
+              <ul className='space-y-2 text-sm text-slate-600'>
                 <li className='flex items-start gap-2'>
                   <Badge dot type='warning' />
                   {t('降低您账户的安全性')}
@@ -608,7 +608,7 @@ const TwoFASetting = ({ t }) => {
               <div>
                 <Text
                   strong
-                  className='block mb-2 text-slate-700 dark:text-slate-200'
+                  className='block mb-2 text-slate-700'
                 >
                   {t('验证身份')}
                 </Text>
@@ -674,7 +674,7 @@ const TwoFASetting = ({ t }) => {
                 <div>
                   <Text
                     strong
-                    className='block mb-2 text-slate-700 dark:text-slate-200'
+                    className='block mb-2 text-slate-700'
                   >
                     {t('验证身份')}
                   </Text>
@@ -696,12 +696,12 @@ const TwoFASetting = ({ t }) => {
                   <Badge dot type='success' />
                   <Text
                     strong
-                    className='text-lg text-slate-700 dark:text-slate-200'
+                    className='text-lg text-slate-700'
                   >
                     {t('新的备用码已生成')}
                   </Text>
                 </div>
-                <Text className='text-slate-500 dark:text-slate-400 text-sm'>
+                <Text className='text-slate-500 text-sm'>
                   {t('旧的备用码已失效，请保存新的备用码')}
                 </Text>
 

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Card, Collapse, Empty } from '@douyinfe/semi-ui';
+import { Card, Collapse } from '@douyinfe/semi-ui';
 import { HelpCircle } from 'lucide-react';
 import { IconPlus, IconMinus } from '@douyinfe/semi-icons';
 import { marked } from 'marked';
@@ -27,6 +27,7 @@ import {
   IllustrationConstructionDark,
 } from '@douyinfe/semi-illustrations';
 import ScrollableContainer from '../common/ui/ScrollableContainer';
+import { PlayfulKicker, PlayfulEmpty } from '../common/ui/playful';
 
 const FaqPanel = ({
   faqData,
@@ -38,42 +39,48 @@ const FaqPanel = ({
   return (
     <Card
       {...CARD_PROPS}
-      className='shadow-sm !rounded-2xl lg:col-span-1'
+      className={`${CARD_PROPS?.className || ''} lg:col-span-1`.trim()}
       title={
-        <div className={FLEX_CENTER_GAP2}>
-          <HelpCircle size={16} />
-          {t('常见问答')}
+        <div className='flex flex-col gap-1'>
+          <PlayfulKicker tone='tertiary' icon={<HelpCircle size={12} />}>
+            {t('FAQ')}
+          </PlayfulKicker>
+          <div className='font-outfit text-lg font-extrabold text-playful-foreground'>
+            {t('常见问答')}
+          </div>
         </div>
       }
       bodyStyle={{ padding: 0 }}
     >
       <ScrollableContainer maxHeight='24rem'>
         {faqData.length > 0 ? (
-          <Collapse
-            accordion
-            expandIcon={<IconPlus />}
-            collapseIcon={<IconMinus />}
-          >
-            {faqData.map((item, index) => (
-              <Collapse.Panel
-                key={index}
-                header={item.question}
-                itemKey={index.toString()}
-              >
-                <div
-                  dangerouslySetInnerHTML={{
-                    __html: marked.parse(item.answer || ''),
-                  }}
-                />
-              </Collapse.Panel>
-            ))}
-          </Collapse>
+          <div className='playful-faq-panel p-3'>
+            <Collapse
+              accordion
+              expandIcon={<IconPlus />}
+              collapseIcon={<IconMinus />}
+            >
+              {faqData.map((item, index) => (
+                <Collapse.Panel
+                  key={index}
+                  header={item.question}
+                  itemKey={index.toString()}
+                >
+                  <div
+                    className='typography-content'
+                    dangerouslySetInnerHTML={{
+                      __html: marked.parse(item.answer || ''),
+                    }}
+                  />
+                </Collapse.Panel>
+              ))}
+            </Collapse>
+          </div>
         ) : (
-          <div className='flex justify-center items-center py-8'>
-            <Empty
-              image={<IllustrationConstruction style={ILLUSTRATION_SIZE} />}
-              darkModeImage={
-                <IllustrationConstructionDark style={ILLUSTRATION_SIZE} />
+          <div className='flex justify-center items-center py-8 px-4'>
+            <PlayfulEmpty
+              illustration={
+                <IllustrationConstruction style={ILLUSTRATION_SIZE} />
               }
               title={t('暂无常见问答')}
               description={t('请联系管理员在系统设置中配置常见问答')}

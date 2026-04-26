@@ -117,53 +117,41 @@ const UserInfoHeader = ({ t, userState }) => {
       }
     >
       {/* 当前余额和桌面版统计信息 */}
-      <div className='flex items-start justify-between gap-6'>
+      <div className='flex items-center justify-between gap-6 px-2 py-1'>
         {/* 当前余额显示 */}
-        <Badge count={t('当前余额')} position='rightTop' type='danger'>
-          <div className='text-2xl sm:text-3xl md:text-4xl font-bold tracking-wide'>
+        <div className='flex flex-col items-start'>
+          <div className='px-3 py-1 bg-playful-primary text-playful-foreground border-2 border-playful-foreground rounded-full text-xs font-bold shadow-sm mb-2 -rotate-2'>
+            {t('当前余额')}
+          </div>
+          <div className='text-4xl sm:text-5xl font-black text-playful-foreground font-outfit tracking-tighter drop-shadow-[2px_2px_0_var(--playful-secondary)]'>
             {renderQuota(userState?.user?.quota)}
           </div>
-        </Badge>
+        </div>
 
-        {/* 桌面版统计信息（Semi UI 卡片） */}
+        {/* 桌面版统计信息 */}
         <div className='hidden lg:block flex-shrink-0'>
-          <Card
-            size='small'
-            className='!rounded-xl'
-            bodyStyle={{ padding: '12px 16px' }}
-          >
-            <div className='flex items-center gap-4'>
-              <div className='flex items-center gap-2'>
-                <Coins size={16} />
-                <Typography.Text size='small' type='tertiary'>
-                  {t('历史消耗')}
-                </Typography.Text>
-                <Typography.Text size='small' type='tertiary' strong>
-                  {renderQuota(userState?.user?.used_quota)}
-                </Typography.Text>
-              </div>
-              <Divider layout='vertical' />
-              <div className='flex items-center gap-2'>
-                <BarChart2 size={16} />
-                <Typography.Text size='small' type='tertiary'>
-                  {t('请求次数')}
-                </Typography.Text>
-                <Typography.Text size='small' type='tertiary' strong>
-                  {userState.user?.request_count || 0}
-                </Typography.Text>
-              </div>
-              <Divider layout='vertical' />
-              <div className='flex items-center gap-2'>
-                <Users size={16} />
-                <Typography.Text size='small' type='tertiary'>
-                  {t('用户分组')}
-                </Typography.Text>
-                <Typography.Text size='small' type='tertiary' strong>
-                  {userState?.user?.group || t('默认')}
-                </Typography.Text>
-              </div>
+          <div className='flex items-center gap-6 bg-playful-muted border-2 border-playful-foreground px-6 py-3 rounded-xl shadow-sm'>
+            <div className='flex flex-col items-center gap-1'>
+              <div className='flex items-center gap-1 text-gray-500 text-xs font-bold uppercase tracking-wider'><Coins size={14}/> {t('历史消耗')}</div>
+              <Typography.Text size='normal' type='primary' className='font-outfit font-bold'>
+                {renderQuota(userState?.user?.used_quota)}
+              </Typography.Text>
             </div>
-          </Card>
+            <div className='w-0.5 h-8 bg-playful-border'></div>
+            <div className='flex flex-col items-center gap-1'>
+              <div className='flex items-center gap-1 text-gray-500 text-xs font-bold uppercase tracking-wider'><BarChart2 size={14}/> {t('请求次数')}</div>
+              <Typography.Text size='normal' type='primary' className='font-outfit font-bold'>
+                {userState.user?.request_count || 0}
+              </Typography.Text>
+            </div>
+            <div className='w-0.5 h-8 bg-playful-border'></div>
+            <div className='flex flex-col items-center gap-1'>
+              <div className='flex items-center gap-1 text-gray-500 text-xs font-bold uppercase tracking-wider'><Users size={14}/> {t('用户分组')}</div>
+              <Typography.Text size='normal' type='primary' className='font-outfit font-bold'>
+                {userState?.user?.group || t('默认')}
+              </Typography.Text>
+            </div>
+          </div>
         </div>
       </div>
 

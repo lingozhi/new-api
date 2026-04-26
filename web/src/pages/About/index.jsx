@@ -133,39 +133,47 @@ const About = () => {
   );
 
   return (
-    <div className='mt-[60px] px-2'>
-      {aboutLoaded && about === '' ? (
-        <div className='flex justify-center items-center h-screen p-8'>
-          <Empty
-            image={
-              <IllustrationConstruction style={{ width: 150, height: 150 }} />
-            }
-            darkModeImage={
-              <IllustrationConstructionDark
-                style={{ width: 150, height: 150 }}
+    <div className='playful-doc-shell'>
+      <div className='playful-doc-frame sticker-card bg-white w-full max-w-4xl min-h-[50vh] p-8 md:p-12'>
+        {aboutLoaded && about === '' ? (
+          <div className='flex justify-center items-center h-full'>
+            <Empty
+              image={
+                <IllustrationConstruction style={{ width: 150, height: 150 }} />
+              }
+              darkModeImage={
+                <IllustrationConstructionDark
+                  style={{ width: 150, height: 150 }}
+                />
+              }
+              description={t('管理员暂时未设置任何关于内容')}
+              style={emptyStyle}
+            >
+              {customDescription}
+            </Empty>
+          </div>
+        ) : (
+          <>
+            {about.startsWith('https://') ? (
+              <iframe
+                src={about}
+                style={{ width: '100%', height: '100vh', border: 'none' }}
               />
-            }
-            description={t('管理员暂时未设置任何关于内容')}
-            style={emptyStyle}
-          >
-            {customDescription}
-          </Empty>
-        </div>
-      ) : (
-        <>
-          {about.startsWith('https://') ? (
-            <iframe
-              src={about}
-              style={{ width: '100%', height: '100vh', border: 'none' }}
-            />
-          ) : (
-            <div
-              style={{ fontSize: 'larger' }}
-              dangerouslySetInnerHTML={{ __html: about }}
-            ></div>
-          )}
-        </>
-      )}
+            ) : (
+              <>
+                <div className='playful-doc-title-wrap mb-8 text-center'>
+                  <span className='playful-kicker mb-4'>{t('About')}</span>
+                  <h1 className='playful-doc-title inline-block'>{t('关于我们')}</h1>
+                </div>
+                <div
+                  className='typography-content max-w-none'
+                  dangerouslySetInnerHTML={{ __html: about }}
+                ></div>
+              </>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 };

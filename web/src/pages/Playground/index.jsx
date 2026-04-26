@@ -459,16 +459,38 @@ const Playground = () => {
 
   return (
     <PlaygroundProvider value={playgroundContextValue}>
-      <div className='h-full'>
-        <Layout className='h-full bg-transparent flex flex-col md:flex-row'>
+      <div className='playful-playground-shell h-full px-2 pb-6 pt-3 md:px-4'>
+        <div className='playful-playground-frame mx-auto flex h-full max-w-[1800px] flex-col'>
+          <section className='playful-console-hero mb-4'>
+            <div className='playful-console-hero-copy'>
+              <span className='playful-kicker mb-3'>Prompt Lab</span>
+              <h1 className='playful-console-title'>{t('操练场')}</h1>
+              <p className='playful-console-subtitle'>
+                {t('在一个更清晰的实验台里调模型、看请求体、回放对话和验证参数。')}
+              </p>
+            </div>
+            <div className='playful-console-badges'>
+              <div className='playful-console-badge bg-playful-tertiary'>
+                <span>{t('多模型试验')}</span>
+              </div>
+              <div className='playful-console-badge bg-playful-secondary text-white'>
+                <span>{t('调试可视化')}</span>
+              </div>
+              <div className='playful-console-badge bg-playful-quaternary'>
+                <span>{t('配置复用')}</span>
+              </div>
+            </div>
+          </section>
+          <div className='playful-playground-workspace flex-1 overflow-hidden'>
+            <Layout className='h-full bg-transparent flex flex-col md:flex-row'>
           {(showSettings || !isMobile) && (
             <Layout.Sider
               className={`
-              bg-transparent border-r-0 flex-shrink-0 overflow-auto mt-[60px]
+              bg-transparent border-r-0 flex-shrink-0 overflow-auto
               ${
                 isMobile
-                  ? 'fixed top-0 left-0 right-0 bottom-0 z-[1000] w-full h-auto bg-white shadow-lg'
-                  : 'relative z-[1] w-80 h-[calc(100vh-66px)]'
+                  ? 'fixed top-0 left-0 right-0 bottom-0 z-[1000] w-full h-auto bg-white shadow-lg mt-0'
+                  : 'relative z-[1] w-80 h-full'
               }
             `}
               width={isMobile ? '100%' : 320}
@@ -497,7 +519,7 @@ const Playground = () => {
           )}
 
           <Layout.Content className='relative flex-1 overflow-hidden'>
-            <div className='overflow-hidden flex flex-col lg:flex-row h-[calc(100vh-66px)] mt-[60px]'>
+            <div className='overflow-hidden flex flex-col lg:flex-row h-full'>
               <div className='flex-1 flex flex-col'>
                 <ChatArea
                   chatRef={chatRef}
@@ -534,7 +556,7 @@ const Playground = () => {
 
             {/* 调试面板 - 移动端覆盖层 */}
             {showDebugPanel && isMobile && (
-              <div className='fixed top-0 left-0 right-0 bottom-0 z-[1000] bg-white overflow-auto shadow-lg'>
+              <div className='fixed top-0 left-0 right-0 bottom-0 z-[1001] bg-white overflow-auto shadow-lg'>
                 <OptimizedDebugPanel
                   debugData={debugData}
                   activeDebugTab={activeDebugTab}
@@ -557,6 +579,8 @@ const Playground = () => {
             />
           </Layout.Content>
         </Layout>
+          </div>
+        </div>
       </div>
     </PlaygroundProvider>
   );

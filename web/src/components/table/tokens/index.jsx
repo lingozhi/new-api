@@ -393,6 +393,7 @@ function TokensPage() {
 
       <CardPro
         type='type1'
+        className='playful-card-pro'
         descriptionArea={
           <TokensDescription
             compactMode={compactMode}
@@ -401,25 +402,27 @@ function TokensPage() {
           />
         }
         actionsArea={
-          <div className='flex flex-col md:flex-row justify-between items-center gap-2 w-full'>
-            <TokensActions
-              selectedKeys={selectedKeys}
-              setEditingToken={setEditingToken}
-              setShowEdit={setShowEdit}
-              batchCopyTokens={batchCopyTokens}
-              batchDeleteTokens={batchDeleteTokens}
-              t={t}
-            />
-
-            <div className='w-full md:w-full lg:w-auto order-1 md:order-2'>
-              <TokensFilters
-                formInitValues={formInitValues}
-                setFormApi={setFormApi}
-                searchTokens={searchTokens}
-                loading={loading}
-                searching={searching}
+          <div className='playful-token-card-toolbar flex flex-col gap-3'>
+            <div className='playful-token-card-toolbar-main flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between'>
+              <TokensActions
+                selectedKeys={selectedKeys}
+                setEditingToken={setEditingToken}
+                setShowEdit={setShowEdit}
+                batchCopyTokens={batchCopyTokens}
+                batchDeleteTokens={batchDeleteTokens}
                 t={t}
               />
+
+              <div className='w-full lg:max-w-[34rem] lg:flex-1'>
+                <TokensFilters
+                  formInitValues={formInitValues}
+                  setFormApi={setFormApi}
+                  searchTokens={searchTokens}
+                  loading={loading}
+                  searching={searching}
+                  t={t}
+                />
+              </div>
             </div>
           </div>
         }

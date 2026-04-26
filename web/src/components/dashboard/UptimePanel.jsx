@@ -18,21 +18,19 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import {
-  Card,
-  Button,
-  Spin,
-  Tabs,
-  TabPane,
-  Tag,
-  Empty,
-} from '@douyinfe/semi-ui';
+import { Card, Spin, Tabs, TabPane } from '@douyinfe/semi-ui';
 import { Gauge, RefreshCw } from 'lucide-react';
 import {
   IllustrationConstruction,
   IllustrationConstructionDark,
 } from '@douyinfe/semi-illustrations';
 import ScrollableContainer from '../common/ui/ScrollableContainer';
+import {
+  PlayfulKicker,
+  PlayfulTag,
+  PlayfulEmpty,
+  StickerButton,
+} from '../common/ui/playful';
 
 const UptimePanel = ({
   uptimeData,
@@ -49,27 +47,28 @@ const UptimePanel = ({
   return (
     <Card
       {...CARD_PROPS}
-      className='shadow-sm !rounded-2xl lg:col-span-1'
+      className={`${CARD_PROPS?.className || ''} lg:col-span-1`.trim()}
       title={
         <div className='flex items-center justify-between w-full gap-2'>
-          <div className='flex items-center gap-2'>
-            <Gauge size={16} />
-            {t('服务可用性')}
+          <div className='flex flex-col gap-1'>
+            <PlayfulKicker tone='mint' icon={<Gauge size={12} />}>
+              {t('Uptime')}
+            </PlayfulKicker>
+            <div className='font-outfit text-lg font-extrabold text-playful-foreground'>
+              {t('服务可用性')}
+            </div>
           </div>
-          <Button
+          <StickerButton
+            variant='secondary'
+            size='sm'
             icon={<RefreshCw size={14} />}
             onClick={loadUptimeData}
             loading={uptimeLoading}
-            size='small'
-            theme='borderless'
-            type='tertiary'
-            className='text-gray-500 hover:text-blue-500 hover:bg-blue-50 !rounded-full'
           />
         </div>
       }
       bodyStyle={{ padding: 0 }}
     >
-      {/* 内容区域 */}
       <div className='relative'>
         <Spin spinning={uptimeLoading}>
           {uptimeData.length > 0 ? (
@@ -79,11 +78,12 @@ const UptimePanel = ({
               </ScrollableContainer>
             ) : (
               <Tabs
-                type='card'
+                type='button'
                 collapsible
                 activeKey={activeUptimeTab}
                 onChange={setActiveUptimeTab}
                 size='small'
+                className='playful-charts-panel'
               >
                 {uptimeData.map((group, groupIdx) => (
                   <TabPane
@@ -91,17 +91,16 @@ const UptimePanel = ({
                       <span className='flex items-center gap-2'>
                         <Gauge size={14} />
                         {group.categoryName}
-                        <Tag
-                          color={
+                        <PlayfulTag
+                          tone={
                             activeUptimeTab === group.categoryName
-                              ? 'red'
-                              : 'grey'
+                              ? 'pink'
+                              : 'muted'
                           }
-                          size='small'
-                          shape='circle'
+                          size='sm'
                         >
                           {group.monitors ? group.monitors.length : 0}
-                        </Tag>
+                        </PlayfulTag>
                       </span>
                     }
                     itemKey={group.categoryName}
@@ -115,11 +114,10 @@ const UptimePanel = ({
               </Tabs>
             )
           ) : (
-            <div className='flex justify-center items-center py-8'>
-              <Empty
-                image={<IllustrationConstruction style={ILLUSTRATION_SIZE} />}
-                darkModeImage={
-                  <IllustrationConstructionDark style={ILLUSTRATION_SIZE} />
+            <div className='flex justify-center items-center py-8 px-4'>
+              <PlayfulEmpty
+                illustration={
+                  <IllustrationConstruction style={ILLUSTRATION_SIZE} />
                 }
                 title={t('暂无监控数据')}
                 description={t('请联系管理员在系统设置中配置Uptime')}
@@ -129,17 +127,18 @@ const UptimePanel = ({
         </Spin>
       </div>
 
-      {/* 图例 */}
       {uptimeData.length > 0 && (
-        <div className='p-3 bg-gray-50 rounded-b-2xl'>
-          <div className='flex flex-wrap gap-3 text-xs justify-center'>
+        <div className='playful-dashboard-legend-bar'>
+          <div className='flex flex-wrap gap-3 justify-center'>
             {uptimeLegendData.map((legend, index) => (
-              <div key={index} className='flex items-center gap-1'>
-                <div
-                  className='w-2 h-2 rounded-full'
+              <div key={index} className='flex items-center gap-1.5'>
+                <span
+                  className='playful-dashboard-legend-dot'
                   style={{ backgroundColor: legend.color }}
                 />
-                <span className='text-gray-600'>{legend.label}</span>
+                <span className='playful-dashboard-legend-label'>
+                  {legend.label}
+                </span>
               </div>
             ))}
           </div>

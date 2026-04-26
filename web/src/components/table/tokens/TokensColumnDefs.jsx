@@ -81,7 +81,7 @@ const renderStatus = (text, record, t) => {
   }
 
   return (
-    <Tag color={tagColor} shape='circle' size='small'>
+    <Tag color={tagColor} shape='circle' size='small' className='playful-status-tag'>
       {tagText}
     </Tag>
   );
@@ -97,7 +97,7 @@ const renderGroupColumn = (text, record, t, groupRatios = {}) => {
         )}
         position='top'
       >
-        <Tag color='white' shape='circle'>
+        <Tag color='white' shape='circle' className='playful-status-tag'>
           {t('智能熔断')}
           {record && record.cross_group_retry ? `(${t('跨分组')})` : ''}
         </Tag>
@@ -109,7 +109,7 @@ const renderGroupColumn = (text, record, t, groupRatios = {}) => {
     <span className='flex items-center gap-1'>
       {renderGroup(text)}
       {ratio !== undefined && (
-        <Tag size='small' color='green' shape='circle'>
+        <Tag size='small' color='green' shape='circle' className='playful-status-tag'>
           {ratio}x
         </Tag>
       )}
@@ -143,12 +143,14 @@ const renderTokenKey = (
         readOnly
         value={displayedKey}
         size='small'
+        className='playful-token-key-input'
         suffix={
           <div className='flex items-center'>
             <Button
               theme='borderless'
               size='small'
               type='tertiary'
+              className='playful-icon-button'
               icon={revealed ? <IconEyeClosed /> : <IconEyeOpened />}
               loading={loading}
               aria-label='toggle token visibility'
@@ -178,6 +180,7 @@ const renderTokenKey = (
                 theme='borderless'
                 size='small'
                 type='tertiary'
+                className='playful-icon-button'
                 icon={<IconCopy />}
                 loading={loading}
                 aria-label='copy token key'
@@ -247,7 +250,7 @@ const renderModelLimits = (text, record, t) => {
     return <AvatarGroup size='extra-extra-small'>{vendorAvatars}</AvatarGroup>;
   } else {
     return (
-      <Tag color='white' shape='circle'>
+      <Tag color='white' shape='circle' className='playful-status-tag'>
         {t('无限制')}
       </Tag>
     );
@@ -258,7 +261,7 @@ const renderModelLimits = (text, record, t) => {
 const renderAllowIps = (text, t) => {
   if (!text || text.trim() === '') {
     return (
-      <Tag color='white' shape='circle'>
+      <Tag color='white' shape='circle' className='playful-status-tag'>
         {t('无限制')}
       </Tag>
     );
@@ -273,7 +276,7 @@ const renderAllowIps = (text, t) => {
   const extraCount = ips.length - displayIps.length;
 
   const ipTags = displayIps.map((ip, idx) => (
-    <Tag key={idx} shape='circle'>
+    <Tag key={idx} shape='circle' className='playful-status-tag'>
       {ip}
     </Tag>
   ));
@@ -286,7 +289,7 @@ const renderAllowIps = (text, t) => {
         position='top'
         showArrow
       >
-        <Tag shape='circle'>{'+' + extraCount}</Tag>
+        <Tag shape='circle' className='playful-status-tag'>{'+' + extraCount}</Tag>
       </Tooltip>,
     );
   }
@@ -310,7 +313,7 @@ const renderQuotaUsage = (text, record, t) => {
     );
     return (
       <Popover content={popoverContent} position='top'>
-        <Tag color='white' shape='circle'>
+        <Tag color='white' shape='circle' className='playful-status-tag'>
           {t('无限额度')}
         </Tag>
       </Popover>
@@ -332,7 +335,7 @@ const renderQuotaUsage = (text, record, t) => {
   );
   return (
     <Popover content={popoverContent} position='top'>
-      <Tag color='white' shape='circle'>
+      <Tag color='white' shape='circle' className='playful-status-tag playful-quota-tag'>
         <div className='flex flex-col items-end'>
           <span className='text-xs leading-none'>{`${renderQuota(remain)} / ${renderQuota(total)}`}</span>
           <Progress
@@ -384,12 +387,13 @@ const renderOperations = (
   return (
     <Space wrap>
       <SplitButtonGroup
-        className='overflow-hidden'
+        className='playful-split-button-group overflow-hidden'
         aria-label={t('项目操作按钮组')}
       >
         <Button
           size='small'
           type='tertiary'
+          className='candy-btn-secondary'
           onClick={() => {
             if (chatsArray.length === 0) {
               showError(t('请联系管理员配置聊天链接'));
@@ -404,6 +408,7 @@ const renderOperations = (
         <Dropdown trigger='click' position='bottomRight' menu={chatsArray}>
           <Button
             type='tertiary'
+            className='candy-btn-secondary'
             icon={<IconTreeTriangleDown />}
             size='small'
           ></Button>
@@ -414,6 +419,7 @@ const renderOperations = (
         <Button
           type='danger'
           size='small'
+          className='playful-danger-btn'
           onClick={async () => {
             await manageToken(record.id, 'disable', record);
             await refresh();
@@ -424,6 +430,7 @@ const renderOperations = (
       ) : (
         <Button
           size='small'
+          className='candy-btn-secondary'
           onClick={async () => {
             await manageToken(record.id, 'enable', record);
             await refresh();
@@ -436,6 +443,7 @@ const renderOperations = (
       <Button
         type='tertiary'
         size='small'
+        className='candy-btn-secondary'
         onClick={() => {
           setEditingToken(record);
           setShowEdit(true);
@@ -447,6 +455,7 @@ const renderOperations = (
       <Button
         type='danger'
         size='small'
+        className='playful-danger-btn'
         onClick={() => {
           Modal.confirm({
             title: t('确定是否要删除此令牌？'),

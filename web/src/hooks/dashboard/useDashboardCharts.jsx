@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useState, useCallback, useEffect } from 'react';
 import { initVChartSemiTheme } from '@visactor/vchart-semi-theme';
+import { registerPlayfulVChartTheme } from '../../helpers/vchartTheme';
 import {
   modelColorMap,
   renderNumber,
@@ -556,6 +557,8 @@ export const useDashboardCharts = (
     initVChartSemiTheme({
       isWatchingThemeSwitch: true,
     });
+    // Playful theme runs after Semi so it wins as the active theme.
+    registerPlayfulVChartTheme();
   }, []);
 
   return {

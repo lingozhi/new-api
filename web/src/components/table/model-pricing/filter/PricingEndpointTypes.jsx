@@ -75,14 +75,11 @@ const PricingEndpointTypes = ({
     {
       value: 'all',
       label: t('全部端点'),
-      tagCount: getEndpointTypeCount('all'),
     },
     ...availableEndpointTypes.map((endpointType) => {
-      const count = getEndpointTypeCount(endpointType);
       return {
         value: endpointType,
         label: getEndpointTypeLabel(endpointType),
-        tagCount: count,
       };
     }),
   ];

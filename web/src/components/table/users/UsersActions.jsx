@@ -28,7 +28,7 @@ const UsersActions = ({ setShowAddUser, t }) => {
 
   return (
     <div className='flex gap-2 w-full md:w-auto order-2 md:order-1'>
-      <Button className='w-full md:w-auto' onClick={handleAddUser} size='small'>
+      <Button className='candy-btn w-full md:w-auto' type='primary' onClick={handleAddUser} size='small'>
         {t('添加用户')}
       </Button>
     </div>

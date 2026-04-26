@@ -66,11 +66,11 @@ const ChatPage = () => {
       allow='camera;microphone'
     />
   ) : (
-    <div className='fixed inset-0 w-screen h-screen flex items-center justify-center bg-white/80 z-[1000] mt-[60px]'>
-      <div className='flex flex-col items-center'>
+    <div className='playful-console-shell playful-console-shell--dense flex min-h-[calc(100vh-60px)] items-center justify-center'>
+      <div className='playful-console-frame mx-auto flex w-full max-w-[720px] flex-col items-center justify-center gap-2 text-center'>
         <Spin size='large' spinning={true} tip={null} />
         <span
-          className='whitespace-nowrap mt-2 text-center'
+          className='mt-2 whitespace-nowrap text-center'
           style={{ color: 'var(--semi-color-primary)' }}
         >
           {t('正在跳转...')}

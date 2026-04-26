@@ -193,23 +193,51 @@ const Setting = () => {
     }
   }, [location.search]);
   return (
-    <div className='mt-[60px] px-2'>
-      <Layout>
-        <Layout.Content>
-          <Tabs
-            type='card'
-            collapsible
-            activeKey={tabActiveKey}
-            onChange={(key) => onChangeTab(key)}
-          >
-            {panes.map((pane) => (
-              <TabPane itemKey={pane.itemKey} tab={pane.tab} key={pane.itemKey}>
-                {tabActiveKey === pane.itemKey && pane.content}
-              </TabPane>
-            ))}
-          </Tabs>
-        </Layout.Content>
-      </Layout>
+    <div className='playful-settings-shell'>
+      <div className='playful-settings-frame mx-auto max-w-[1800px]'>
+        <section className='playful-console-hero mb-4'>
+          <div className='playful-console-hero-copy'>
+            <span className='playful-kicker mb-3'>Control Deck</span>
+            <h1 className='playful-console-title'>{t('系统设置')}</h1>
+            <p className='playful-console-subtitle'>
+              {t('把运营、仪表盘、模型、支付与性能配置集中到统一的控制台工作区。')}
+            </p>
+          </div>
+          <div className='playful-console-badges'>
+            <div className='playful-console-badge bg-playful-tertiary'>
+              <Settings size={16} strokeWidth={2.4} />
+              <span>{t('运营规则')}</span>
+            </div>
+            <div className='playful-console-badge bg-playful-secondary text-white'>
+              <Activity size={16} strokeWidth={2.4} />
+              <span>{t('性能巡检')}</span>
+            </div>
+            <div className='playful-console-badge bg-playful-quaternary'>
+              <Shapes size={16} strokeWidth={2.4} />
+              <span>{t('模型配置')}</span>
+            </div>
+          </div>
+        </section>
+        <Layout>
+          <Layout.Content>
+            <div className='playful-settings-tabs-shell'>
+              <Tabs
+                type='card'
+                collapsible
+                activeKey={tabActiveKey}
+                onChange={(key) => onChangeTab(key)}
+                className='playful-settings-tabs'
+              >
+                {panes.map((pane) => (
+                  <TabPane itemKey={pane.itemKey} tab={pane.tab} key={pane.itemKey}>
+                    {tabActiveKey === pane.itemKey && pane.content}
+                  </TabPane>
+                ))}
+              </Tabs>
+            </div>
+          </Layout.Content>
+        </Layout>
+      </div>
     </div>
   );
 };

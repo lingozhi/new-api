@@ -22,8 +22,10 @@ import SubscriptionsPage from '../../components/table/subscriptions';
 
 const Subscription = () => {
   return (
-    <div className='mt-[60px] px-2'>
-      <SubscriptionsPage />
+    <div className='playful-console-shell playful-console-shell--dense'>
+      <div className='playful-console-frame mx-auto max-w-[1800px]'>
+        <SubscriptionsPage />
+      </div>
     </div>
   );
 };

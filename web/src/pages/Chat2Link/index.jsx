@@ -36,8 +36,10 @@ const chat2page = () => {
   }
 
   return (
-    <div className='mt-[60px] px-2'>
-      <h3>正在加载，请稍候...</h3>
+    <div className='playful-console-shell playful-console-shell--dense'>
+      <div className='playful-console-frame mx-auto max-w-[1800px]'>
+        <h3>正在加载，请稍候...</h3>
+      </div>
     </div>
   );
 };

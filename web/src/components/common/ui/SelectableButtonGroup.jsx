@@ -153,11 +153,8 @@ const SelectableButtonGroup = ({
                 gap: '6px',
               }}
             >
-              {withCheckbox && (
-                <Skeleton.Title active style={{ width: 14, height: 14 }} />
-              )}
+              {withCheckbox && <Skeleton.Title style={{ width: 14, height: 14 }} />}
               <Skeleton.Title
-                active
                 style={{
                   width: `${60 + (index % 3) * 20}px`,
                   height: 14,
@@ -169,9 +166,7 @@ const SelectableButtonGroup = ({
       </Row>
     );
 
-    return (
-      <Skeleton loading={true} active placeholder={placeholder}></Skeleton>
-    );
+    return <Skeleton loading={true} placeholder={placeholder}></Skeleton>;
   };
 
   const contentElement = showSkeleton ? (
@@ -218,23 +213,27 @@ const SelectableButtonGroup = ({
 
         return (
           <Col span={getColSpan()} key={item.value}>
-            <Button
+            <button
+              type='button'
               onClick={() => onChange(item.value)}
-              theme={isActive ? 'light' : 'outline'}
-              type={isActive ? 'primary' : 'tertiary'}
-              className='sbg-button'
-              style={{ width: '100%' }}
+              className={`w-full py-1.5 px-3 rounded-lg border-2 font-bold transition-all ${
+                isActive 
+                  ? 'border-playful-foreground bg-playful-accent text-white shadow-pop -translate-y-0.5' 
+                  : 'border-playful-foreground/20 bg-playful-muted text-playful-secondary hover:border-playful-foreground hover:-translate-y-0.5 hover:shadow-pop'
+              }`}
             >
-              <div className='sbg-content'>
-                {item.icon && <span className='sbg-icon'>{item.icon}</span>}
-                <ConditionalTooltipText text={item.label} />
+              <div className='flex items-center justify-center gap-2 overflow-hidden w-full'>
+                {item.icon && <span className='flex-shrink-0 flex items-center justify-center'>{item.icon}</span>}
+                <span className='truncate'>{item.label}</span>
                 {item.tagCount !== undefined && shouldShowTags && item.tagCount !== '' && (
-                  <span className={`sbg-badge ${isActive ? 'sbg-badge-active' : ''}`}>
+                  <span className={`px-2 py-0.5 text-xs rounded-full border-2 border-playful-foreground font-black ${
+                    isActive ? 'bg-white text-playful-accent' : 'bg-playful-border text-playful-secondary'
+                  }`}>
                     {item.tagCount}
                   </span>
                 )}
               </div>
-            </Button>
+            </button>
           </Col>
         );
       })}
@@ -243,20 +242,20 @@ const SelectableButtonGroup = ({
 
   return (
     <div
-      className={`mb-8 ${containerWidth <= 400 ? 'sbg-compact' : ''}${variant ? ` sbg-variant-${variant}` : ''}`}
+      className={`playful-filter-group mb-8 ${containerWidth <= 400 ? 'sbg-compact' : ''}${variant ? ` sbg-variant-${variant}` : ''}`}
       ref={containerRef}
     >
       {title && (
-        <Divider margin='12px' align='left'>
+        <Divider margin='12px' align='left' className='playful-filter-group-title'>
           {showSkeleton ? (
-            <Skeleton.Title active style={{ width: 80, height: 14 }} />
+            <Skeleton.Title style={{ width: 80, height: 14 }} />
           ) : (
             title
           )}
         </Divider>
       )}
       {needCollapse && !showSkeleton ? (
-        <div style={{ position: 'relative' }}>
+        <div className='playful-filter-group-collapse-wrap' style={{ position: 'relative' }}>
           <Collapsible
             isOpen={isOpen}
             collapseHeight={collapseHeight}
@@ -265,7 +264,7 @@ const SelectableButtonGroup = ({
             {contentElement}
           </Collapsible>
           {isOpen ? null : (
-            <div onClick={toggle} style={{ ...linkStyle }}>
+            <div onClick={toggle} className='playful-filter-group-toggle' style={{ ...linkStyle }}>
               <IconChevronDown size='small' />
               <span>{t('展开更多')}</span>
             </div>
@@ -273,6 +272,7 @@ const SelectableButtonGroup = ({
           {isOpen && (
             <div
               onClick={toggle}
+              className='playful-filter-group-toggle'
               style={{
                 ...linkStyle,
                 position: 'static',

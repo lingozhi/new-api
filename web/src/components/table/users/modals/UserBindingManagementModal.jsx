@@ -202,7 +202,7 @@ const UserBindingManagementModal = ({
       icon: (
         <IconMail
           size='default'
-          className='text-slate-600 dark:text-slate-300'
+          className='text-slate-600'
         />
       ),
     },
@@ -215,7 +215,7 @@ const UserBindingManagementModal = ({
       icon: (
         <IconGithubLogo
           size='default'
-          className='text-slate-600 dark:text-slate-300'
+          className='text-slate-600'
         />
       ),
     },
@@ -226,7 +226,7 @@ const UserBindingManagementModal = ({
       enabled: Boolean(statusInfo.discord_oauth),
       value: getBuiltInBindingValue('discord_id'),
       icon: (
-        <SiDiscord size={20} className='text-slate-600 dark:text-slate-300' />
+        <SiDiscord size={20} className='text-slate-600' />
       ),
     },
     {
@@ -238,7 +238,7 @@ const UserBindingManagementModal = ({
       icon: (
         <IconLink
           size='default'
-          className='text-slate-600 dark:text-slate-300'
+          className='text-slate-600'
         />
       ),
     },
@@ -249,7 +249,7 @@ const UserBindingManagementModal = ({
       enabled: Boolean(statusInfo.wechat_login),
       value: getBuiltInBindingValue('wechat_id'),
       icon: (
-        <SiWechat size={20} className='text-slate-600 dark:text-slate-300' />
+        <SiWechat size={20} className='text-slate-600' />
       ),
     },
     {
@@ -259,7 +259,7 @@ const UserBindingManagementModal = ({
       enabled: Boolean(statusInfo.telegram_oauth),
       value: getBuiltInBindingValue('telegram_id'),
       icon: (
-        <SiTelegram size={20} className='text-slate-600 dark:text-slate-300' />
+        <SiTelegram size={20} className='text-slate-600' />
       ),
     },
     {
@@ -269,7 +269,7 @@ const UserBindingManagementModal = ({
       enabled: Boolean(statusInfo.linuxdo_oauth),
       value: getBuiltInBindingValue('linux_do_id'),
       icon: (
-        <SiLinux size={20} className='text-slate-600 dark:text-slate-300' />
+        <SiLinux size={20} className='text-slate-600' />
       ),
     },
   ];
@@ -381,7 +381,7 @@ const UserBindingManagementModal = ({
                   >
                     <div className='flex items-center justify-between gap-3 min-h-[92px]'>
                       <div className='flex items-center flex-1 min-w-0'>
-                        <div className='w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-3 flex-shrink-0'>
+                        <div className='w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mr-3 flex-shrink-0'>
                           {item.icon}
                         </div>
                         <div className='min-w-0 flex-1'>

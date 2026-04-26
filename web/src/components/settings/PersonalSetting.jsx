@@ -449,59 +449,57 @@ const PersonalSetting = () => {
   };
 
   return (
-    <div className='mt-[60px]'>
-      <div className='flex justify-center'>
-        <div className='w-full max-w-7xl mx-auto px-2'>
-          {/* 顶部用户信息区域 */}
-          <UserInfoHeader t={t} userState={userState} />
+    <div className='playful-console-shell playful-console-shell--dense'>
+      <div className='playful-console-frame mx-auto max-w-[1800px]'>
+        {/* 顶部用户信息区域 */}
+        <UserInfoHeader t={t} userState={userState} />
 
-          {/* 签到日历 - 仅在启用时显示 */}
-          {status?.checkin_enabled && (
-            <div className='mt-4 md:mt-6'>
-              <CheckinCalendar
-                t={t}
-                status={status}
-                turnstileEnabled={turnstileEnabled}
-                turnstileSiteKey={turnstileSiteKey}
-              />
-            </div>
-          )}
-
-          {/* 账户管理和其他设置 */}
-          <div className='grid grid-cols-1 xl:grid-cols-2 items-start gap-4 md:gap-6 mt-4 md:mt-6'>
-            {/* 左侧：账户管理设置 */}
-            <div className='flex flex-col gap-4 md:gap-6'>
-              <AccountManagement
-                t={t}
-                userState={userState}
-                status={status}
-                systemToken={systemToken}
-                setShowEmailBindModal={setShowEmailBindModal}
-                setShowWeChatBindModal={setShowWeChatBindModal}
-                generateAccessToken={generateAccessToken}
-                handleSystemTokenClick={handleSystemTokenClick}
-                setShowChangePasswordModal={setShowChangePasswordModal}
-                setShowAccountDeleteModal={setShowAccountDeleteModal}
-                passkeyStatus={passkeyStatus}
-                passkeySupported={passkeySupported}
-                passkeyRegisterLoading={passkeyRegisterLoading}
-                passkeyDeleteLoading={passkeyDeleteLoading}
-                onPasskeyRegister={handleRegisterPasskey}
-                onPasskeyDelete={handleRemovePasskey}
-              />
-
-              {/* 偏好设置（语言等） */}
-              <PreferencesSettings t={t} />
-            </div>
-
-            {/* 右侧：其他设置 */}
-            <NotificationSettings
+        {/* 签到日历 - 仅在启用时显示 */}
+        {status?.checkin_enabled && (
+          <div className='mt-4 md:mt-6'>
+            <CheckinCalendar
               t={t}
-              notificationSettings={notificationSettings}
-              handleNotificationSettingChange={handleNotificationSettingChange}
-              saveNotificationSettings={saveNotificationSettings}
+              status={status}
+              turnstileEnabled={turnstileEnabled}
+              turnstileSiteKey={turnstileSiteKey}
             />
           </div>
+        )}
+
+        {/* 账户管理和其他设置 */}
+        <div className='mt-4 grid grid-cols-1 items-start gap-4 md:mt-6 md:gap-6 xl:grid-cols-2'>
+          {/* 左侧：账户管理设置 */}
+          <div className='flex flex-col gap-4 md:gap-6'>
+            <AccountManagement
+              t={t}
+              userState={userState}
+              status={status}
+              systemToken={systemToken}
+              setShowEmailBindModal={setShowEmailBindModal}
+              setShowWeChatBindModal={setShowWeChatBindModal}
+              generateAccessToken={generateAccessToken}
+              handleSystemTokenClick={handleSystemTokenClick}
+              setShowChangePasswordModal={setShowChangePasswordModal}
+              setShowAccountDeleteModal={setShowAccountDeleteModal}
+              passkeyStatus={passkeyStatus}
+              passkeySupported={passkeySupported}
+              passkeyRegisterLoading={passkeyRegisterLoading}
+              passkeyDeleteLoading={passkeyDeleteLoading}
+              onPasskeyRegister={handleRegisterPasskey}
+              onPasskeyDelete={handleRemovePasskey}
+            />
+
+            {/* 偏好设置（语言等） */}
+            <PreferencesSettings t={t} />
+          </div>
+
+          {/* 右侧：其他设置 */}
+          <NotificationSettings
+            t={t}
+            notificationSettings={notificationSettings}
+            handleNotificationSettingChange={handleNotificationSettingChange}
+            saveNotificationSettings={saveNotificationSettings}
+          />
         </div>
       </div>
 

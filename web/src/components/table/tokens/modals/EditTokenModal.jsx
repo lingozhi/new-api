@@ -102,7 +102,8 @@ const EditTokenModal = (props) => {
     const { success, message, data } = res.data;
     if (success) {
       const categories = getModelCategories(t);
-      let localModelOptions = data.map((model) => {
+      const safeModels = Array.isArray(data) ? data : [];
+      let localModelOptions = safeModels.map((model) => {
         let icon = null;
         for (const [key, category] of Object.entries(categories)) {
           if (key !== 'all' && category.filter({ model_name: model })) {
@@ -395,7 +396,7 @@ const EditTokenModal = (props) => {
                     <Form.Switch
                       field='cross_group_retry'
                       label={t('跨分组重试')}
-                      size='default'
+                      size='medium'
                       extraText={t(
                         '开启后，当前分组渠道失败时会按顺序尝试下一个分组的渠道',
                       )}
@@ -523,7 +524,7 @@ const EditTokenModal = (props) => {
                     <Form.Switch
                       field='unlimited_quota'
                       label={t('无限额度')}
-                      size='default'
+                      size='medium'
                       extraText={t(
                         '令牌的额度仅用于限制令牌本身的最大额度使用量，实际的使用受到账户的剩余额度限制',
                       )}

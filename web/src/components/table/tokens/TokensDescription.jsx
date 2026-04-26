@@ -19,23 +19,40 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import { Typography } from '@douyinfe/semi-ui';
-import { Key } from 'lucide-react';
+import { Key, Sparkles } from 'lucide-react';
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
 
 const { Text } = Typography;
 
 const TokensDescription = ({ compactMode, setCompactMode, t }) => {
   return (
-    <div className='flex flex-col md:flex-row justify-between items-start md:items-center gap-2 w-full'>
-      <div className='flex items-center text-blue-500'>
-        <Key size={16} className='mr-2' />
-        <Text>{t('令牌管理')}</Text>
+    <div className='playful-token-page-header flex w-full flex-col gap-4 md:flex-row md:items-start md:justify-between'>
+      <div className='flex items-start gap-3'>
+        <div className='flex h-11 w-11 shrink-0 items-center justify-center rounded-full border-2 border-playful-foreground bg-playful-tertiary shadow-pop-sm'>
+          <Key size={18} color='var(--playful-foreground)' />
+        </div>
+        <div className='space-y-2'>
+          <span className='playful-kicker'>
+            <Sparkles size={14} strokeWidth={2.5} />
+            {t('访问控制')}
+          </span>
+          <div>
+            <Text className='!block !font-outfit !text-xl !font-extrabold !text-playful-foreground'>
+              {t('令牌管理')}
+            </Text>
+            <Text className='!mt-1 !block !text-sm !leading-6 !text-playful-muted-fg'>
+              {t('在这里创建、筛选并维护 API 令牌，快速完成权限分发与密钥轮换。')}
+            </Text>
+          </div>
+        </div>
       </div>
 
       <CompactModeToggle
         compactMode={compactMode}
         setCompactMode={setCompactMode}
         t={t}
+        activeLabel={t('显示完整布局')}
+        inactiveLabel={t('切换到紧凑布局')}
       />
     </div>
   );

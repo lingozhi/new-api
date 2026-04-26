@@ -45,38 +45,22 @@ const LogsActions = ({
   return (
     <div className='flex flex-col md:flex-row justify-between items-start md:items-center gap-2 w-full'>
       <Skeleton loading={needSkeleton} active placeholder={placeholder}>
-        <Space>
+        <Space wrap className='playful-stat-tag-row'>
           <Tag
             color='blue'
-            style={{
-              fontWeight: 500,
-              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-              padding: 13,
-            }}
-            className='!rounded-lg'
+            className='playful-stat-tag playful-stat-tag--violet'
           >
             {t('消耗额度')}: {renderQuota(stat.quota)}
           </Tag>
           <Tag
             color='pink'
-            style={{
-              fontWeight: 500,
-              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-              padding: 13,
-            }}
-            className='!rounded-lg'
+            className='playful-stat-tag playful-stat-tag--pink'
           >
             RPM: {stat.rpm}
           </Tag>
           <Tag
             color='white'
-            style={{
-              border: 'none',
-              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)',
-              fontWeight: 500,
-              padding: 13,
-            }}
-            className='!rounded-lg'
+            className='playful-stat-tag playful-stat-tag--amber'
           >
             TPM: {stat.tpm}
           </Tag>

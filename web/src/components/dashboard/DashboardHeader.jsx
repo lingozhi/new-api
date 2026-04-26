@@ -18,8 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Button } from '@douyinfe/semi-ui';
-import { RefreshCw, Search } from 'lucide-react';
+import { RefreshCw, Search, Sparkles } from 'lucide-react';
+import { PlayfulKicker, StickerButton } from '../common/ui/playful';
 
 const DashboardHeader = ({
   getGreeting,
@@ -29,30 +29,37 @@ const DashboardHeader = ({
   loading,
   t,
 }) => {
-  const ICON_BUTTON_CLASS = 'text-white hover:bg-opacity-80 !rounded-full';
-
   return (
-    <div className='flex items-center justify-between mb-4'>
-      <h2
-        className='text-2xl font-semibold text-gray-800 transition-opacity duration-1000 ease-in-out'
-        style={{ opacity: greetingVisible ? 1 : 0 }}
-      >
-        {getGreeting}
-      </h2>
-      <div className='flex gap-3'>
-        <Button
-          type='tertiary'
+    <div className='playful-dashboard-header'>
+      <div className='flex flex-col gap-2'>
+        <PlayfulKicker tone='tertiary' icon={<Sparkles size={12} />}>
+          {t('Dashboard')}
+        </PlayfulKicker>
+        <h2
+          className='playful-dashboard-greeting text-2xl md:text-3xl !mb-0'
+          style={{ opacity: greetingVisible ? 1 : 0 }}
+        >
+          {getGreeting}
+        </h2>
+      </div>
+      <div className='flex items-center gap-2'>
+        <StickerButton
+          variant='secondary'
+          size='sm'
           icon={<Search size={16} />}
           onClick={showSearchModal}
-          className={`bg-green-500 hover:bg-green-600 ${ICON_BUTTON_CLASS}`}
-        />
-        <Button
-          type='tertiary'
+        >
+          {t('筛选')}
+        </StickerButton>
+        <StickerButton
+          variant='primary'
+          size='sm'
           icon={<RefreshCw size={16} />}
           onClick={refresh}
           loading={loading}
-          className={`bg-blue-500 hover:bg-blue-600 ${ICON_BUTTON_CLASS}`}
-        />
+        >
+          {t('刷新')}
+        </StickerButton>
       </div>
     </div>
   );

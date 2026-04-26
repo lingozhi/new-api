@@ -21,8 +21,21 @@ import ModelsTable from '../../components/table/models';
 
 const ModelPage = () => {
   return (
-    <div className='mt-[60px] px-2'>
-      <ModelsTable />
+    <div className='playful-model-shell'>
+      <div className='playful-model-page-frame mx-auto max-w-[1600px]'>
+        <div className='playful-model-page-hero mb-4'>
+          <div>
+            <span className='playful-kicker mb-3'>Model Plaza</span>
+            <h1 className='font-outfit text-3xl font-extrabold tracking-[-0.03em] text-playful-foreground md:text-4xl'>
+              模型广场
+            </h1>
+            <p className='mt-3 max-w-3xl text-sm leading-7 text-playful-muted-fg md:text-base'>
+              统一浏览模型展示配置、供应商分布与可见性效果。左侧筛选区与主内容区将保持一致的 Playful Geometric 视觉语言。
+            </p>
+          </div>
+        </div>
+        <ModelsTable />
+      </div>
     </div>
   );
 };

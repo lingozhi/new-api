@@ -82,7 +82,6 @@ const PricingVendors = ({
       {
         value: 'all',
         label: t('全部供应商'),
-        tagCount: getVendorCount('all'),
       },
     ];
 
@@ -94,7 +93,6 @@ const PricingVendors = ({
         value: vendor,
         label: vendor,
         icon: icon ? getLobeHubIcon(icon, 16) : null,
-        tagCount: count,
       });
     });
 

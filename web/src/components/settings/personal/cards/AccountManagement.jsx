@@ -199,13 +199,13 @@ const AccountManagement = ({
           <div className='py-4'>
             <div className='grid grid-cols-1 lg:grid-cols-2 gap-4'>
               {/* 邮箱绑定 */}
-              <Card className='!rounded-xl'>
+              <Card className='!rounded-xl border-0 shadow-sm'>
                 <div className='flex items-center justify-between gap-3'>
                   <div className='flex items-center flex-1 min-w-0'>
-                    <div className='w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-3 flex-shrink-0'>
+                    <div className='w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mr-3 flex-shrink-0'>
                       <IconMail
                         size='default'
-                        className='text-slate-600 dark:text-slate-300'
+                        className='text-slate-600'
                       />
                     </div>
                     <div className='flex-1 min-w-0'>
@@ -236,13 +236,13 @@ const AccountManagement = ({
               </Card>
 
               {/* 微信绑定 */}
-              <Card className='!rounded-xl'>
+              <Card className='!rounded-xl border-0 shadow-sm'>
                 <div className='flex items-center justify-between gap-3'>
                   <div className='flex items-center flex-1 min-w-0'>
-                    <div className='w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-3 flex-shrink-0'>
+                    <div className='w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mr-3 flex-shrink-0'>
                       <SiWechat
                         size={20}
-                        className='text-slate-600 dark:text-slate-300'
+                        className='text-slate-600'
                       />
                     </div>
                     <div className='flex-1 min-w-0'>
@@ -277,13 +277,13 @@ const AccountManagement = ({
               </Card>
 
               {/* GitHub绑定 */}
-              <Card className='!rounded-xl'>
+              <Card className='!rounded-xl border-0 shadow-sm'>
                 <div className='flex items-center justify-between gap-3'>
                   <div className='flex items-center flex-1 min-w-0'>
-                    <div className='w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-3 flex-shrink-0'>
+                    <div className='w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mr-3 flex-shrink-0'>
                       <IconGithubLogo
                         size='default'
-                        className='text-slate-600 dark:text-slate-300'
+                        className='text-slate-600'
                       />
                     </div>
                     <div className='flex-1 min-w-0'>
@@ -318,13 +318,13 @@ const AccountManagement = ({
               </Card>
 
               {/* Discord绑定 */}
-              <Card className='!rounded-xl'>
+              <Card className='!rounded-xl border-0 shadow-sm'>
                 <div className='flex items-center justify-between gap-3'>
                   <div className='flex items-center flex-1 min-w-0'>
-                    <div className='w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-3 flex-shrink-0'>
+                    <div className='w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mr-3 flex-shrink-0'>
                       <SiDiscord
                         size={20}
-                        className='text-slate-600 dark:text-slate-300'
+                        className='text-slate-600'
                       />
                     </div>
                     <div className='flex-1 min-w-0'>
@@ -359,13 +359,13 @@ const AccountManagement = ({
               </Card>
 
               {/* OIDC绑定 */}
-              <Card className='!rounded-xl'>
+              <Card className='!rounded-xl border-0 shadow-sm'>
                 <div className='flex items-center justify-between gap-3'>
                   <div className='flex items-center flex-1 min-w-0'>
-                    <div className='w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-3 flex-shrink-0'>
+                    <div className='w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mr-3 flex-shrink-0'>
                       <IconShield
                         size='default'
-                        className='text-slate-600 dark:text-slate-300'
+                        className='text-slate-600'
                       />
                     </div>
                     <div className='flex-1 min-w-0'>
@@ -402,13 +402,13 @@ const AccountManagement = ({
               </Card>
 
               {/* Telegram绑定 */}
-              <Card className='!rounded-xl'>
+              <Card className='!rounded-xl border-0 shadow-sm'>
                 <div className='flex items-center justify-between gap-3'>
                   <div className='flex items-center flex-1 min-w-0'>
-                    <div className='w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-3 flex-shrink-0'>
+                    <div className='w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mr-3 flex-shrink-0'>
                       <SiTelegram
                         size={20}
-                        className='text-slate-600 dark:text-slate-300'
+                        className='text-slate-600'
                       />
                     </div>
                     <div className='flex-1 min-w-0'>
@@ -477,13 +477,13 @@ const AccountManagement = ({
               </Modal>
 
               {/* LinuxDO绑定 */}
-              <Card className='!rounded-xl'>
+              <Card className='!rounded-xl border-0 shadow-sm'>
                 <div className='flex items-center justify-between gap-3'>
                   <div className='flex items-center flex-1 min-w-0'>
-                    <div className='w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-3 flex-shrink-0'>
+                    <div className='w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mr-3 flex-shrink-0'>
                       <SiLinux
                         size={20}
-                        className='text-slate-600 dark:text-slate-300'
+                        className='text-slate-600'
                       />
                     </div>
                     <div className='flex-1 min-w-0'>
@@ -526,7 +526,7 @@ const AccountManagement = ({
                     <Card key={provider.slug} className='!rounded-xl'>
                       <div className='flex items-center justify-between gap-3'>
                         <div className='flex items-center flex-1 min-w-0'>
-                          <div className='w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center mr-3 flex-shrink-0'>
+                          <div className='w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center mr-3 flex-shrink-0'>
                             {getOAuthProviderIcon(
                               provider.icon || binding?.provider_icon || '',
                               20,
@@ -592,7 +592,7 @@ const AccountManagement = ({
             <div className='space-y-6'>
               <Space vertical className='w-full'>
                 {/* 系统访问令牌 */}
-                <Card className='!rounded-xl w-full'>
+                <Card className='!rounded-xl w-full border-0 shadow-sm'>
                   <div className='flex flex-col sm:flex-row items-start sm:justify-between gap-4'>
                     <div className='flex items-start w-full sm:w-auto'>
                       <div className='w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mr-4 flex-shrink-0'>
@@ -631,7 +631,7 @@ const AccountManagement = ({
                 </Card>
 
                 {/* 密码管理 */}
-                <Card className='!rounded-xl w-full'>
+                <Card className='!rounded-xl w-full border-0 shadow-sm'>
                   <div className='flex flex-col sm:flex-row items-start sm:justify-between gap-4'>
                     <div className='flex items-start w-full sm:w-auto'>
                       <div className='w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mr-4 flex-shrink-0'>
@@ -659,7 +659,7 @@ const AccountManagement = ({
                 </Card>
 
                 {/* Passkey 设置 */}
-                <Card className='!rounded-xl w-full'>
+                <Card className='!rounded-xl w-full border-0 shadow-sm'>
                   <div className='flex flex-col sm:flex-row items-start sm:justify-between gap-4'>
                     <div className='flex items-start w-full sm:w-auto'>
                       <div className='w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mr-4 flex-shrink-0'>
@@ -733,7 +733,7 @@ const AccountManagement = ({
                 <TwoFASetting t={t} />
 
                 {/* 危险区域 */}
-                <Card className='!rounded-xl w-full'>
+                <Card className='!rounded-xl w-full border-0 shadow-sm'>
                   <div className='flex flex-col sm:flex-row items-start sm:justify-between gap-4'>
                     <div className='flex items-start w-full sm:w-auto'>
                       <div className='w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center mr-4 flex-shrink-0'>

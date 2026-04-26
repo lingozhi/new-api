@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Card, Tag, Timeline, Empty } from '@douyinfe/semi-ui';
+import { Card, Timeline } from '@douyinfe/semi-ui';
 import { Bell } from 'lucide-react';
 import { marked } from 'marked';
 import {
@@ -26,6 +26,15 @@ import {
   IllustrationConstructionDark,
 } from '@douyinfe/semi-illustrations';
 import ScrollableContainer from '../common/ui/ScrollableContainer';
+import { PlayfulKicker, PlayfulTag, PlayfulEmpty } from '../common/ui/playful';
+
+const LEGEND_COLOR_MAP = {
+  grey: '#8b9aa7',
+  blue: '#3b82f6',
+  green: '#10b981',
+  orange: '#f59e0b',
+  red: '#ef4444',
+};
 
 const AnnouncementsPanel = ({
   announcementData,
@@ -37,38 +46,35 @@ const AnnouncementsPanel = ({
   return (
     <Card
       {...CARD_PROPS}
-      className='shadow-sm !rounded-2xl lg:col-span-2'
+      className={`${CARD_PROPS?.className || ''} lg:col-span-2`.trim()}
       title={
         <div className='flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 w-full'>
-          <div className='flex items-center gap-2'>
-            <Bell size={16} />
-            {t('系统公告')}
-            <Tag color='white' shape='circle'>
-              {t('显示最新20条')}
-            </Tag>
+          <div className='flex flex-col gap-1'>
+            <PlayfulKicker tone='pink' icon={<Bell size={12} />}>
+              {t('Announcements')}
+            </PlayfulKicker>
+            <div className='flex items-center gap-2'>
+              <div className='font-outfit text-lg font-extrabold text-playful-foreground'>
+                {t('系统公告')}
+              </div>
+              <PlayfulTag tone='neutral' size='sm'>
+                {t('显示最新20条')}
+              </PlayfulTag>
+            </div>
           </div>
-          {/* 图例 */}
-          <div className='flex flex-wrap gap-3 text-xs'>
+          <div className='flex flex-wrap gap-3'>
             {announcementLegendData.map((legend, index) => (
-              <div key={index} className='flex items-center gap-1'>
-                <div
-                  className='w-2 h-2 rounded-full'
+              <div key={index} className='flex items-center gap-1.5'>
+                <span
+                  className='playful-dashboard-legend-dot'
                   style={{
                     backgroundColor:
-                      legend.color === 'grey'
-                        ? '#8b9aa7'
-                        : legend.color === 'blue'
-                          ? '#3b82f6'
-                          : legend.color === 'green'
-                            ? '#10b981'
-                            : legend.color === 'orange'
-                              ? '#f59e0b'
-                              : legend.color === 'red'
-                                ? '#ef4444'
-                                : '#8b9aa7',
+                      LEGEND_COLOR_MAP[legend.color] || LEGEND_COLOR_MAP.grey,
                   }}
                 />
-                <span className='text-gray-600'>{legend.label}</span>
+                <span className='playful-dashboard-legend-label'>
+                  {legend.label}
+                </span>
               </div>
             ))}
           </div>
@@ -78,40 +84,40 @@ const AnnouncementsPanel = ({
     >
       <ScrollableContainer maxHeight='24rem'>
         {announcementData.length > 0 ? (
-          <Timeline mode='left'>
-            {announcementData.map((item, idx) => {
-              const htmlExtra = item.extra ? marked.parse(item.extra) : '';
-              return (
-                <Timeline.Item
-                  key={idx}
-                  type={item.type || 'default'}
-                  time={`${item.relative ? item.relative + ' ' : ''}${item.time}`}
-                  extra={
-                    item.extra ? (
-                      <div
-                        className='text-xs text-gray-500'
-                        dangerouslySetInnerHTML={{ __html: htmlExtra }}
-                      />
-                    ) : null
-                  }
-                >
-                  <div>
+          <div className='p-3'>
+            <Timeline mode='left'>
+              {announcementData.map((item, idx) => {
+                const htmlExtra = item.extra ? marked.parse(item.extra) : '';
+                return (
+                  <Timeline.Item
+                    key={idx}
+                    type={item.type || 'default'}
+                    time={`${item.relative ? item.relative + ' ' : ''}${item.time}`}
+                    extra={
+                      item.extra ? (
+                        <div
+                          className='text-xs text-playful-muted-fg'
+                          dangerouslySetInnerHTML={{ __html: htmlExtra }}
+                        />
+                      ) : null
+                    }
+                  >
                     <div
+                      className='typography-content'
                       dangerouslySetInnerHTML={{
                         __html: marked.parse(item.content || ''),
                       }}
                     />
-                  </div>
-                </Timeline.Item>
-              );
-            })}
-          </Timeline>
+                  </Timeline.Item>
+                );
+              })}
+            </Timeline>
+          </div>
         ) : (
-          <div className='flex justify-center items-center py-8'>
-            <Empty
-              image={<IllustrationConstruction style={ILLUSTRATION_SIZE} />}
-              darkModeImage={
-                <IllustrationConstructionDark style={ILLUSTRATION_SIZE} />
+          <div className='flex justify-center items-center py-8 px-4'>
+            <PlayfulEmpty
+              illustration={
+                <IllustrationConstruction style={ILLUSTRATION_SIZE} />
               }
               title={t('暂无系统公告')}
               description={t('请联系管理员在系统设置中配置公告信息')}

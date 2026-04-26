@@ -64,7 +64,7 @@ const SkeletonWrapper = ({
   const renderUserAreaSkeleton = () => {
     return (
       <div
-        className={`flex items-center p-1 rounded-full bg-semi-color-fill-0 dark:bg-semi-color-fill-1 ${className}`}
+        className={`flex items-center p-1 rounded-full bg-semi-color-fill-0 ${className}`}
       >
         <Skeleton
           loading={true}

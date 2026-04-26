@@ -53,7 +53,7 @@ const CardPro = ({
   searchArea,
   paginationArea, // 新增分页区域
   // 卡片属性
-  shadows = '',
+  shadows = 'hover',
   bordered = true,
   // 自定义样式
   style,
@@ -114,7 +114,7 @@ const CardPro = ({
 
         {/* 操作按钮和搜索表单的容器 */}
         <div
-          className={`flex flex-col gap-2 ${isMobile && !showMobileActions ? 'hidden' : ''}`}
+          className={`playful-card-pro-header-stack flex flex-col gap-3 ${isMobile && !showMobileActions ? 'hidden' : ''}`}
         >
           {/* 操作按钮区域 - 用于type1和type3 */}
           {(type === 'type1' || type === 'type3') &&
@@ -160,10 +160,10 @@ const CardPro = ({
 
   return (
     <Card
-      className={`table-scroll-card !rounded-2xl ${className}`}
+      className={`playful-card-pro table-scroll-card sticker-card bg-white ${className}`}
       title={headerContent}
       footer={footerContent}
-      shadows={shadows}
+      shadow={shadows === 'always' ? 'always' : shadows === 'hover' ? 'hover' : undefined}
       bordered={bordered}
       style={style}
       {...props}

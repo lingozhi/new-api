@@ -42,7 +42,7 @@ const PricingDisplaySettings = ({
       ? [
           {
             value: 'recharge',
-            label: t('充值价格显示'),
+            label: t('充值价格'),
           },
         ]
       : []),
@@ -93,30 +93,17 @@ const PricingDisplaySettings = ({
   };
 
   return (
-    <div>
-      <SelectableButtonGroup
-        title={t('显示设置')}
-        items={items}
-        activeValue={getActiveValues()}
-        onChange={handleChange}
-        withCheckbox
-        collapsible={false}
-        loading={loading}
-        t={t}
-      />
-
-      {supportsCurrencyDisplay && showWithRecharge && (
-        <SelectableButtonGroup
-          title={t('货币单位')}
-          items={currencyItems}
-          activeValue={currency}
-          onChange={setCurrency}
-          collapsible={false}
-          loading={loading}
-          t={t}
-        />
-      )}
-    </div>
+    <SelectableButtonGroup
+      title={t('显示设置')}
+      items={items}
+      activeValue={getActiveValues()}
+      onChange={handleChange}
+      withCheckbox
+      collapsible={false}
+      loading={loading}
+      variant='violet'
+      t={t}
+    />
   );
 };
 

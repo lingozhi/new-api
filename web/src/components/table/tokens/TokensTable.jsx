@@ -18,13 +18,16 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useMemo } from 'react';
-import { Empty } from '@douyinfe/semi-ui';
+import { Empty, Typography } from '@douyinfe/semi-ui';
 import CardTable from '../../common/ui/CardTable';
 import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
+import { SearchX } from 'lucide-react';
 import { getTokensColumns } from './TokensColumnDefs';
+
+const { Text } = Typography;
 
 const TokensTable = (tokensData) => {
   const {
@@ -118,16 +121,31 @@ const TokensTable = (tokensData) => {
       rowSelection={rowSelection}
       onRow={handleRow}
       empty={
-        <Empty
-          image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
-          darkModeImage={
-            <IllustrationNoResultDark style={{ width: 150, height: 150 }} />
-          }
-          description={t('搜索无结果')}
-          style={{ padding: 30 }}
-        />
+        <div className='playful-table-empty-state'>
+          <div className='playful-table-empty-badge'>
+            <SearchX size={20} strokeWidth={2.5} />
+            <span>{t('暂无匹配结果')}</span>
+          </div>
+          <Empty
+            image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
+            darkModeImage={
+              <IllustrationNoResultDark style={{ width: 150, height: 150 }} />
+            }
+            description={
+              <div className='space-y-2'>
+                <Text className='!block !font-outfit !text-lg !font-extrabold !text-playful-foreground'>
+                  {t('搜索无结果')}
+                </Text>
+                <Text className='!block !text-sm !leading-6 !text-playful-muted-fg'>
+                  {t('试试更换关键字、清空筛选条件，或者先创建一个新的令牌。')}
+                </Text>
+              </div>
+            }
+            style={{ padding: 30 }}
+          />
+        </div>
       }
-      className='rounded-xl overflow-hidden'
+      className='playful-data-table rounded-xl overflow-hidden'
       size='middle'
     />
   );

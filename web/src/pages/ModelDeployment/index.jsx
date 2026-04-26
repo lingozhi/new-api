@@ -41,8 +41,10 @@ const ModelDeploymentPage = () => {
       connectionError={connectionError}
       onRetry={() => testConnection()}
     >
-      <div className='mt-[60px] px-2'>
-        <DeploymentsTable />
+      <div className='playful-console-shell playful-console-shell--dense'>
+        <div className='playful-console-frame mx-auto max-w-[1800px]'>
+          <DeploymentsTable />
+        </div>
       </div>
     </DeploymentAccessGuard>
   );

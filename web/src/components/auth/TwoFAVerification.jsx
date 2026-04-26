@@ -17,17 +17,39 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { API, showError, showSuccess } from '../../helpers';
-import {
-  Button,
-  Card,
-  Divider,
-  Form,
-  Input,
-  Typography,
-} from '@douyinfe/semi-ui';
+import { Card, Form, Typography } from '@douyinfe/semi-ui';
 import React, { useState } from 'react';
+import {
+  StickerButton,
+  PlayfulFormField,
+  SquiggleDivider,
+} from '../common/ui/playful';
 
 const { Title, Text, Paragraph } = Typography;
+
+const verificationTips = [
+  '验证码每30秒更新一次',
+  '如果无法获取验证码，请使用备用码',
+  '每个备用码只能使用一次',
+];
+
+const renderTips = () => (
+  <div className='playful-auth-note p-4'>
+    <Text size='small' className='!leading-6 !text-playful-foreground'>
+      <strong>提示：</strong>
+    </Text>
+    <div className='playful-bullet-list mt-3'>
+      {verificationTips.map((tip) => (
+        <div key={tip} className='playful-bullet-item'>
+          <span className='playful-bullet-dot' aria-hidden='true' />
+          <Text size='small' className='!leading-6 !text-playful-foreground'>
+            {tip}
+          </Text>
+        </div>
+      ))}
+    </div>
+  </div>
+);
 
 const TwoFAVerification = ({ onSuccess, onBack, isModal = false }) => {
   const [loading, setLoading] = useState(false);
@@ -79,13 +101,13 @@ const TwoFAVerification = ({ onSuccess, onBack, isModal = false }) => {
 
   if (isModal) {
     return (
-      <div className='space-y-4'>
-        <Paragraph className='text-gray-600 dark:text-gray-300'>
+      <div className='space-y-4 font-jakarta text-playful-foreground'>
+        <Paragraph className='!text-playful-muted-fg !leading-7'>
           请输入认证器应用显示的验证码完成登录
         </Paragraph>
 
-        <Form onSubmit={handleSubmit}>
-          <Form.Input
+        <Form onSubmit={handleSubmit} className='playful-auth-form'>
+          <PlayfulFormField
             field='code'
             label={useBackupCode ? '备用码' : '验证码'}
             placeholder={useBackupCode ? '请输入8位备用码' : '请输入6位验证码'}
@@ -93,148 +115,119 @@ const TwoFAVerification = ({ onSuccess, onBack, isModal = false }) => {
             onChange={setVerificationCode}
             onKeyPress={handleKeyPress}
             size='large'
-            style={{ marginBottom: 16 }}
+            fieldClassName='mb-4'
             autoFocus
           />
 
-          <Button
-            htmlType='submit'
-            type='primary'
-            loading={loading}
+          <StickerButton
+            variant='primary'
             block
-            size='large'
-            style={{ marginBottom: 16 }}
+            htmlType='submit'
+            loading={loading}
+            className='!mb-4'
           >
             验证并登录
-          </Button>
+          </StickerButton>
         </Form>
 
-        <Divider />
+        <SquiggleDivider color='accent' />
 
-        <div style={{ textAlign: 'center' }}>
-          <Button
-            theme='borderless'
-            type='tertiary'
+        <div className='flex flex-wrap items-center justify-center gap-3 text-center'>
+          <StickerButton
+            variant='ghost'
+            size='sm'
             onClick={() => {
               setUseBackupCode(!useBackupCode);
               setVerificationCode('');
             }}
-            style={{ marginRight: 16, color: '#1890ff', padding: 0 }}
           >
             {useBackupCode ? '使用认证器验证码' : '使用备用码'}
-          </Button>
+          </StickerButton>
 
           {onBack && (
-            <Button
-              theme='borderless'
-              type='tertiary'
-              onClick={onBack}
-              style={{ color: '#1890ff', padding: 0 }}
-            >
+            <StickerButton variant='ghost' size='sm' onClick={onBack}>
               返回登录
-            </Button>
+            </StickerButton>
           )}
         </div>
 
-        <div className='bg-gray-50 dark:bg-gray-800 rounded-lg p-3'>
-          <Text size='small' type='secondary'>
-            <strong>提示：</strong>
-            <br />
-            • 验证码每30秒更新一次
-            <br />
-            • 如果无法获取验证码，请使用备用码
-            <br />• 每个备用码只能使用一次
-          </Text>
-        </div>
+        {renderTips()}
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        minHeight: '60vh',
-      }}
-    >
-      <Card style={{ width: 400, padding: 24 }}>
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <Title heading={3}>两步验证</Title>
-          <Paragraph type='secondary'>
-            请输入认证器应用显示的验证码完成登录
-          </Paragraph>
-        </div>
+    <div className='playful-auth-shell'>
+      <Card className='playful-auth-card'>
+        <div className='relative overflow-hidden px-6 py-8 md:px-8'>
+          <div className='playful-floating-shape playful-floating-shape--circle -left-8 top-6 h-16 w-16 bg-playful-tertiary' />
+          <div className='playful-floating-shape playful-floating-shape--blob -right-6 top-4 h-20 w-20 bg-playful-secondary' />
 
-        <Form onSubmit={handleSubmit}>
-          <Form.Input
-            field='code'
-            label={useBackupCode ? '备用码' : '验证码'}
-            placeholder={useBackupCode ? '请输入8位备用码' : '请输入6位验证码'}
-            value={verificationCode}
-            onChange={setVerificationCode}
-            onKeyPress={handleKeyPress}
-            size='large'
-            style={{ marginBottom: 16 }}
-            autoFocus
-          />
+          <div className='relative z-10 text-center'>
+            <span className='playful-kicker mb-4'>{useBackupCode ? '备用码验证' : '安全验证'}</span>
+            <Title heading={3} className='!mb-2 !font-outfit !text-3xl !font-extrabold !text-playful-foreground'>
+              两步验证
+            </Title>
+            <Paragraph className='!mb-6 !leading-7 !text-playful-muted-fg'>
+              请输入认证器应用显示的验证码完成登录
+            </Paragraph>
+          </div>
 
-          <Button
-            htmlType='submit'
-            type='primary'
-            loading={loading}
-            block
-            size='large'
-            style={{ marginBottom: 16 }}
-          >
-            验证并登录
-          </Button>
-        </Form>
+          <Form onSubmit={handleSubmit} className='playful-auth-form'>
+            <PlayfulFormField
+              field='code'
+              label={useBackupCode ? '备用码' : '验证码'}
+              placeholder={useBackupCode ? '请输入8位备用码' : '请输入6位验证码'}
+              value={verificationCode}
+              onChange={setVerificationCode}
+              onKeyPress={handleKeyPress}
+              size='large'
+              fieldClassName='mb-4'
+              autoFocus
+            />
 
-        <Divider />
-
-        <div style={{ textAlign: 'center' }}>
-          <Button
-            theme='borderless'
-            type='tertiary'
-            onClick={() => {
-              setUseBackupCode(!useBackupCode);
-              setVerificationCode('');
-            }}
-            style={{ marginRight: 16, color: '#1890ff', padding: 0 }}
-          >
-            {useBackupCode ? '使用认证器验证码' : '使用备用码'}
-          </Button>
-
-          {onBack && (
-            <Button
-              theme='borderless'
-              type='tertiary'
-              onClick={onBack}
-              style={{ color: '#1890ff', padding: 0 }}
+            <StickerButton
+              variant='primary'
+              block
+              htmlType='submit'
+              loading={loading}
+              className='!mb-4'
             >
-              返回登录
-            </Button>
-          )}
-        </div>
+              验证并登录
+            </StickerButton>
+          </Form>
 
-        <div
-          style={{
-            marginTop: 24,
-            padding: 16,
-            background: '#f6f8fa',
-            borderRadius: 6,
-          }}
-        >
-          <Text size='small' type='secondary'>
-            <strong>提示：</strong>
-            <br />
-            • 验证码每30秒更新一次
-            <br />
-            • 如果无法获取验证码，请使用备用码
-            <br />• 每个备用码只能使用一次
-          </Text>
+          <SquiggleDivider color='accent' />
+
+          <div className='mb-5 flex flex-wrap items-center justify-center gap-3 text-center'>
+            <StickerButton
+              variant='ghost'
+              size='sm'
+              onClick={() => {
+                setUseBackupCode(!useBackupCode);
+                setVerificationCode('');
+              }}
+            >
+              {useBackupCode ? '使用认证器验证码' : '使用备用码'}
+            </StickerButton>
+
+            {onBack && (
+              <StickerButton variant='ghost' size='sm' onClick={onBack}>
+                返回登录
+              </StickerButton>
+            )}
+          </div>
+
+          <div className='playful-auth-note p-4'>
+            <Text size='small' className='!leading-6 !text-playful-foreground'>
+              <strong>提示：</strong>
+              <br />
+              • 验证码每30秒更新一次
+              <br />
+              • 如果无法获取验证码，请使用备用码
+              <br />• 每个备用码只能使用一次
+            </Text>
+          </div>
         </div>
       </Card>
     </div>

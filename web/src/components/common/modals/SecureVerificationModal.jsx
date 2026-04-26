@@ -20,15 +20,12 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Modal,
-  Button,
   Input,
   Typography,
   Tabs,
   TabPane,
-  Space,
-  Spin,
 } from '@douyinfe/semi-ui';
+import { PlayfulModal, StickerButton } from '../ui/playful';
 
 /**
  * 通用安全验证模态框组件
@@ -83,45 +80,69 @@ const SecureVerificationModal = ({
   // 如果用户没有启用任何验证方式
   if (visible && !has2FA && !hasPasskey) {
     return (
-      <Modal
+      <PlayfulModal
+        tone='tertiary'
         title={title || t('安全验证')}
         visible={visible}
         onCancel={onCancel}
-        footer={<Button onClick={onCancel}>{t('确定')}</Button>}
+        footer={
+          <div className='flex justify-end'>
+            <StickerButton variant='primary' size='sm' onClick={onCancel}>
+              {t('确定')}
+            </StickerButton>
+          </div>
+        }
         width={500}
         style={{ maxWidth: '90vw' }}
       >
         <div className='text-center py-6'>
-          <div className='mb-4'>
-            <svg
-              className='w-16 h-16 text-yellow-500 mx-auto mb-4'
-              fill='currentColor'
-              viewBox='0 0 20 20'
+          <div className='mb-4 flex items-center justify-center'>
+            <div
+              className='flex items-center justify-center'
+              style={{
+                width: 72,
+                height: 72,
+                borderRadius: '9999px',
+                border: '2px solid var(--playful-foreground)',
+                background: 'var(--playful-tertiary)',
+                boxShadow: 'var(--shadow-pop-sm)',
+              }}
             >
-              <path
-                fillRule='evenodd'
-                d='M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z'
-                clipRule='evenodd'
-              />
-            </svg>
+              <svg
+                className='w-9 h-9'
+                style={{ color: 'var(--playful-foreground)' }}
+                fill='currentColor'
+                viewBox='0 0 20 20'
+              >
+                <path
+                  fillRule='evenodd'
+                  d='M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z'
+                  clipRule='evenodd'
+                />
+              </svg>
+            </div>
           </div>
-          <Typography.Title heading={4} className='mb-2'>
+          <Typography.Title
+            heading={4}
+            className='mb-2 !font-outfit !text-playful-foreground'
+          >
             {t('需要安全验证')}
           </Typography.Title>
-          <Typography.Text type='tertiary'>
+          <Typography.Text className='!text-playful-muted-fg'>
             {t('您需要先启用两步验证或 Passkey 才能查看敏感信息。')}
           </Typography.Text>
           <br />
-          <Typography.Text type='tertiary'>
+          <Typography.Text className='!text-playful-muted-fg'>
             {t('请前往个人设置 → 安全设置进行配置。')}
           </Typography.Text>
         </div>
-      </Modal>
+      </PlayfulModal>
     );
   }
 
   return (
-    <Modal
+    <PlayfulModal
+      tone='mint'
       title={title || t('安全验证')}
       visible={visible}
       onCancel={loading ? undefined : onCancel}
@@ -156,7 +177,7 @@ const SecureVerificationModal = ({
           activeKey={method}
           onChange={onMethodSwitch}
           type='line'
-          size='default'
+          size='medium'
           style={{ margin: 0 }}
         >
           {has2FA && (
@@ -207,26 +228,24 @@ const SecureVerificationModal = ({
                   {t('从认证器应用中获取验证码，或使用备用码')}
                 </Typography.Text>
 
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'flex-end',
-                    gap: '8px',
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <Button onClick={onCancel} disabled={loading}>
+                <div className='flex justify-end gap-2 flex-wrap'>
+                  <StickerButton
+                    variant='secondary'
+                    size='sm'
+                    onClick={onCancel}
+                    disabled={loading}
+                  >
                     {t('取消')}
-                  </Button>
-                  <Button
-                    theme='solid'
-                    type='primary'
+                  </StickerButton>
+                  <StickerButton
+                    variant='primary'
+                    size='sm'
                     loading={loading}
                     disabled={!code.trim() || loading}
                     onClick={() => onVerify(method, code)}
                   >
                     {t('验证')}
-                  </Button>
+                  </StickerButton>
                 </div>
               </div>
             </TabPane>
@@ -244,21 +263,23 @@ const SecureVerificationModal = ({
                 >
                   <div
                     style={{
-                      width: 56,
-                      height: 56,
+                      width: 64,
+                      height: 64,
                       margin: '0 auto 16px',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      borderRadius: '50%',
-                      background: 'var(--semi-color-primary-light-default)',
+                      borderRadius: '9999px',
+                      background: 'var(--playful-tertiary)',
+                      border: '2px solid var(--playful-foreground)',
+                      boxShadow: 'var(--shadow-pop-sm)',
                     }}
                   >
                     <svg
                       style={{
                         width: 28,
                         height: 28,
-                        color: 'var(--semi-color-primary)',
+                        color: 'var(--playful-foreground)',
                       }}
                       fill='currentColor'
                       viewBox='0 0 20 20'
@@ -272,12 +293,13 @@ const SecureVerificationModal = ({
                   </div>
                   <Typography.Title
                     heading={5}
+                    className='!font-outfit !text-playful-foreground'
                     style={{ margin: '0 0 8px', fontSize: '16px' }}
                   >
                     {t('使用 Passkey 验证')}
                   </Typography.Title>
                   <Typography.Text
-                    type='tertiary'
+                    className='!text-playful-muted-fg'
                     style={{
                       display: 'block',
                       margin: 0,
@@ -289,33 +311,31 @@ const SecureVerificationModal = ({
                   </Typography.Text>
                 </div>
 
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'flex-end',
-                    gap: '8px',
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <Button onClick={onCancel} disabled={loading}>
+                <div className='flex justify-end gap-2 flex-wrap'>
+                  <StickerButton
+                    variant='secondary'
+                    size='sm'
+                    onClick={onCancel}
+                    disabled={loading}
+                  >
                     {t('取消')}
-                  </Button>
-                  <Button
-                    theme='solid'
-                    type='primary'
+                  </StickerButton>
+                  <StickerButton
+                    variant='primary'
+                    size='sm'
                     loading={loading}
                     disabled={loading}
                     onClick={() => onVerify(method)}
                   >
                     {t('验证 Passkey')}
-                  </Button>
+                  </StickerButton>
                 </div>
               </div>
             </TabPane>
           )}
         </Tabs>
       </div>
-    </Modal>
+    </PlayfulModal>
   );
 };
 

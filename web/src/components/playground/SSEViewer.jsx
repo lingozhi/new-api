@@ -134,7 +134,7 @@ const SSEViewer = ({ sseData }) => {
   const renderSSEItem = (item) => {
     if (item.isDone) {
       return (
-        <div className='flex items-center gap-2 p-3 bg-green-50 dark:bg-green-900/20 rounded-lg'>
+        <div className='flex items-center gap-2 p-3 bg-green-50 rounded-lg'>
           <CheckCircle size={16} className='text-green-600' />
           <Typography.Text className='text-green-600 font-medium'>
             {t('流式响应完成')} [DONE]
@@ -146,13 +146,13 @@ const SSEViewer = ({ sseData }) => {
     if (item.error) {
       return (
         <div className='space-y-2'>
-          <div className='flex items-center gap-2 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg'>
+          <div className='flex items-center gap-2 p-3 bg-red-50 rounded-lg'>
             <XCircle size={16} className='text-red-600' />
             <Typography.Text className='text-red-600'>
               {t('解析错误')}: {item.error}
             </Typography.Text>
           </div>
-          <div className='p-3 bg-gray-100 dark:bg-gray-800 rounded-lg font-mono text-xs overflow-auto'>
+          <div className='p-3 bg-gray-100 rounded-lg font-mono text-xs overflow-auto'>
             <pre>{item.raw}</pre>
           </div>
         </div>
@@ -214,9 +214,9 @@ const SSEViewer = ({ sseData }) => {
   }
 
   return (
-    <div className='h-full flex flex-col bg-gray-50 dark:bg-gray-900/50 rounded-lg'>
+    <div className='h-full flex flex-col bg-gray-50 rounded-lg'>
       {/* 头部工具栏 */}
-      <div className='flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0'>
+      <div className='flex items-center justify-between p-4 border-b border-gray-200 flex-shrink-0'>
         <div className='flex items-center gap-3'>
           <Zap size={16} className='text-blue-500' />
           <Typography.Text strong>{t('SSE数据流')}</Typography.Text>
@@ -270,7 +270,7 @@ const SSEViewer = ({ sseData }) => {
           activeKey={expandedKeys}
           onChange={setExpandedKeys}
           accordion={false}
-          className='bg-white dark:bg-gray-800 rounded-lg'
+          className='bg-white rounded-lg'
         >
           {parsedSSEData.map((item) => (
             <Collapse.Panel

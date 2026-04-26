@@ -59,16 +59,16 @@ const ChannelsActions = ({
   t,
 }) => {
   return (
-    <div className='flex flex-col gap-2'>
+    <div className='playful-action-stack flex flex-col gap-3'>
       {/* 第一行：批量操作按钮 + 设置开关 */}
-      <div className='flex flex-col md:flex-row justify-between gap-2'>
+      <div className='flex flex-col md:flex-row justify-between gap-3'>
         {/* 左侧：批量操作按钮 */}
-        <div className='flex flex-wrap md:flex-nowrap items-center gap-2 w-full md:w-auto order-2 md:order-1'>
+        <div className='playful-action-cluster playful-action-cluster--dense flex flex-wrap items-center gap-2 w-full md:w-auto order-2 md:order-1'>
           <Button
             size='small'
             disabled={!enableBatchDelete}
             type='danger'
-            className='w-full md:w-auto'
+            className='playful-danger-btn w-full md:w-auto'
             onClick={() => {
               Modal.confirm({
                 title: t('确定是否要删除所选通道？'),
@@ -85,7 +85,7 @@ const ChannelsActions = ({
             disabled={!enableBatchDelete}
             type='tertiary'
             onClick={() => setShowBatchSetTag(true)}
-            className='w-full md:w-auto'
+            className='candy-btn-secondary w-full md:w-auto'
           >
             {t('批量设置标签')}
           </Button>
@@ -217,7 +217,7 @@ const ChannelsActions = ({
               size='small'
               theme='light'
               type='tertiary'
-              className='w-full md:w-auto'
+              className='candy-btn-secondary w-full md:w-auto'
             >
               {t('批量操作')}
             </Button>
@@ -231,8 +231,8 @@ const ChannelsActions = ({
         </div>
 
         {/* 右侧：设置开关区域 */}
-        <div className='flex flex-col md:flex-row items-start md:items-center gap-2 w-full md:w-auto order-1 md:order-2'>
-          <div className='flex items-center justify-between w-full md:w-auto'>
+        <div className='playful-toolbar-toggles flex flex-col md:flex-row items-start md:items-center gap-2 w-full md:w-auto order-1 md:order-2'>
+          <div className='playful-inline-toggle-card flex items-center justify-between w-full md:w-auto'>
             <Typography.Text strong className='mr-2'>
               {t('使用ID排序')}
             </Typography.Text>
@@ -264,7 +264,7 @@ const ChannelsActions = ({
             />
           </div>
 
-          <div className='flex items-center justify-between w-full md:w-auto'>
+          <div className='playful-inline-toggle-card flex items-center justify-between w-full md:w-auto'>
             <Typography.Text strong className='mr-2'>
               {t('开启批量操作')}
             </Typography.Text>
@@ -278,7 +278,7 @@ const ChannelsActions = ({
             />
           </div>
 
-          <div className='flex items-center justify-between w-full md:w-auto'>
+          <div className='playful-inline-toggle-card flex items-center justify-between w-full md:w-auto'>
             <Typography.Text strong className='mr-2'>
               {t('标签聚合模式')}
             </Typography.Text>
@@ -294,7 +294,7 @@ const ChannelsActions = ({
             />
           </div>
 
-          <div className='flex items-center justify-between w-full md:w-auto'>
+          <div className='playful-inline-toggle-card playful-inline-select-card flex items-center justify-between w-full md:w-auto'>
             <Typography.Text strong className='mr-2'>
               {t('状态筛选')}
             </Typography.Text>

@@ -21,6 +21,7 @@ import React from 'react';
 import { Card, Tabs, TabPane } from '@douyinfe/semi-ui';
 import { PieChart } from 'lucide-react';
 import { VChart } from '@visactor/react-vchart';
+import { PlayfulKicker } from '../common/ui/playful';
 
 const ChartsPanel = ({
   activeChartTab,
@@ -41,17 +42,24 @@ const ChartsPanel = ({
   return (
     <Card
       {...CARD_PROPS}
-      className={`!rounded-2xl ${hasApiInfoPanel ? 'lg:col-span-3' : ''}`}
+      className={`playful-charts-panel ${CARD_PROPS?.className || ''} ${
+        hasApiInfoPanel ? 'lg:col-span-3' : ''
+      }`.trim()}
       title={
         <div className='flex flex-col lg:flex-row lg:items-center lg:justify-between w-full gap-3'>
-          <div className={FLEX_CENTER_GAP2}>
-            <PieChart size={16} />
-            {t('模型数据分析')}
+          <div className='flex flex-col gap-1'>
+            <PlayfulKicker tone='violet' icon={<PieChart size={12} />}>
+              {t('数据分析')}
+            </PlayfulKicker>
+            <div className='font-outfit text-lg font-extrabold text-playful-foreground'>
+              {t('模型数据分析')}
+            </div>
           </div>
           <Tabs
-            type='slash'
+            type='button'
             activeKey={activeChartTab}
             onChange={setActiveChartTab}
+            className='md:ml-auto w-full md:w-auto overflow-x-auto'
           >
             <TabPane tab={<span>{t('消耗分布')}</span>} itemKey='1' />
             <TabPane tab={<span>{t('调用趋势')}</span>} itemKey='2' />
@@ -68,7 +76,7 @@ const ChartsPanel = ({
       }
       bodyStyle={{ padding: 0 }}
     >
-      <div className='h-96 p-2'>
+      <div className='h-96 p-3'>
         {activeChartTab === '1' && (
           <VChart spec={spec_line} option={CHART_CONFIG} />
         )}

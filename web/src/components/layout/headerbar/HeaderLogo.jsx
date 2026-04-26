@@ -38,17 +38,17 @@ const HeaderLogo = ({
   }
 
   return (
-    <Link to='/' className='group flex items-center gap-2'>
-      <div className='relative w-8 h-8 md:w-8 md:h-8'>
+    <Link to='/' className='group flex min-w-0 items-center gap-2'>
+      <div className='playful-logo-mark relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-[14px] bg-playful-secondary md:h-10 md:w-10 md:rounded-[16px]'>
         <SkeletonWrapper loading={isLoading || !logoLoaded} type='image' />
         <img
           src={logo}
           alt='logo'
-          className={`absolute inset-0 w-full h-full transition-all duration-200 group-hover:scale-110 rounded-full ${!isLoading && logoLoaded ? 'opacity-100' : 'opacity-0'}`}
+          className={`absolute inset-0 w-full h-full object-contain p-0.5 transition-all duration-200 ${!isLoading && logoLoaded ? 'opacity-100' : 'opacity-0'}`}
         />
       </div>
-      <div className='hidden md:flex items-center gap-2'>
-        <div className='flex items-center gap-2'>
+      <div className='hidden min-w-0 md:flex md:items-center md:gap-3'>
+        <div className='flex min-w-0 items-center gap-3'>
           <SkeletonWrapper
             loading={isLoading}
             type='title'
@@ -57,20 +57,17 @@ const HeaderLogo = ({
           >
             <Typography.Title
               heading={4}
-              className='!text-lg !font-semibold !mb-0'
+              className='!mb-0 !truncate !font-outfit !text-[1.35rem] md:!text-[1.5rem] !font-black !tracking-[-0.03em] !text-playful-foreground'
             >
               {systemName}
             </Typography.Title>
           </SkeletonWrapper>
           {(isSelfUseMode || isDemoSiteMode) && !isLoading && (
-            <Tag
-              color={isSelfUseMode ? 'purple' : 'blue'}
-              className='text-xs px-1.5 py-0.5 rounded whitespace-nowrap shadow-sm'
-              size='small'
-              shape='circle'
+            <span
+              className={`playful-header-status-tag ${isSelfUseMode ? 'bg-playful-accent text-white' : 'bg-playful-tertiary text-playful-foreground'}`}
             >
               {isSelfUseMode ? t('自用模式') : t('演示站点')}
-            </Tag>
+            </span>
           )}
         </div>
       </div>

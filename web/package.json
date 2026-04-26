@@ -44,8 +44,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "lint": "prettier . --check",
+    "lint": "prettier . --check && bun run lint:no-dark",
     "lint:fix": "prettier . --write",
+    "lint:no-dark": "node scripts/check-no-dark.mjs",
     "eslint": "bunx eslint \"**/*.{js,jsx}\" --cache",
     "eslint:fix": "bunx eslint \"**/*.{js,jsx}\" --fix --cache",
     "preview": "vite preview",

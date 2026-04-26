@@ -30,6 +30,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { Button, Card, Form, Typography, Banner } from '@douyinfe/semi-ui';
 import { IconMail, IconLock, IconCopy } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
+import { StickerButton, PlayfulFormField } from '../common/ui/playful';
 
 const { Text, Title } = Typography;
 
@@ -104,114 +105,110 @@ const PasswordResetConfirm = () => {
   }
 
   return (
-    <div className='relative overflow-hidden bg-gray-100 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8'>
-      {/* 背景模糊晕染球 */}
-      <div
-        className='blur-ball blur-ball-indigo'
-        style={{ top: '-80px', right: '-80px', transform: 'none' }}
-      />
-      <div
-        className='blur-ball blur-ball-teal'
-        style={{ top: '50%', left: '-120px' }}
-      />
-      <div className='w-full max-w-sm mt-[60px]'>
-        <div className='flex flex-col items-center'>
-          <div className='w-full max-w-md'>
-            <div className='flex items-center justify-center mb-6 gap-2'>
-              <img src={logo} alt='Logo' className='h-10 rounded-full' />
-              <Title heading={3} className='!text-gray-800'>
-                {systemName}
-              </Title>
-            </div>
+    <div className='playful-auth-page'>
+      <div className='playful-auth-decor' aria-hidden='true' />
+      <div className='playful-auth-decor-square' aria-hidden='true' />
+      <div className='playful-auth-decor-pill' aria-hidden='true'>
+        {t('Safe Reset')}
+      </div>
 
-            <Card className='border-0 !rounded-2xl overflow-hidden'>
-              <div className='flex justify-center pt-6 pb-2'>
-                <Title heading={3} className='text-gray-800 dark:text-gray-200'>
-                  {t('密码重置确认')}
-                </Title>
-              </div>
-              <div className='px-2 py-8'>
-                {!isValidResetLink && (
-                  <Banner
-                    type='danger'
-                    description={t('无效的重置链接，请重新发起密码重置请求')}
-                    className='mb-4 !rounded-lg'
-                    closeIcon={null}
-                  />
-                )}
-                <Form
-                  getFormApi={(api) => setFormApi(api)}
-                  initValues={{
-                    email: email || '',
-                    newPassword: newPassword || '',
-                  }}
-                  className='space-y-4'
-                >
-                  <Form.Input
-                    field='email'
-                    label={t('邮箱')}
-                    name='email'
-                    disabled={true}
-                    prefix={<IconMail />}
-                    placeholder={email ? '' : t('等待获取邮箱信息...')}
-                  />
-
-                  {newPassword && (
-                    <Form.Input
-                      field='newPassword'
-                      label={t('新密码')}
-                      name='newPassword'
-                      disabled={true}
-                      prefix={<IconLock />}
-                      suffix={
-                        <Button
-                          icon={<IconCopy />}
-                          type='tertiary'
-                          theme='borderless'
-                          onClick={async () => {
-                            await copy(newPassword);
-                            showNotice(
-                              `${t('密码已复制到剪贴板：')} ${newPassword}`,
-                            );
-                          }}
-                        >
-                          {t('复制')}
-                        </Button>
-                      }
-                    />
-                  )}
-
-                  <div className='space-y-2 pt-2'>
-                    <Button
-                      theme='solid'
-                      className='w-full !rounded-full'
-                      type='primary'
-                      htmlType='submit'
-                      onClick={handleSubmit}
-                      loading={loading}
-                      disabled={
-                        disableButton || newPassword || !isValidResetLink
-                      }
-                    >
-                      {newPassword ? t('密码重置完成') : t('确认重置密码')}
-                    </Button>
-                  </div>
-                </Form>
-
-                <div className='mt-6 text-center text-sm'>
-                  <Text>
-                    <Link
-                      to='/login'
-                      className='text-blue-600 hover:text-blue-800 font-medium'
-                    >
-                      {t('返回登录')}
-                    </Link>
-                  </Text>
-                </div>
-              </div>
-            </Card>
+      <div className='playful-auth-panel'>
+        <div className='playful-auth-brand'>
+          <div className='playful-auth-brand-mark'>
+            <img src={logo} alt='Logo' />
           </div>
+          <Title heading={3} className='playful-auth-brand-name !mb-0'>
+            {systemName}
+          </Title>
         </div>
+
+        <Card className='playful-auth-card sticker-card bg-white'>
+          <div className='flex justify-center pb-2 pt-3'>
+            <Title heading={3} className='playful-auth-title !mb-0'>
+              {t('密码重置确认')}
+            </Title>
+          </div>
+
+          <p className='playful-auth-subtitle'>
+            {t('确认后将生成新密码，并自动复制到你的剪贴板。')}
+          </p>
+
+          {!isValidResetLink && (
+            <Banner
+              type='danger'
+              description={t('无效的重置链接，请重新发起密码重置请求')}
+              className='mb-4 !rounded-[20px]'
+              closeIcon={null}
+            />
+          )}
+
+          <Form
+            getFormApi={(api) => setFormApi(api)}
+            initValues={{
+              email: email || '',
+              newPassword: newPassword || '',
+            }}
+            className='playful-auth-form'
+          >
+            <PlayfulFormField
+              field='email'
+              label={t('邮箱')}
+              name='email'
+              disabled={true}
+              prefix={<IconMail />}
+              placeholder={email ? '' : t('等待获取邮箱信息...')}
+            />
+
+            {newPassword && (
+              <PlayfulFormField
+                field='newPassword'
+                label={t('新密码')}
+                name='newPassword'
+                disabled={true}
+                prefix={<IconLock />}
+                suffix={
+                  <Button
+                    icon={<IconCopy />}
+                    type='tertiary'
+                    theme='borderless'
+                    className='playful-inline-action'
+                    onClick={async () => {
+                      await copy(newPassword);
+                      showNotice(`${t('密码已复制到剪贴板：')} ${newPassword}`);
+                    }}
+                  >
+                    {t('复制')}
+                  </Button>
+                }
+              />
+            )}
+
+            <div className='space-y-2 pt-2'>
+              <StickerButton
+                variant='primary'
+                block
+                htmlType='submit'
+                onClick={handleSubmit}
+                loading={loading}
+                disabled={disableButton || newPassword || !isValidResetLink}
+              >
+                {newPassword ? t('密码重置完成') : t('确认重置密码')}
+              </StickerButton>
+            </div>
+          </Form>
+
+          {newPassword && (
+            <div className='playful-auth-note mt-5 p-4 text-center text-sm text-playful-muted-fg'>
+              {t('请妥善保存新密码，并在登录后尽快修改为你自己的安全密码。')}
+            </div>
+          )}
+
+          <div className='playful-auth-footer'>
+            <Text>
+              <Link to='/login'>{t('返回登录')}</Link>
+            </Text>
+          </div>
+        </Card>
       </div>
     </div>
   );

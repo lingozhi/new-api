@@ -18,13 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Card, Avatar, Tag, Divider, Empty } from '@douyinfe/semi-ui';
+import { Card, Avatar } from '@douyinfe/semi-ui';
 import { Server, Gauge, ExternalLink, Copy } from 'lucide-react';
 import {
   IllustrationConstruction,
   IllustrationConstructionDark,
 } from '@douyinfe/semi-illustrations';
 import ScrollableContainer from '../common/ui/ScrollableContainer';
+import { PlayfulKicker, PlayfulTag, PlayfulEmpty } from '../common/ui/playful';
 
 const ApiInfoPanel = ({
   apiInfoData,
@@ -38,11 +39,15 @@ const ApiInfoPanel = ({
   return (
     <Card
       {...CARD_PROPS}
-      className='bg-gray-50 border-0 !rounded-2xl'
+      className={`${CARD_PROPS?.className || ''} lg:col-span-1`.trim()}
       title={
-        <div className={FLEX_CENTER_GAP2}>
-          <Server size={16} />
-          {t('API信息')}
+        <div className='flex flex-col gap-1'>
+          <PlayfulKicker tone='mint' icon={<Server size={12} />}>
+            {t('API')}
+          </PlayfulKicker>
+          <div className='font-outfit text-lg font-extrabold text-playful-foreground'>
+            {t('API信息')}
+          </div>
         </div>
       }
       bodyStyle={{ padding: 0 }}
@@ -50,68 +55,68 @@ const ApiInfoPanel = ({
       <ScrollableContainer maxHeight='24rem'>
         {apiInfoData.length > 0 ? (
           apiInfoData.map((api) => (
-            <React.Fragment key={api.id}>
-              <div className='flex p-2 hover:bg-white rounded-lg transition-colors cursor-pointer'>
-                <div className='flex-shrink-0 mr-3'>
-                  <Avatar size='extra-small' color={api.color}>
-                    {api.route.substring(0, 2)}
-                  </Avatar>
-                </div>
-                <div className='flex-1'>
-                  <div className='flex flex-wrap items-center justify-between mb-1 w-full gap-2'>
-                    <span className='text-sm font-medium text-gray-900 !font-bold break-all'>
-                      {api.route}
-                    </span>
-                    <div className='flex items-center gap-1 mt-1 lg:mt-0'>
-                      <Tag
-                        prefixIcon={<Gauge size={12} />}
-                        size='small'
-                        color='white'
-                        shape='circle'
-                        onClick={() => handleSpeedTest(api.url)}
-                        className='cursor-pointer hover:opacity-80 text-xs'
-                      >
-                        {t('测速')}
-                      </Tag>
-                      <Tag
-                        prefixIcon={<ExternalLink size={12} />}
-                        size='small'
-                        color='white'
-                        shape='circle'
-                        onClick={() =>
-                          window.open(api.url, '_blank', 'noopener,noreferrer')
-                        }
-                        className='cursor-pointer hover:opacity-80 text-xs'
-                      >
-                        {t('跳转')}
-                      </Tag>
-                    </div>
-                  </div>
-                  <div className='flex items-center gap-1 mb-1'>
-                    <span
-                      className='!text-semi-color-primary break-all cursor-pointer hover:underline'
-                      onClick={() => handleCopyUrl(api.url)}
+            <div key={api.id} className='playful-api-row'>
+              <div className='flex-shrink-0'>
+                <Avatar
+                  className='playful-api-row__avatar'
+                  size='extra-small'
+                  color={api.color}
+                >
+                  {api.route.substring(0, 2)}
+                </Avatar>
+              </div>
+              <div className='flex-1 min-w-0'>
+                <div className='flex flex-wrap items-center justify-between mb-1 w-full gap-2'>
+                  <span className='playful-api-row__route text-sm'>
+                    {api.route}
+                  </span>
+                  <div className='flex items-center gap-1 mt-1 lg:mt-0'>
+                    <PlayfulTag
+                      tone='tertiary'
+                      size='sm'
+                      onClick={() => handleSpeedTest(api.url)}
+                      className='cursor-pointer'
                     >
-                      {api.url}
-                    </span>
-                    <Copy
-                      size={14}
-                      className='flex-shrink-0 text-gray-400 hover:text-semi-color-primary cursor-pointer transition-colors'
-                      onClick={() => handleCopyUrl(api.url)}
-                    />
+                      <Gauge size={12} />
+                      <span className='ml-1'>{t('测速')}</span>
+                    </PlayfulTag>
+                    <PlayfulTag
+                      tone='violet'
+                      size='sm'
+                      onClick={() =>
+                        window.open(api.url, '_blank', 'noopener,noreferrer')
+                      }
+                      className='cursor-pointer'
+                    >
+                      <ExternalLink size={12} />
+                      <span className='ml-1'>{t('跳转')}</span>
+                    </PlayfulTag>
                   </div>
-                  <div className='text-gray-500'>{api.description}</div>
+                </div>
+                <div className='flex items-center gap-1 mb-1'>
+                  <span
+                    className='playful-api-row__url text-sm'
+                    onClick={() => handleCopyUrl(api.url)}
+                  >
+                    {api.url}
+                  </span>
+                  <Copy
+                    size={14}
+                    className='flex-shrink-0 text-playful-muted-fg hover:text-playful-accent cursor-pointer transition-colors'
+                    onClick={() => handleCopyUrl(api.url)}
+                  />
+                </div>
+                <div className='playful-api-row__description'>
+                  {api.description}
                 </div>
               </div>
-              <Divider />
-            </React.Fragment>
+            </div>
           ))
         ) : (
-          <div className='flex justify-center items-center min-h-[20rem] w-full'>
-            <Empty
-              image={<IllustrationConstruction style={ILLUSTRATION_SIZE} />}
-              darkModeImage={
-                <IllustrationConstructionDark style={ILLUSTRATION_SIZE} />
+          <div className='flex justify-center items-center min-h-[20rem] w-full p-4'>
+            <PlayfulEmpty
+              illustration={
+                <IllustrationConstruction style={ILLUSTRATION_SIZE} />
               }
               title={t('暂无API信息')}
               description={t('请联系管理员在系统设置中配置API信息')}

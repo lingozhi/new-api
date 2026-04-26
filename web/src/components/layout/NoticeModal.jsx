@@ -19,8 +19,6 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React, { useEffect, useState, useContext, useMemo } from 'react';
 import {
-  Button,
-  Modal,
   Empty,
   Tabs,
   TabPane,
@@ -35,6 +33,7 @@ import {
 } from '@douyinfe/semi-illustrations';
 import { StatusContext } from '../../context/Status';
 import { Bell, Megaphone } from 'lucide-react';
+import { PlayfulModal, StickerButton } from '../common/ui/playful';
 
 const NoticeModal = ({
   visible,
@@ -144,7 +143,7 @@ const NoticeModal = ({
     return (
       <div
         dangerouslySetInnerHTML={{ __html: noticeContent }}
-        className='notice-content-scroll max-h-[55vh] overflow-y-auto pr-2'
+        className='notice-content-scroll max-h-[55vh] overflow-y-auto pr-2 typography-content'
       />
     );
   };
@@ -189,7 +188,7 @@ const NoticeModal = ({
               >
                 <div>
                   <div
-                    className={item.isUnread ? 'shine-text' : ''}
+                    className={`${item.isUnread ? 'shine-text' : ''} typography-content`}
                     dangerouslySetInnerHTML={{ __html: htmlContent }}
                   />
                 </div>
@@ -209,15 +208,18 @@ const NoticeModal = ({
   };
 
   return (
-    <Modal
+    <PlayfulModal
+      tone='pink'
       title={
-        <div className='flex items-center justify-between w-full'>
-          <span>{t('系统公告')}</span>
+        <div className='flex items-center justify-between w-full font-jakarta gap-3'>
+          <span className='bg-playful-secondary border-2 border-playful-foreground px-3 py-1 rounded-md -rotate-2 inline-block shadow-[2px_2px_0px_#1E293B] font-outfit text-2xl font-bold text-white'>
+            {t('系统公告')}
+          </span>
           <Tabs activeKey={activeTab} onChange={setActiveTab} type='button'>
             <TabPane
               tab={
                 <span className='flex items-center gap-1'>
-                  <Bell size={14} /> {t('通知')}
+                  <Bell size={14} strokeWidth={2.5} /> {t('通知')}
                 </span>
               }
               itemKey='inApp'
@@ -225,7 +227,7 @@ const NoticeModal = ({
             <TabPane
               tab={
                 <span className='flex items-center gap-1'>
-                  <Megaphone size={14} /> {t('系统公告')}
+                  <Megaphone size={14} strokeWidth={2.5} /> {t('系统公告')}
                 </span>
               }
               itemKey='system'
@@ -236,19 +238,19 @@ const NoticeModal = ({
       visible={visible}
       onCancel={onClose}
       footer={
-        <div className='flex justify-end'>
-          <Button type='secondary' onClick={handleCloseTodayNotice}>
+        <div className='flex justify-end gap-2'>
+          <StickerButton variant='secondary' size='sm' onClick={handleCloseTodayNotice}>
             {t('今日关闭')}
-          </Button>
-          <Button type='primary' onClick={onClose}>
+          </StickerButton>
+          <StickerButton variant='primary' size='sm' onClick={onClose}>
             {t('关闭公告')}
-          </Button>
+          </StickerButton>
         </div>
       }
       size={isMobile ? 'full-width' : 'large'}
     >
       {renderBody()}
-    </Modal>
+    </PlayfulModal>
   );
 };
 

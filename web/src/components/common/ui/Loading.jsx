@@ -22,8 +22,12 @@ import { Spin } from '@douyinfe/semi-ui';
 
 const Loading = ({ size = 'small' }) => {
   return (
-    <div className='fixed inset-0 w-screen h-screen flex items-center justify-center'>
-      <Spin size={size} spinning={true} />
+    <div className='fixed inset-0 w-screen h-screen flex flex-col items-center justify-center bg-playful-bg/80 backdrop-blur-sm z-[9999]'>
+      <div className='flex flex-col items-center'>
+        <div className='playful-loader-box rounded-xl'></div>
+        <div className='playful-loader-shadow'></div>
+      </div>
+      <h2 className='mt-8 font-outfit text-2xl font-bold text-playful-foreground animate-pulse'>...</h2>
     </div>
   );
 };

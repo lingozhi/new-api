@@ -196,7 +196,7 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
             <div className='w-6 h-6 rounded-full bg-green-500 flex items-center justify-center mb-0.5 shadow-sm'>
               <Check size={14} className='text-white' strokeWidth={3} />
             </div>
-            <div className='text-[10px] font-medium text-green-600 dark:text-green-400 leading-none'>
+            <div className='text-[10px] font-medium text-green-600 leading-none'>
               {renderQuota(quotaAwarded)}
             </div>
           </div>
@@ -258,7 +258,7 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
                 <ChevronUp size={16} className='text-gray-400' />
               )}
             </div>
-            <div className='text-xs text-gray-500 dark:text-gray-400'>
+            <div className='text-xs text-gray-500'>
               {!initialLoaded
                 ? t('正在加载签到状态...')
                 : checkinData.stats?.checked_in_today
@@ -290,19 +290,19 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
       <Collapsible isOpen={isCollapsed === false} keepDOM>
         {/* 签到统计 */}
         <div className='grid grid-cols-3 gap-3 mb-4 mt-4'>
-          <div className='text-center p-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg'>
+          <div className='text-center p-2.5 bg-slate-50 rounded-lg'>
             <div className='text-xl font-bold text-green-600'>
               {checkinData.stats?.total_checkins || 0}
             </div>
             <div className='text-xs text-gray-500'>{t('累计签到')}</div>
           </div>
-          <div className='text-center p-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg'>
+          <div className='text-center p-2.5 bg-slate-50 rounded-lg'>
             <div className='text-xl font-bold text-orange-600'>
               {renderQuota(monthlyQuota, 6)}
             </div>
             <div className='text-xs text-gray-500'>{t('本月获得')}</div>
           </div>
-          <div className='text-center p-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg'>
+          <div className='text-center p-2.5 bg-slate-50 rounded-lg'>
             <div className='text-xl font-bold text-blue-600'>
               {renderQuota(checkinData.stats?.total_quota || 0, 6)}
             </div>
@@ -367,7 +367,7 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
         </Spin>
 
         {/* 签到说明 */}
-        <div className='mt-3 p-2.5 bg-slate-50 dark:bg-slate-800 rounded-lg'>
+        <div className='mt-3 p-2.5 bg-slate-50 rounded-lg'>
           <Typography.Text type='tertiary' className='text-xs'>
             <ul className='list-disc list-inside space-y-0.5'>
               <li>{t('每日签到可获得随机额度奖励')}</li>

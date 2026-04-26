@@ -34,6 +34,8 @@ const CompactModeToggle = ({
   size = 'small',
   type = 'tertiary',
   className = '',
+  activeLabel,
+  inactiveLabel,
   ...props
 }) => {
   const isMobile = useIsMobile();
@@ -47,11 +49,13 @@ const CompactModeToggle = ({
     <Button
       type={type}
       size={size}
-      className={`w-full md:w-auto ${className}`}
+      className={`playful-compact-toggle w-full md:w-auto ${className}`}
       onClick={() => setCompactMode(!compactMode)}
       {...props}
     >
-      {compactMode ? t('自适应列表') : t('紧凑列表')}
+      {compactMode
+        ? activeLabel || t('自适应列表')
+        : inactiveLabel || t('紧凑列表')}
     </Button>
   );
 };
@@ -60,6 +64,8 @@ CompactModeToggle.propTypes = {
   compactMode: PropTypes.bool.isRequired,
   setCompactMode: PropTypes.func.isRequired,
   t: PropTypes.func.isRequired,
+  activeLabel: PropTypes.string,
+  inactiveLabel: PropTypes.string,
   size: PropTypes.string,
   type: PropTypes.string,
   className: PropTypes.string,

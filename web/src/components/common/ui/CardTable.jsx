@@ -115,7 +115,7 @@ const CardTable = ({
       );
 
       return (
-        <Card key={key} className='!rounded-2xl shadow-sm'>
+        <Card key={key} className='sticker-card playful-mobile-table-card'>
           <Skeleton loading={true} active placeholder={placeholder}></Skeleton>
         </Card>
       );
@@ -139,7 +139,7 @@ const CardTable = ({
       (!tableProps.rowExpandable || tableProps.rowExpandable(record));
 
     return (
-      <Card key={rowKeyVal} className='!rounded-2xl shadow-sm'>
+      <Card key={rowKeyVal} className='sticker-card playful-mobile-table-card'>
         {columns.map((col, colIdx) => {
           if (
             tableProps?.visibleColumns &&
@@ -167,7 +167,7 @@ const CardTable = ({
               className='flex justify-between items-start py-1 border-b last:border-b-0 border-dashed'
               style={{ borderColor: 'var(--semi-color-border)' }}
             >
-              <span className='font-medium text-gray-600 mr-2 whitespace-nowrap select-none'>
+              <span className='playful-mobile-table-label mr-2 whitespace-nowrap select-none'>
                 {title}
               </span>
               <div className='flex-1 break-all flex justify-end items-center gap-1'>

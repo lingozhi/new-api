@@ -55,7 +55,7 @@ const TokensFilters = ({
       stopValidateWithError={false}
       className='w-full md:w-auto order-1 md:order-2'
     >
-      <div className='flex flex-col md:flex-row items-center gap-2 w-full md:w-auto'>
+      <div className='playful-filter-toolbar playful-filter-toolbar--token flex w-full flex-col gap-3 rounded-2xl border-2 border-playful-border bg-playful-surface-muted p-3 md:w-auto md:flex-row md:items-center'>
         <div className='relative w-full md:w-56'>
           <Form.Input
             field='searchKeyword'
@@ -64,6 +64,7 @@ const TokensFilters = ({
             showClear
             pure
             size='small'
+            className='playful-filter-input'
           />
         </div>
 
@@ -75,6 +76,7 @@ const TokensFilters = ({
             showClear
             pure
             size='small'
+            className='playful-filter-input'
           />
         </div>
 
@@ -83,7 +85,7 @@ const TokensFilters = ({
             type='tertiary'
             htmlType='submit'
             loading={loading || searching}
-            className='flex-1 md:flex-initial md:w-auto'
+            className='candy-btn-secondary flex-1 md:flex-initial md:w-auto'
             size='small'
           >
             {t('查询')}
@@ -92,7 +94,7 @@ const TokensFilters = ({
           <Button
             type='tertiary'
             onClick={handleReset}
-            className='flex-1 md:flex-initial md:w-auto'
+            className='playful-link-button !min-h-[36px] flex-1 md:flex-initial md:w-auto'
             size='small'
           >
             {t('重置')}

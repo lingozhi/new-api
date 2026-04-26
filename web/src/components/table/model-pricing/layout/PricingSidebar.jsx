@@ -24,6 +24,7 @@ import PricingQuotaTypes from '../filter/PricingQuotaTypes';
 import PricingEndpointTypes from '../filter/PricingEndpointTypes';
 import PricingVendors from '../filter/PricingVendors';
 import PricingTags from '../filter/PricingTags';
+import PricingDisplaySettings from '../filter/PricingDisplaySettings';
 
 import { resetPricingFilters } from '../../../../helpers/utils';
 import { usePricingFilterCounts } from '../../../../hooks/model-pricing/usePricingFilterCounts';
@@ -91,18 +92,58 @@ const PricingSidebar = ({
     });
 
   return (
-    <div className='p-2'>
-      <div className='flex items-center justify-between mb-6'>
-        <div className='text-lg font-semibold text-gray-800'>{t('筛选')}</div>
+    <div className='playful-pricing-sidebar-panel p-3 md:p-4'>
+      <div className='playful-pricing-sidebar-hero mb-5'>
+        <div>
+          <span className='playful-kicker mb-3'>{t('Filter Lab')}</span>
+          <div className='text-2xl font-outfit font-extrabold tracking-[-0.03em] text-playful-foreground'>
+            {t('筛选')}
+          </div>
+          <p className='mt-2 text-sm leading-6 text-playful-muted-fg'>
+            {t('按供应商、分组、计费类型与标签快速收敛展示范围。')}
+          </p>
+        </div>
+      </div>
+
+      <div className='playful-pricing-sidebar-summary mb-5'>
+        <div className='playful-pricing-sidebar-summary-label'>{t('当前结果')}</div>
+        <div className='playful-pricing-sidebar-summary-value'>
+          {categoryProps.filteredModels?.length ?? categoryProps.models?.length ?? 0}
+        </div>
+        <div className='playful-pricing-sidebar-summary-caption'>
+          {t('根据当前筛选条件可见的模型数量')}
+        </div>
+      </div>
+
+      <div className='flex items-center justify-between mb-5 gap-3 flex-wrap'>
+        <div className='text-sm font-bold uppercase tracking-[0.16em] text-playful-muted-fg'>
+          {t('当前条件')}
+        </div>
         <Button
-          theme='outline'
-          type='tertiary'
+          theme='borderless'
+          type='primary'
           onClick={handleResetFilters}
-          className='text-gray-500 hover:text-gray-700'
+          className='candy-btn-secondary playful-pricing-reset-btn px-4 py-2 text-sm'
         >
           {t('重置')}
         </Button>
       </div>
+
+      <PricingDisplaySettings
+        showWithRecharge={showWithRecharge}
+        setShowWithRecharge={setShowWithRecharge}
+        currency={currency}
+        setCurrency={setCurrency}
+        siteDisplayType={categoryProps.siteDisplayType}
+        showRatio={showRatio}
+        setShowRatio={setShowRatio}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+        tokenUnit={tokenUnit}
+        setTokenUnit={setTokenUnit}
+        loading={loading}
+        t={t}
+      />
 
       <PricingVendors
         filterVendor={filterVendor}

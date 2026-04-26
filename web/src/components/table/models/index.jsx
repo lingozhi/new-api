@@ -131,7 +131,7 @@ const ModelsPage = () => {
       />
 
       {showMarketplaceDisplayNotice ? (
-        <div style={{ position: 'relative', marginBottom: 12 }}>
+        <div className='playful-marketplace-notice-wrap relative mb-4'>
           <Banner
             type='warning'
             closeIcon={null}
@@ -144,6 +144,7 @@ const ModelsPage = () => {
             description={t(
               '提示：此处配置仅用于控制「模型广场」对用户的展示效果，不会影响模型的实际调用与路由。若需配置真实调用行为，请前往「渠道管理」进行设置。',
             )}
+            className='playful-marketplace-banner !rounded-[24px]'
             style={{ marginBottom: 0 }}
           />
           <Button
@@ -152,7 +153,7 @@ const ModelsPage = () => {
             type='tertiary'
             icon={<IconClose aria-hidden={true} />}
             onClick={confirmCloseMarketplaceDisplayNotice}
-            style={{ position: 'absolute', top: 8, right: 8 }}
+            className='playful-icon-button !absolute !right-3 !top-3'
             aria-label={t('关闭')}
           />
         </div>

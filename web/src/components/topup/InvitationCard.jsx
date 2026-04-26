@@ -40,7 +40,7 @@ const InvitationCard = ({
   handleAffLinkClick,
 }) => {
   return (
-    <Card className='!rounded-2xl shadow-sm border-0'>
+    <Card className='sticker-card bg-playful-muted border-2 border-playful-foreground shadow-pop h-full'>
       {/* 卡片头部 */}
       <div className='flex items-center mb-4'>
         <Avatar size='small' color='green' className='mr-3 shadow-md'>
@@ -58,7 +58,7 @@ const InvitationCard = ({
       <Space vertical style={{ width: '100%' }}>
         {/* 统计数据统一卡片 */}
         <Card
-          className='!rounded-xl w-full'
+          className='sticker-card bg-white w-full'
           cover={
             <div
               className='relative h-30'
@@ -195,8 +195,8 @@ const InvitationCard = ({
 
         {/* 奖励说明 */}
         <Card
-          className='!rounded-xl w-full'
-          title={<Text type='tertiary'>{t('奖励说明')}</Text>}
+          className='sticker-card bg-white w-full'
+          title={<Text type='tertiary' className='font-jakarta font-bold text-playful-foreground'>{t('奖励说明')}</Text>}
         >
           <div className='space-y-3'>
             <div className='flex items-start gap-2'>

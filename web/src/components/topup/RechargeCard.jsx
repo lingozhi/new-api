@@ -122,7 +122,7 @@ const RechargeCard = ({
     <Space vertical style={{ width: '100%' }}>
       {/* 统计数据 */}
       <Card
-        className='!rounded-xl w-full'
+        className='sticker-card bg-white w-full'
         cover={
           <div
             className='relative h-30'
@@ -427,12 +427,18 @@ const RechargeCard = ({
                       return (
                         <Card
                           key={index}
+                          className='sticker-card bg-white transition-all hover:-translate-y-1'
                           style={{
                             cursor: 'pointer',
-                            border:
+                            borderColor:
                               selectedPreset === preset.value
-                                ? '2px solid var(--semi-color-primary)'
-                                : '1px solid var(--semi-color-border)',
+                                ? 'var(--playful-foreground)'
+                                : 'var(--playful-foreground)',
+                            borderWidth:
+                              selectedPreset === preset.value
+                                ? '4px'
+                                : '2px',
+                            backgroundColor: selectedPreset === preset.value ? 'var(--playful-muted)' : 'white',
                             height: '100%',
                             width: '100%',
                           }}
@@ -564,7 +570,7 @@ const RechargeCard = ({
 
       {/* 兑换码充值 */}
       <Card
-        className='!rounded-xl w-full'
+        className='sticker-card bg-white w-full'
         title={
           <Text type='tertiary' strong>
             {t('兑换码充值')}
@@ -618,7 +624,7 @@ const RechargeCard = ({
   );
 
   return (
-    <Card className='!rounded-2xl shadow-sm border-0'>
+    <Card className='sticker-card bg-white relative'>
       {/* 卡片头部 */}
       <div className='flex items-center justify-between mb-4'>
         <div className='flex items-center'>

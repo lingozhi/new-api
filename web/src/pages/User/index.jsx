@@ -22,8 +22,10 @@ import UsersTable from '../../components/table/users';
 
 const User = () => {
   return (
-    <div className='mt-[60px] px-2'>
-      <UsersTable />
+    <div className='playful-console-shell playful-console-shell--dense'>
+      <div className='playful-console-frame mx-auto max-w-[1800px]'>
+        <UsersTable />
+      </div>
     </div>
   );
 };

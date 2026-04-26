@@ -30,6 +30,23 @@ import SkeletonWrapper from './components/SkeletonWrapper';
 
 import { Nav, Divider, Button } from '@douyinfe/semi-ui';
 
+const SECTION_TONE_CLASS = {
+  chat: 'bg-playful-secondary',
+  console: 'bg-playful-accent',
+  personal: 'bg-playful-tertiary',
+  admin: 'bg-playful-quaternary',
+};
+
+const SectionLabel = ({ section, children }) => (
+  <div className='sidebar-group-label flex items-center gap-2 font-outfit font-bold text-playful-foreground text-xs uppercase tracking-widest'>
+    <span
+      aria-hidden='true'
+      className={`inline-block h-2.5 w-2.5 rounded-sm border-2 border-playful-foreground ${SECTION_TONE_CLASS[section] || 'bg-playful-card'}`}
+    />
+    <span>{children}</span>
+  </div>
+);
+
 const routerMap = {
   home: '/',
   channel: '/console/channel',
@@ -303,8 +320,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     }
   }, [collapsed]);
 
-  // 选中高亮颜色（统一）
-  const SELECTED_COLOR = 'var(--semi-color-primary)';
+  // 选中高亮颜色（统一被 index.css 覆盖）
 
   // 渲染自定义菜单项
   const renderNavItem = (item) => {
@@ -312,17 +328,13 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     if (item.className === 'tableHiddle') return null;
 
     const isSelected = selectedKeys.includes(item.itemKey);
-    const textColor = isSelected ? SELECTED_COLOR : 'inherit';
 
     return (
       <Nav.Item
         key={item.itemKey}
         itemKey={item.itemKey}
         text={
-          <span
-            className='truncate font-medium text-sm'
-            style={{ color: textColor }}
-          >
+          <span className='truncate font-outfit text-base'>
             {item.text}
           </span>
         }
@@ -338,19 +350,15 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
   // 渲染子菜单项
   const renderSubItem = (item) => {
-    if (item.items && item.items.length > 0) {
-      const isSelected = selectedKeys.includes(item.itemKey);
-      const textColor = isSelected ? SELECTED_COLOR : 'inherit';
+    const isSelected = selectedKeys.includes(item.itemKey);
 
+    if (item.items && item.items.length > 0) {
       return (
         <Nav.Sub
           key={item.itemKey}
           itemKey={item.itemKey}
           text={
-            <span
-              className='truncate font-medium text-sm'
-              style={{ color: textColor }}
-            >
+            <span className='truncate font-outfit text-base'>
               {item.text}
             </span>
           }
@@ -361,18 +369,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           }
         >
           {item.items.map((subItem) => {
-            const isSubSelected = selectedKeys.includes(subItem.itemKey);
-            const subTextColor = isSubSelected ? SELECTED_COLOR : 'inherit';
-
             return (
               <Nav.Item
                 key={subItem.itemKey}
                 itemKey={subItem.itemKey}
                 text={
-                  <span
-                    className='truncate font-medium text-sm'
-                    style={{ color: subTextColor }}
-                  >
+                  <span className='truncate font-outfit text-[15px]'>
                     {subItem.text}
                   </span>
                 }
@@ -442,9 +444,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           {/* 聊天区域 */}
           {hasSectionVisibleModules('chat') && (
             <div className='sidebar-section'>
-              {!collapsed && (
-                <div className='sidebar-group-label'>{t('聊天')}</div>
-              )}
+              {!collapsed && <SectionLabel section='chat'>{t('聊天')}</SectionLabel>}
               {chatMenuItems.map((item) => renderSubItem(item))}
             </div>
           )}
@@ -454,9 +454,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             <>
               <Divider className='sidebar-divider' />
               <div>
-                {!collapsed && (
-                  <div className='sidebar-group-label'>{t('控制台')}</div>
-                )}
+                {!collapsed && <SectionLabel section='console'>{t('控制台')}</SectionLabel>}
                 {workspaceItems.map((item) => renderNavItem(item))}
               </div>
             </>
@@ -467,9 +465,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             <>
               <Divider className='sidebar-divider' />
               <div>
-                {!collapsed && (
-                  <div className='sidebar-group-label'>{t('个人中心')}</div>
-                )}
+                {!collapsed && <SectionLabel section='personal'>{t('个人中心')}</SectionLabel>}
                 {financeItems.map((item) => renderNavItem(item))}
               </div>
             </>
@@ -480,9 +476,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             <>
               <Divider className='sidebar-divider' />
               <div>
-                {!collapsed && (
-                  <div className='sidebar-group-label'>{t('管理员')}</div>
-                )}
+                {!collapsed && <SectionLabel section='admin'>{t('管理员')}</SectionLabel>}
                 {adminItems.map((item) => renderNavItem(item))}
               </div>
             </>
@@ -503,25 +497,25 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             theme='outline'
             type='tertiary'
             size='small'
+            className='!border-2 !border-playful-foreground !shadow-pop-soft hover:-translate-y-0.5 hover:bg-playful-tertiary transition-all'
             icon={
               <ChevronLeft
                 size={16}
                 strokeWidth={2.5}
-                color='var(--semi-color-text-2)'
+                color='var(--playful-foreground)'
                 style={{
                   transform: collapsed ? 'rotate(180deg)' : 'rotate(0deg)',
                 }}
               />
             }
             onClick={toggleCollapsed}
-            icononly={collapsed}
             style={
               collapsed
-                ? { width: 36, height: 24, padding: 0 }
-                : { padding: '4px 12px', width: '100%' }
+                ? { width: 36, height: 32, padding: 0, borderRadius: '8px' }
+                : { padding: '6px 12px', width: '100%', borderRadius: '8px' }
             }
           >
-            {!collapsed ? t('收起侧边栏') : null}
+            {!collapsed ? <span className="font-outfit font-bold text-playful-foreground">{t('收起侧边栏')}</span> : null}
           </Button>
         </SkeletonWrapper>
       </div>

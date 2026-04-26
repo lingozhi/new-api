@@ -22,14 +22,11 @@ import {
   Card,
   Tag,
   Avatar,
-  Typography,
   Tooltip,
   Modal,
 } from '@douyinfe/semi-ui';
 import { getLobeHubIcon } from '../../../../../helpers';
 import SearchActions from './SearchActions';
-
-const { Paragraph } = Typography;
 
 const CONFIG = {
   CAROUSEL_INTERVAL: 2000,
@@ -86,7 +83,15 @@ const getVendorDisplayName = (vendorName, t) => {
 
 const createDefaultAvatar = () => (
   <div className={COMPONENT_STYLES.avatarContainer}>
-    <Avatar size='large' color='transparent'>
+    <Avatar
+      size='large'
+      color='white'
+      style={{
+        backgroundColor: 'rgba(241, 245, 249, 0.95)',
+        color: 'var(--playful-foreground)',
+        fontWeight: 800,
+      }}
+    >
       AI
     </Avatar>
   </div>
@@ -110,7 +115,12 @@ const createAvatarContent = (vendor, isAllVendors) => {
   return (
     <Avatar
       size='large'
-      style={{ backgroundColor: getAvatarBackgroundColor(isAllVendors) }}
+      color='white'
+      style={{
+        backgroundColor: getAvatarBackgroundColor(isAllVendors),
+        color: 'var(--playful-foreground)',
+        fontWeight: 800,
+      }}
     >
       {getAvatarText(vendor.name)}
     </Avatar>
@@ -320,21 +330,16 @@ const PricingVendorIntro = memo(
     const renderHeaderCard = useCallback(
       ({ title, count, description, rightContent, primaryDarkerChannel }) => (
         <Card
-          className='!rounded-2xl shadow-sm border-0'
+          className='playful-pricing-hero-card border-0'
           cover={
             <div
-              className='relative h-full'
+              className='playful-pricing-hero-cover'
               style={createCoverStyle(primaryDarkerChannel)}
             >
-              <div className='relative z-10 h-full flex items-center justify-between p-4'>
-                <div className='flex-1 min-w-0 mr-4'>
-                  <div className='flex flex-row flex-wrap items-center gap-2 sm:gap-3 mb-2'>
-                    <h2
-                      className='text-lg sm:text-xl font-bold truncate'
-                      style={COMPONENT_STYLES.titleText}
-                    >
-                      {title}
-                    </h2>
+              <div className='playful-pricing-hero-content'>
+                <div className='playful-pricing-hero-copy'>
+                  <div className='playful-pricing-hero-heading-row'>
+                    <span className='playful-kicker bg-playful-tertiary'>Model Pricing</span>
                     <Tag
                       style={COMPONENT_STYLES.tag}
                       shape='circle'
@@ -344,22 +349,31 @@ const PricingVendorIntro = memo(
                       {t('共 {{count}} 个模型', { count })}
                     </Tag>
                   </div>
-                  <Paragraph
-                    className='text-xs sm:text-sm leading-relaxed !mb-0 cursor-pointer'
+                  <h2
+                    className='playful-pricing-hero-title'
+                    style={COMPONENT_STYLES.titleText}
+                  >
+                    {title}
+                  </h2>
+                  <p
+                    className='playful-pricing-hero-description !mb-0 cursor-pointer'
                     style={COMPONENT_STYLES.descriptionText}
-                    ellipsis={{ rows: 2 }}
                     onClick={() => handleOpenDescModal(description)}
                   >
                     {description}
-                  </Paragraph>
+                  </p>
                 </div>
 
-                <div className='flex-shrink-0'>{rightContent}</div>
+                <div className='playful-pricing-hero-aside'>
+                  <div className='playful-pricing-hero-avatar'>{rightContent}</div>
+                </div>
               </div>
             </div>
           }
         >
-          {renderSearchActions()}
+          <div className='playful-pricing-hero-toolbar-wrap'>
+            {renderSearchActions()}
+          </div>
         </Card>
       ),
       [renderSearchActions, createCoverStyle, handleOpenDescModal, t],

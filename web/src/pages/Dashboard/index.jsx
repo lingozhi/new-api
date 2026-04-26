@@ -21,8 +21,10 @@ import React from 'react';
 import Dashboard from '../../components/dashboard';
 
 const Detail = () => (
-  <div className='mt-[60px] px-2'>
-    <Dashboard />
+  <div className='playful-console-shell'>
+    <div className='playful-console-frame mx-auto max-w-[1800px]'>
+      <Dashboard />
+    </div>
   </div>
 );
 

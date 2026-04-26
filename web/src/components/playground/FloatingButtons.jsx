@@ -31,27 +31,16 @@ const FloatingButtons = ({
   if (!styleState.isMobile) return null;
 
   return (
-    <>
+    <div className='playful-floating-actions'>
       {/* 设置按钮 */}
       {!showSettings && (
         <Button
           icon={<Settings size={18} />}
-          style={{
-            position: 'fixed',
-            right: 16,
-            bottom: 90,
-            zIndex: 1000,
-            width: 36,
-            height: 36,
-            borderRadius: '50%',
-            padding: 0,
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
-            background: 'linear-gradient(to right, #8b5cf6, #6366f1)',
-          }}
           onClick={onToggleSettings}
           theme='solid'
           type='primary'
-          className='lg:hidden'
+          className='playful-floating-button playful-floating-button-settings lg:hidden'
+          aria-label='Open settings panel'
         />
       )}
 
@@ -62,24 +51,15 @@ const FloatingButtons = ({
           onClick={onToggleDebugPanel}
           theme='solid'
           type={showDebugPanel ? 'danger' : 'primary'}
-          style={{
-            position: 'fixed',
-            right: 16,
-            bottom: 140,
-            zIndex: 1000,
-            width: 36,
-            height: 36,
-            borderRadius: '50%',
-            padding: 0,
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
-            background: showDebugPanel
-              ? 'linear-gradient(to right, #e11d48, #be123c)'
-              : 'linear-gradient(to right, #4f46e5, #6366f1)',
-          }}
-          className='lg:hidden'
+          className={`playful-floating-button lg:hidden ${
+            showDebugPanel
+              ? 'playful-floating-button-danger'
+              : 'playful-floating-button-debug'
+          }`}
+          aria-label={showDebugPanel ? 'Hide debug panel' : 'Show debug panel'}
         />
       )}
-    </>
+    </div>
   );
 };
 

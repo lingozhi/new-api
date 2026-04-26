@@ -98,7 +98,7 @@ const DebugPanel = ({
 
   return (
     <Card
-      className='h-full flex flex-col'
+      className='playful-debug-card h-full flex flex-col overflow-hidden'
       bordered={false}
       bodyStyle={{
         padding: styleState.isMobile ? '16px' : '24px',
@@ -107,14 +107,17 @@ const DebugPanel = ({
         flexDirection: 'column',
       }}
     >
-      <div className='flex items-center justify-between mb-6 flex-shrink-0'>
+      <div className='playful-debug-header mb-6 flex-shrink-0'>
         <div className='flex items-center'>
-          <div className='w-10 h-10 rounded-full bg-gradient-to-r from-green-500 to-blue-500 flex items-center justify-center mr-3'>
-            <Code size={20} className='text-white' />
+          <div className='playful-debug-icon mr-3'>
+            <Code size={20} className='text-playful-foreground' />
           </div>
-          <Typography.Title heading={5} className='mb-0'>
-            {t('调试信息')}
-          </Typography.Title>
+          <div>
+            <p className='playful-chat-eyebrow'>{t('Instrumentation')}</p>
+            <Typography.Title heading={5} className='mb-0 !text-playful-foreground'>
+              {t('调试信息')}
+            </Typography.Title>
+          </div>
         </div>
 
         {styleState.isMobile && onCloseDebugPanel && (
@@ -124,7 +127,7 @@ const DebugPanel = ({
             theme='borderless'
             type='tertiary'
             size='small'
-            className='!rounded-lg'
+            className='playful-debug-close !rounded-lg'
           />
         )}
       </div>
@@ -145,7 +148,7 @@ const DebugPanel = ({
                 <Eye size={16} />
                 {t('预览请求体')}
                 {customRequestMode && (
-                  <span className='px-1.5 py-0.5 text-xs bg-orange-100 text-orange-600 rounded-full'>
+                  <span className='playful-debug-pill playful-debug-pill-warning'>
                     自定义
                   </span>
                 )}
@@ -182,7 +185,7 @@ const DebugPanel = ({
                 <Zap size={16} />
                 {t('响应')}
                 {debugData.sseMessages && debugData.sseMessages.length > 0 && (
-                  <span className='px-1.5 py-0.5 text-xs bg-blue-100 text-blue-600 rounded-full'>
+                  <span className='playful-debug-pill playful-debug-pill-info'>
                     SSE ({debugData.sseMessages.length})
                   </span>
                 )}
@@ -203,11 +206,11 @@ const DebugPanel = ({
         </Tabs>
       </div>
 
-      <div className='flex items-center justify-between mt-4 pt-4 flex-shrink-0'>
+      <div className='playful-debug-footer mt-4 pt-4 flex-shrink-0'>
         {(debugData.timestamp || debugData.previewTimestamp) && (
           <div className='flex items-center gap-2'>
-            <Clock size={14} className='text-gray-500' />
-            <Typography.Text className='text-xs text-gray-500'>
+            <Clock size={14} className='text-playful-muted-fg' />
+            <Typography.Text className='!text-xs !text-playful-muted-fg'>
               {activeKey === 'preview' && debugData.previewTimestamp
                 ? `${t('预览更新')}: ${new Date(debugData.previewTimestamp).toLocaleString()}`
                 : debugData.timestamp

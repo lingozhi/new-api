@@ -28,14 +28,21 @@ import { useTranslation } from 'react-i18next';
 const Forbidden = () => {
   const { t } = useTranslation();
   return (
-    <div className='flex justify-center items-center h-screen p-8'>
-      <Empty
-        image={<IllustrationNoAccess style={{ width: 250, height: 250 }} />}
-        darkModeImage={
-          <IllustrationNoAccessDark style={{ width: 250, height: 250 }} />
-        }
-        description={t('您无权访问此页面，请联系管理员')}
-      />
+    <div className='playful-empty-state'>
+      <div className='playful-floating-shape playful-floating-shape--circle -top-10 -left-10 h-32 w-32 bg-playful-secondary animate-pulse' />
+      <div className='playful-floating-shape playful-floating-shape--square top-24 right-6 h-24 w-24 bg-playful-accent -rotate-12 shadow-pop' />
+      <div className='playful-floating-shape playful-floating-shape--blob bottom-6 left-4 h-20 w-20 bg-playful-tertiary shadow-pop-sm' />
+
+      <div className='sticker-card playful-empty-card flex flex-col items-center bg-white text-center'>
+        <h1 className='playful-empty-code font-outfit text-6xl font-black rotate-3'>403</h1>
+        <Empty
+          image={<IllustrationNoAccess style={{ width: 250, height: 250 }} />}
+          darkModeImage={
+            <IllustrationNoAccessDark style={{ width: 250, height: 250 }} />
+          }
+          description={<span className='font-jakarta font-bold text-playful-foreground text-lg'>{t('您无权访问此页面，请联系管理员')}</span>}
+        />
+      </div>
     </div>
   );
 };

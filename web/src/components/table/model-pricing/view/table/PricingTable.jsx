@@ -18,11 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useMemo } from 'react';
-import { Card, Table, Empty } from '@douyinfe/semi-ui';
+import { Card, Table, Empty, Typography } from '@douyinfe/semi-ui';
 import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
+
+const { Text } = Typography;
 import { getPricingTableColumns } from './PricingTableColumns';
 
 const PricingTable = ({
@@ -107,16 +109,30 @@ const PricingTable = ({
             style: { cursor: 'pointer' },
           })}
           empty={
-            <Empty
-              image={
-                <IllustrationNoResult style={{ width: 150, height: 150 }} />
-              }
-              darkModeImage={
-                <IllustrationNoResultDark style={{ width: 150, height: 150 }} />
-              }
-              description={t('搜索无结果')}
-              style={{ padding: 30 }}
-            />
+            <div className='playful-table-empty-state'>
+              <div className='playful-table-empty-badge'>
+                <span>{t('暂无匹配结果')}</span>
+              </div>
+              <Empty
+                image={
+                  <IllustrationNoResult style={{ width: 150, height: 150 }} />
+                }
+                darkModeImage={
+                  <IllustrationNoResultDark style={{ width: 150, height: 150 }} />
+                }
+                description={
+                  <div className='space-y-2'>
+                    <Text className='!block !font-outfit !text-lg !font-extrabold !text-playful-foreground'>
+                      {t('搜索无结果')}
+                    </Text>
+                    <Text className='!block !text-sm !leading-6 !text-playful-muted-fg'>
+                      {t('试试切换左侧筛选条件、恢复默认显示设置，或清空搜索词后重新查看。')}
+                    </Text>
+                  </div>
+                }
+                style={{ padding: 30 }}
+              />
+            </div>
           }
           pagination={{
             defaultPageSize: 20,

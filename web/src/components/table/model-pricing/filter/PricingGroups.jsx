@@ -45,11 +45,6 @@ const PricingGroups = ({
   ];
 
   const items = groups.map((g) => {
-    const modelCount =
-      g === 'all'
-        ? models.length
-        : models.filter((m) => m.enable_groups && m.enable_groups.includes(g))
-            .length;
     let ratioDisplay = '';
     if (g === 'all') {
       // ratioDisplay = t('全部');

@@ -42,171 +42,135 @@ const FooterBar = () => {
 
   const customFooter = useMemo(
     () => (
-      <footer className='relative h-auto py-16 px-6 md:px-24 w-full flex flex-col items-center justify-between overflow-hidden'>
-        <div className='absolute hidden md:block top-[204px] left-[-100px] w-[151px] h-[151px] rounded-full bg-[#FFD166]'></div>
-        <div className='absolute md:hidden bottom-[20px] left-[-50px] w-[80px] h-[80px] rounded-full bg-[#FFD166] opacity-60'></div>
+      <footer className='playful-footer-shell relative w-full overflow-hidden border-t-4 border-playful-foreground bg-playful-bg px-6 py-16 font-jakarta md:px-10 lg:px-16'>
+        <div className='playful-footer-orb-left' aria-hidden='true' />
+        <div className='playful-footer-orb-right' aria-hidden='true' />
+        <div className='playful-footer-dots bg-dot-grid' aria-hidden='true' />
 
-        {isDemoSiteMode && (
-          <div className='flex flex-col md:flex-row justify-between w-full max-w-[1110px] mb-10 gap-8'>
-            <div className='flex-shrink-0'>
-              <img
-                src={logo}
-                alt={systemName}
-                className='w-16 h-16 rounded-full bg-gray-800 p-1.5 object-contain'
-              />
-            </div>
-
-            <div className='grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-8 w-full'>
-              <div className='text-left'>
-                <p className='!text-semi-color-text-0 font-semibold mb-5'>
-                  {t('关于我们')}
-                </p>
-                <div className='flex flex-col gap-4'>
-                  <a
-                    href='https://docs.newapi.pro/wiki/project-introduction/'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    {t('关于项目')}
-                  </a>
-                  <a
-                    href='https://docs.newapi.pro/support/community-interaction/'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    {t('联系我们')}
-                  </a>
-                  <a
-                    href='https://docs.newapi.pro/wiki/features-introduction/'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    {t('功能特性')}
-                  </a>
+        <div className='playful-footer-frame mx-auto flex w-full max-w-[1160px] flex-col gap-10 px-6 py-8 md:px-8 md:py-10'>
+          {isDemoSiteMode && (
+            <div className='grid gap-8 lg:grid-cols-[minmax(0,320px)_minmax(0,1fr)] lg:items-start'>
+              <div className='playful-footer-brand-card'>
+                <div className='flex items-center gap-4'>
+                  <div className='playful-footer-logo-wrap'>
+                    <img
+                      src={logo}
+                      alt={systemName}
+                      className='h-14 w-14 rounded-full bg-slate-900 p-1.5 object-contain'
+                    />
+                  </div>
+                  <div>
+                    <div className='playful-kicker mb-3'>{t('AI Gateway')}</div>
+                    <h2 className='font-outfit text-3xl font-extrabold tracking-tight text-playful-foreground'>
+                      {systemName}
+                    </h2>
+                  </div>
                 </div>
-              </div>
-
-              <div className='text-left'>
-                <p className='!text-semi-color-text-0 font-semibold mb-5'>
-                  {t('文档')}
+                <p className='mt-5 text-sm leading-7 text-playful-muted-fg'>
+                  {t('把多模型接入、文档访问与控制台体验统一到一个更清晰、更有趣的入口。')}
                 </p>
-                <div className='flex flex-col gap-4'>
+                <div className='mt-6 flex flex-wrap gap-3'>
                   <a
                     href='https://docs.newapi.pro/getting-started/'
                     target='_blank'
                     rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
+                    className='candy-btn-secondary px-5 py-2 text-sm'
                   >
                     {t('快速开始')}
                   </a>
                   <a
-                    href='https://docs.newapi.pro/installation/'
+                    href='https://github.com/QuantumNous/new-api'
                     target='_blank'
                     rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
+                    className='candy-btn px-5 py-2 text-sm'
                   >
-                    {t('安装指南')}
-                  </a>
-                  <a
-                    href='https://docs.newapi.pro/api/'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    {t('API 文档')}
+                    {t('项目仓库')}
                   </a>
                 </div>
               </div>
 
-              <div className='text-left'>
-                <p className='!text-semi-color-text-0 font-semibold mb-5'>
-                  {t('相关项目')}
-                </p>
-                <div className='flex flex-col gap-4'>
-                  <a
-                    href='https://github.com/songquanpeng/one-api'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    One API
-                  </a>
-                  <a
-                    href='https://github.com/novicezk/midjourney-proxy'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    Midjourney-Proxy
-                  </a>
-                  <a
-                    href='https://github.com/Calcium-Ion/neko-api-key-tool'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    neko-api-key-tool
-                  </a>
+              <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4'>
+                <div className='playful-footer-link-card'>
+                  <p className='playful-footer-title'>{t('关于我们')}</p>
+                  <div className='playful-footer-links'>
+                    <a href='https://docs.newapi.pro/wiki/project-introduction/' target='_blank' rel='noopener noreferrer'>
+                      {t('关于项目')}
+                    </a>
+                    <a href='https://docs.newapi.pro/support/community-interaction/' target='_blank' rel='noopener noreferrer'>
+                      {t('联系我们')}
+                    </a>
+                    <a href='https://docs.newapi.pro/wiki/features-introduction/' target='_blank' rel='noopener noreferrer'>
+                      {t('功能特性')}
+                    </a>
+                  </div>
                 </div>
-              </div>
 
-              <div className='text-left'>
-                <p className='!text-semi-color-text-0 font-semibold mb-5'>
-                  {t('友情链接')}
-                </p>
-                <div className='flex flex-col gap-4'>
-                  <a
-                    href='https://github.com/Calcium-Ion/new-api-horizon'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    new-api-horizon
-                  </a>
-                  <a
-                    href='https://github.com/coaidev/coai'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    CoAI
-                  </a>
-                  <a
-                    href='https://www.gpt-load.com/'
-                    target='_blank'
-                    rel='noopener noreferrer'
-                    className='!text-semi-color-text-1'
-                  >
-                    GPT-Load
-                  </a>
+                <div className='playful-footer-link-card'>
+                  <p className='playful-footer-title'>{t('文档')}</p>
+                  <div className='playful-footer-links'>
+                    <a href='https://docs.newapi.pro/getting-started/' target='_blank' rel='noopener noreferrer'>
+                      {t('快速开始')}
+                    </a>
+                    <a href='https://docs.newapi.pro/installation/' target='_blank' rel='noopener noreferrer'>
+                      {t('安装指南')}
+                    </a>
+                    <a href='https://docs.newapi.pro/api/' target='_blank' rel='noopener noreferrer'>
+                      {t('API 文档')}
+                    </a>
+                  </div>
+                </div>
+
+                <div className='playful-footer-link-card'>
+                  <p className='playful-footer-title'>{t('相关项目')}</p>
+                  <div className='playful-footer-links'>
+                    <a href='https://github.com/songquanpeng/one-api' target='_blank' rel='noopener noreferrer'>
+                      One API
+                    </a>
+                    <a href='https://github.com/novicezk/midjourney-proxy' target='_blank' rel='noopener noreferrer'>
+                      Midjourney-Proxy
+                    </a>
+                    <a href='https://github.com/Calcium-Ion/neko-api-key-tool' target='_blank' rel='noopener noreferrer'>
+                      neko-api-key-tool
+                    </a>
+                  </div>
+                </div>
+
+                <div className='playful-footer-link-card'>
+                  <p className='playful-footer-title'>{t('友情链接')}</p>
+                  <div className='playful-footer-links'>
+                    <a href='https://github.com/Calcium-Ion/new-api-horizon' target='_blank' rel='noopener noreferrer'>
+                      new-api-horizon
+                    </a>
+                    <a href='https://github.com/coaidev/coai' target='_blank' rel='noopener noreferrer'>
+                      CoAI
+                    </a>
+                    <a href='https://www.gpt-load.com/' target='_blank' rel='noopener noreferrer'>
+                      GPT-Load
+                    </a>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <div className='flex flex-col md:flex-row items-center justify-between w-full max-w-[1110px] gap-6'>
-          <div className='flex flex-wrap items-center gap-2'>
-            <Typography.Text className='text-sm !text-semi-color-text-1'>
-              © {currentYear} {systemName}. {t('版权所有')}
-            </Typography.Text>
-          </div>
+          <div className='playful-footer-bottom flex flex-col gap-4 border-t-2 border-dashed border-playful-foreground/30 pt-6 md:flex-row md:items-center md:justify-between'>
+            <div className='flex flex-wrap items-center gap-2'>
+              <Typography.Text className='text-sm !text-playful-muted-fg'>
+                © {currentYear} {systemName}. {t('版权所有')}
+              </Typography.Text>
+            </div>
 
-          <div className='text-sm'>
-            <span className='!text-semi-color-text-1'>
-              {t('设计与开发由')}{' '}
-            </span>
-            <a
-              href='https://github.com/QuantumNous/new-api'
-              target='_blank'
-              rel='noopener noreferrer'
-              className='!text-semi-color-primary font-medium'
-            >
-              New API
-            </a>
+            <div className='text-sm text-playful-muted-fg'>
+              <span>{t('设计与开发由')} </span>
+              <a
+                href='https://github.com/QuantumNous/new-api'
+                target='_blank'
+                rel='noopener noreferrer'
+                className='font-bold !text-playful-accent'
+              >
+                New API
+              </a>
+            </div>
           </div>
         </div>
       </footer>
@@ -221,21 +185,23 @@ const FooterBar = () => {
   return (
     <div className='w-full'>
       {footer ? (
-        <footer className='relative h-auto py-4 px-6 md:px-24 w-full flex items-center justify-center overflow-hidden'>
-          <div className='flex flex-col md:flex-row items-center justify-between w-full max-w-[1110px] gap-4'>
+        <footer className='playful-footer-shell relative w-full overflow-hidden border-t-4 border-playful-foreground bg-playful-bg px-6 py-8 font-jakarta md:px-10'>
+          <div className='playful-footer-orb-left' aria-hidden='true' />
+          <div className='playful-footer-orb-right' aria-hidden='true' />
+          <div className='playful-footer-frame mx-auto flex w-full max-w-[1160px] flex-col gap-4 px-6 py-6 md:flex-row md:items-center md:justify-between md:px-8'>
             <div
-              className='custom-footer na-cb6feafeb3990c78 text-sm !text-semi-color-text-1'
+              className='custom-footer na-cb6feafeb3990c78 text-sm !text-playful-muted-fg'
               dangerouslySetInnerHTML={{ __html: footer }}
             ></div>
-            <div className='text-sm flex-shrink-0'>
-              <span className='!text-semi-color-text-1'>
+            <div className='text-sm flex-shrink-0 text-playful-muted-fg'>
+              <span>
                 {t('设计与开发由')}{' '}
               </span>
               <a
                 href='https://github.com/QuantumNous/new-api'
                 target='_blank'
                 rel='noopener noreferrer'
-                className='!text-semi-color-primary font-medium'
+                className='font-bold !text-playful-accent'
               >
                 New API
               </a>

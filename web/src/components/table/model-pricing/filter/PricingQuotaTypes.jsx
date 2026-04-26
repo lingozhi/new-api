@@ -40,9 +40,9 @@ const PricingQuotaTypes = ({
       .length;
 
   const items = [
-    { value: 'all', label: t('全部类型'), tagCount: qtyCount('all') },
-    { value: 0, label: t('按量计费'), tagCount: qtyCount(0) },
-    { value: 1, label: t('按次计费'), tagCount: qtyCount(1) },
+    { value: 'all', label: t('全部类型') },
+    { value: 0, label: t('按量计费') },
+    { value: 1, label: t('按次计费') },
   ];
 
   return (

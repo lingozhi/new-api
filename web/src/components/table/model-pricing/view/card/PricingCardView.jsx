@@ -47,10 +47,10 @@ import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
 
 const CARD_STYLES = {
   container:
-    'w-12 h-12 rounded-2xl flex items-center justify-center relative shadow-md',
+    'w-12 h-12 rounded-xl border-2 border-playful-foreground flex items-center justify-center relative shadow-sm',
   icon: 'w-8 h-8 flex items-center justify-center',
-  selected: 'border-blue-500 bg-blue-50',
-  default: 'border-gray-200 hover:border-gray-300',
+  selected: 'border-playful-accent bg-playful-muted translate-y-1',
+  default: 'border-playful-foreground hover:-translate-y-1 hover:shadow-pop',
 };
 
 const PricingCardView = ({
@@ -155,19 +155,19 @@ const PricingCardView = ({
   const renderTags = (record) => {
     // 计费类型标签（左边）
     let billingTag = (
-      <Tag key='billing' shape='circle' color='white' size='small'>
+      <Tag key='billing' shape='circle' color='white' size='small' className='!border-2 !border-playful-foreground font-bold'>
         -
       </Tag>
     );
     if (record.quota_type === 1) {
       billingTag = (
-        <Tag key='billing' shape='circle' color='teal' size='small'>
+        <Tag key='billing' shape='circle' color='teal' size='small' className='!border-2 !border-playful-foreground font-bold !bg-playful-accent !text-white'>
           {t('按次计费')}
         </Tag>
       );
     } else if (record.quota_type === 0) {
       billingTag = (
-        <Tag key='billing' shape='circle' color='violet' size='small'>
+        <Tag key='billing' shape='circle' color='violet' size='small' className='!border-2 !border-playful-foreground font-bold !bg-playful-primary !text-white'>
           {t('按量计费')}
         </Tag>
       );
@@ -184,6 +184,7 @@ const PricingCardView = ({
             shape='circle'
             color={stringToColor(tg)}
             size='small'
+            className='!border-2 !border-playful-foreground font-bold'
           >
             {tg}
           </Tag>,
@@ -221,13 +222,25 @@ const PricingCardView = ({
 
   if (!filteredModels || filteredModels.length === 0) {
     return (
-      <div className='flex justify-center items-center py-20'>
+      <div className='playful-pricing-empty-state'>
+        <div className='playful-table-empty-badge'>
+          <span>{t('暂无匹配结果')}</span>
+        </div>
         <Empty
           image={<IllustrationNoResult style={{ width: 150, height: 150 }} />}
           darkModeImage={
             <IllustrationNoResultDark style={{ width: 150, height: 150 }} />
           }
-          description={t('搜索无结果')}
+          description={
+            <div className='space-y-2'>
+              <div className='font-outfit text-lg font-extrabold text-playful-foreground'>
+                {t('搜索无结果')}
+              </div>
+              <div className='text-sm leading-6 text-playful-muted-fg'>
+                {t('试试调整左侧筛选条件、切换显示设置，或者返回默认视图查看全部模型。')}
+              </div>
+            </div>
+          }
         />
       </div>
     );
@@ -235,7 +248,7 @@ const PricingCardView = ({
 
   return (
     <div className='px-2 pt-2'>
-      <div className='grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-4'>
+      <div className='grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-6'>
         {paginatedModels.map((model, index) => {
           const modelKey = getModelKey(model);
           const isSelected = selectedRowKeys.includes(modelKey);
@@ -253,7 +266,7 @@ const PricingCardView = ({
           return (
             <Card
               key={modelKey || index}
-              className={`!rounded-2xl transition-all duration-200 hover:shadow-lg border cursor-pointer ${isSelected ? CARD_STYLES.selected : CARD_STYLES.default}`}
+              className={`sticker-card transition-all duration-300 cursor-pointer ${isSelected ? CARD_STYLES.selected : CARD_STYLES.default}`}
               bodyStyle={{ height: '100%' }}
               onClick={() => openModelDetail && openModelDetail(model)}
             >

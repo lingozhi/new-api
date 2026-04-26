@@ -21,8 +21,10 @@ import React from 'react';
 import MjLogsTable from '../../components/table/mj-logs';
 
 const Midjourney = () => (
-  <div className='mt-[60px] px-2'>
-    <MjLogsTable />
+  <div className='playful-console-shell playful-console-shell--dense'>
+    <div className='playful-console-frame mx-auto max-w-[1800px]'>
+      <MjLogsTable />
+    </div>
   </div>
 );
 

@@ -53,10 +53,10 @@ const ModelsFilters = ({
       layout='horizontal'
       trigger='change'
       stopValidateWithError={false}
-      className='w-full md:w-auto order-1 md:order-2'
+      className='playful-model-filters-form w-full md:w-auto order-1 md:order-2'
     >
-      <div className='flex flex-col md:flex-row items-center gap-2 w-full md:w-auto'>
-        <div className='relative w-full md:w-56'>
+      <div className='playful-model-filters-shell flex flex-col md:flex-row items-center gap-2 w-full md:w-auto'>
+        <div className='playful-filter-input relative w-full md:w-56'>
           <Form.Input
             field='searchKeyword'
             prefix={<IconSearch />}
@@ -67,7 +67,7 @@ const ModelsFilters = ({
           />
         </div>
 
-        <div className='relative w-full md:w-56'>
+        <div className='playful-filter-input relative w-full md:w-56'>
           <Form.Input
             field='searchVendor'
             prefix={<IconSearch />}
@@ -83,7 +83,7 @@ const ModelsFilters = ({
             type='tertiary'
             htmlType='submit'
             loading={loading || searching}
-            className='flex-1 md:flex-initial md:w-auto'
+            className='candy-btn-secondary flex-1 md:flex-initial md:w-auto'
             size='small'
           >
             {t('查询')}
@@ -92,7 +92,7 @@ const ModelsFilters = ({
           <Button
             type='tertiary'
             onClick={handleReset}
-            className='flex-1 md:flex-initial md:w-auto'
+            className='playful-pill-ghost flex-1 md:flex-initial md:w-auto'
             size='small'
           >
             {t('重置')}

@@ -27,10 +27,11 @@ import {
   getSystemName,
 } from '../../helpers';
 import Turnstile from 'react-turnstile';
-import { Button, Card, Form, Typography } from '@douyinfe/semi-ui';
+import { Card, Form, Typography } from '@douyinfe/semi-ui';
 import { IconMail } from '@douyinfe/semi-icons';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { StickerButton, PlayfulFormField } from '../common/ui/playful';
 
 const { Text, Title } = Typography;
 
@@ -104,87 +105,81 @@ const PasswordResetForm = () => {
   }
 
   return (
-    <div className='relative overflow-hidden bg-gray-100 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8'>
-      {/* 背景模糊晕染球 */}
-      <div
-        className='blur-ball blur-ball-indigo'
-        style={{ top: '-80px', right: '-80px', transform: 'none' }}
-      />
-      <div
-        className='blur-ball blur-ball-teal'
-        style={{ top: '50%', left: '-120px' }}
-      />
-      <div className='w-full max-w-sm mt-[60px]'>
-        <div className='flex flex-col items-center'>
-          <div className='w-full max-w-md'>
-            <div className='flex items-center justify-center mb-6 gap-2'>
-              <img src={logo} alt='Logo' className='h-10 rounded-full' />
-              <Title heading={3} className='!text-gray-800'>
-                {systemName}
-              </Title>
-            </div>
+    <div className='playful-auth-page'>
+      <div className='playful-auth-decor' aria-hidden='true' />
+      <div className='playful-auth-decor-square' aria-hidden='true' />
+      <div className='playful-auth-decor-pill' aria-hidden='true'>
+        {t('Reset Flow')}
+      </div>
 
-            <Card className='border-0 !rounded-2xl overflow-hidden'>
-              <div className='flex justify-center pt-6 pb-2'>
-                <Title heading={3} className='text-gray-800 dark:text-gray-200'>
-                  {t('密码重置')}
-                </Title>
-              </div>
-              <div className='px-2 py-8'>
-                <Form className='space-y-3'>
-                  <Form.Input
-                    field='email'
-                    label={t('邮箱')}
-                    placeholder={t('请输入您的邮箱地址')}
-                    name='email'
-                    value={email}
-                    onChange={handleChange}
-                    prefix={<IconMail />}
-                  />
-
-                  <div className='space-y-2 pt-2'>
-                    <Button
-                      theme='solid'
-                      className='w-full !rounded-full'
-                      type='primary'
-                      htmlType='submit'
-                      onClick={handleSubmit}
-                      loading={loading}
-                      disabled={disableButton}
-                    >
-                      {disableButton
-                        ? `${t('重试')} (${countdown})`
-                        : t('提交')}
-                    </Button>
-                  </div>
-                </Form>
-
-                <div className='mt-6 text-center text-sm'>
-                  <Text>
-                    {t('想起来了？')}{' '}
-                    <Link
-                      to='/login'
-                      className='text-blue-600 hover:text-blue-800 font-medium'
-                    >
-                      {t('登录')}
-                    </Link>
-                  </Text>
-                </div>
-              </div>
-            </Card>
-
-            {turnstileEnabled && (
-              <div className='flex justify-center mt-6'>
-                <Turnstile
-                  sitekey={turnstileSiteKey}
-                  onVerify={(token) => {
-                    setTurnstileToken(token);
-                  }}
-                />
-              </div>
-            )}
+      <div className='playful-auth-panel'>
+        <div className='playful-auth-brand'>
+          <div className='playful-auth-brand-mark'>
+            <img src={logo} alt='Logo' />
           </div>
+          <Title heading={3} className='playful-auth-brand-name !mb-0'>
+            {systemName}
+          </Title>
         </div>
+
+        <Card className='playful-auth-card sticker-card bg-white relative z-10'>
+          <div className='flex justify-center pb-2 pt-3'>
+            <Title heading={3} className='playful-auth-title !mb-0'>
+              {t('密码重置')}
+            </Title>
+          </div>
+
+          <p className='playful-auth-subtitle'>
+            {t('输入你的邮箱，我们会向你发送密码重置链接。')}
+          </p>
+
+          <Form className='playful-auth-form'>
+            <PlayfulFormField
+              field='email'
+              label={t('邮箱')}
+              placeholder={t('请输入您的邮箱地址')}
+              name='email'
+              value={email}
+              onChange={handleChange}
+              prefix={<IconMail />}
+            />
+
+            <div className='space-y-2 pt-2'>
+              <StickerButton
+                variant='primary'
+                block
+                htmlType='submit'
+                onClick={handleSubmit}
+                loading={loading}
+                disabled={disableButton}
+              >
+                {disableButton ? `${t('重试')} (${countdown})` : t('发送重置邮件')}
+              </StickerButton>
+            </div>
+          </Form>
+
+          <div className='playful-auth-note mt-5 p-4 text-center text-sm text-playful-muted-fg'>
+            {t('邮件通常会在几分钟内送达，请同时检查垃圾邮箱。')}
+          </div>
+
+          <div className='playful-auth-footer'>
+            <Text>
+              {t('想起来了？')}{' '}
+              <Link to='/login'>{t('登录')}</Link>
+            </Text>
+          </div>
+        </Card>
+
+        {turnstileEnabled && (
+          <div className='playful-auth-turnstile'>
+            <Turnstile
+              sitekey={turnstileSiteKey}
+              onVerify={(token) => {
+                setTurnstileToken(token);
+              }}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

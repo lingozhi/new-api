@@ -18,10 +18,26 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Card, Avatar, Skeleton, Tag } from '@douyinfe/semi-ui';
+import { Avatar, Skeleton } from '@douyinfe/semi-ui';
 import { VChart } from '@visactor/react-vchart';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { StickerCard, StickerButton } from '../common/ui/playful';
+
+const TONE_BY_GROUP_COLOR = {
+  'bg-blue-50': 'violet',
+  'bg-green-50': 'mint',
+  'bg-yellow-50': 'tertiary',
+  'bg-indigo-50': 'pink',
+};
+
+const SHADOW_BY_TONE = {
+  violet: 'pop-violet',
+  mint: 'pop-mint',
+  tertiary: 'pop-tertiary',
+  pink: 'pop-pink',
+  neutral: 'pop-soft',
+};
 
 const StatsCards = ({
   groupedStatsData,
@@ -32,83 +48,89 @@ const StatsCards = ({
 }) => {
   const navigate = useNavigate();
   const { t } = useTranslation();
+
   return (
-    <div className='mb-4'>
-      <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'>
-        {groupedStatsData.map((group, idx) => (
-          <Card
+    <div className='playful-bento-grid playful-bento-stats mb-6'>
+      {groupedStatsData.map((group, idx) => {
+        const tone = TONE_BY_GROUP_COLOR[group.color] || 'neutral';
+        const shadow = SHADOW_BY_TONE[tone];
+        return (
+          <StickerCard
             key={idx}
-            {...CARD_PROPS}
-            className={`${group.color} border-0 !rounded-2xl w-full`}
+            tone={tone}
+            shadow={shadow}
             title={group.title}
+            className='playful-bento-stat-card'
+            bodyClassName='!pt-2'
           >
-            <div className='space-y-4'>
-              {group.items.map((item, itemIdx) => (
-                <div
-                  key={itemIdx}
-                  className='flex items-center justify-between cursor-pointer'
-                  onClick={item.onClick}
-                >
-                  <div className='flex items-center'>
-                    <Avatar
-                      className='mr-3'
-                      size='small'
-                      color={item.avatarColor}
-                    >
-                      {item.icon}
-                    </Avatar>
-                    <div>
-                      <div className='text-xs text-gray-500'>{item.title}</div>
-                      <div className='text-lg font-semibold'>
-                        <Skeleton
-                          loading={loading}
-                          active
-                          placeholder={
-                            <Skeleton.Paragraph
-                              active
-                              rows={1}
-                              style={{
-                                width: '65px',
-                                height: '24px',
-                                marginTop: '4px',
-                              }}
-                            />
-                          }
-                        >
-                          {item.value}
-                        </Skeleton>
-                      </div>
+            {group.items.map((item, itemIdx) => (
+              <div
+                key={itemIdx}
+                className='playful-bento-row'
+                onClick={item.onClick}
+                role='button'
+                tabIndex={0}
+              >
+                <div className='flex items-center gap-3 min-w-0'>
+                  <Avatar
+                    className='playful-bento-row__avatar'
+                    size='small'
+                    color={item.avatarColor}
+                  >
+                    {item.icon}
+                  </Avatar>
+                  <div className='min-w-0'>
+                    <div className='playful-bento-row__label truncate'>
+                      {item.title}
+                    </div>
+                    <div className='playful-bento-row__value truncate'>
+                      <Skeleton
+                        loading={loading}
+                        active
+                        placeholder={
+                          <Skeleton.Paragraph
+                            active
+                            rows={1}
+                            style={{
+                              width: '65px',
+                              height: '22px',
+                              marginTop: '4px',
+                            }}
+                          />
+                        }
+                      >
+                        {item.value}
+                      </Skeleton>
                     </div>
                   </div>
-                  {item.title === t('当前余额') ? (
-                    <Tag
-                      color='white'
-                      shape='circle'
-                      size='large'
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate('/console/topup');
-                      }}
-                    >
-                      {t('充值')}
-                    </Tag>
-                  ) : (
-                    (loading ||
-                      (item.trendData && item.trendData.length > 0)) && (
-                      <div className='w-24 h-10'>
-                        <VChart
-                          spec={getTrendSpec(item.trendData, item.trendColor)}
-                          option={CHART_CONFIG}
-                        />
-                      </div>
-                    )
-                  )}
                 </div>
-              ))}
-            </div>
-          </Card>
-        ))}
-      </div>
+                {item.title === t('当前余额') ? (
+                  <StickerButton
+                    variant='primary'
+                    size='sm'
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate('/console/topup');
+                    }}
+                  >
+                    {t('充值')}
+                  </StickerButton>
+                ) : (
+                  (loading ||
+                    (item.trendData && item.trendData.length > 0)) && (
+                    <div className='playful-bento-row__sparkline'>
+                      <VChart
+                        spec={getTrendSpec(item.trendData, item.trendColor)}
+                        option={CHART_CONFIG}
+                      />
+                    </div>
+                  )
+                )}
+              </div>
+            ))}
+          </StickerCard>
+        );
+      })}
     </div>
   );
 };

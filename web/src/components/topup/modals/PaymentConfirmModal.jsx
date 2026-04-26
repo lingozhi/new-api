@@ -61,18 +61,18 @@ const PaymentConfirmModal = ({
       confirmLoading={confirmLoading}
     >
       <div className='space-y-4'>
-        <Card className='!rounded-xl !border-0 bg-slate-50 dark:bg-slate-800'>
+        <Card className='!rounded-xl !border-0 bg-slate-50'>
           <div className='space-y-3'>
             <div className='flex justify-between items-center'>
-              <Text strong className='text-slate-700 dark:text-slate-200'>
+              <Text strong className='text-slate-700'>
                 {t('充值数量')}：
               </Text>
-              <Text className='text-slate-900 dark:text-slate-100'>
+              <Text className='text-slate-900'>
                 {renderQuotaWithAmount(topUpCount)}
               </Text>
             </div>
             <div className='flex justify-between items-center'>
-              <Text strong className='text-slate-700 dark:text-slate-200'>
+              <Text strong className='text-slate-700'>
                 {t('实付金额')}：
               </Text>
               {amountLoading ? (
@@ -93,25 +93,25 @@ const PaymentConfirmModal = ({
             {hasDiscount && !amountLoading && (
               <>
                 <div className='flex justify-between items-center'>
-                  <Text className='text-slate-500 dark:text-slate-400'>
+                  <Text className='text-slate-500'>
                     {t('原价')}：
                   </Text>
-                  <Text delete className='text-slate-500 dark:text-slate-400'>
+                  <Text delete className='text-slate-500'>
                     {`${originalAmount.toFixed(2)} ${t('元')}`}
                   </Text>
                 </div>
                 <div className='flex justify-between items-center'>
-                  <Text className='text-slate-500 dark:text-slate-400'>
+                  <Text className='text-slate-500'>
                     {t('优惠')}：
                   </Text>
-                  <Text className='text-emerald-600 dark:text-emerald-400'>
+                  <Text className='text-emerald-600'>
                     {`- ${discountAmount.toFixed(2)} ${t('元')}`}
                   </Text>
                 </div>
               </>
             )}
             <div className='flex justify-between items-center'>
-              <Text strong className='text-slate-700 dark:text-slate-200'>
+              <Text strong className='text-slate-700'>
                 {t('支付方式')}：
               </Text>
               <div className='flex items-center'>
@@ -149,7 +149,7 @@ const PaymentConfirmModal = ({
                             }
                           />
                         )}
-                        <Text className='text-slate-900 dark:text-slate-100'>
+                        <Text className='text-slate-900'>
                           {payMethod.name}
                         </Text>
                       </>
@@ -164,7 +164,7 @@ const PaymentConfirmModal = ({
                             size={16}
                             color='#1677FF'
                           />
-                          <Text className='text-slate-900 dark:text-slate-100'>
+                          <Text className='text-slate-900'>
                             {t('支付宝')}
                           </Text>
                         </>
@@ -177,7 +177,7 @@ const PaymentConfirmModal = ({
                             size={16}
                             color='#635BFF'
                           />
-                          <Text className='text-slate-900 dark:text-slate-100'>
+                          <Text className='text-slate-900'>
                             Stripe
                           </Text>
                         </>
@@ -190,7 +190,7 @@ const PaymentConfirmModal = ({
                             size={16}
                             color='#07C160'
                           />
-                          <Text className='text-slate-900 dark:text-slate-100'>
+                          <Text className='text-slate-900'>
                             {t('微信')}
                           </Text>
                         </>

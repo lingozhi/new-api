@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import SkeletonWrapper from '../components/SkeletonWrapper';
 
 const Navigation = ({
@@ -29,12 +29,7 @@ const Navigation = ({
   pricingRequireAuth,
 }) => {
   const renderNavLinks = () => {
-    const baseClasses =
-      'flex-shrink-0 flex items-center gap-1 font-semibold rounded-md transition-all duration-200 ease-in-out';
-    const hoverClasses = 'hover:text-semi-color-primary';
-    const spacingClasses = isMobile ? 'p-1' : 'p-2';
-
-    const commonLinkClasses = `${baseClasses} ${spacingClasses} ${hoverClasses}`;
+    const location = useLocation();
 
     return mainNavLinks.map((link) => {
       const linkContent = <span>{link.text}</span>;
@@ -46,7 +41,7 @@ const Navigation = ({
             href={link.externalLink}
             target='_blank'
             rel='noopener noreferrer'
-            className={commonLinkClasses}
+            className='playful-nav-link flex-shrink-0 my-1'
           >
             {linkContent}
           </a>
@@ -61,8 +56,22 @@ const Navigation = ({
         targetPath = '/login';
       }
 
+      // Determine active state strictly matching path, or partially for console
+      let isActive = false;
+      if (link.to === '/') {
+        isActive = location.pathname === '/';
+      } else {
+        isActive = location.pathname.startsWith(link.to);
+      }
+
+      const activeClasses = isActive ? 'is-active' : '';
+
       return (
-        <Link key={link.itemKey} to={targetPath} className={commonLinkClasses}>
+        <Link
+          key={link.itemKey}
+          to={targetPath}
+          className={`playful-nav-link flex-shrink-0 my-1 ${activeClasses}`}
+        >
           {linkContent}
         </Link>
       );
@@ -70,7 +79,7 @@ const Navigation = ({
   };
 
   return (
-    <nav className='flex flex-1 items-center gap-1 lg:gap-2 mx-2 md:mx-4 overflow-x-auto whitespace-nowrap scrollbar-hide'>
+    <nav className='playful-nav-ribbon flex w-full max-w-4xl items-center gap-1 overflow-x-auto whitespace-nowrap px-1 py-1 scrollbar-hide'>
       <SkeletonWrapper
         loading={isLoading}
         type='navigation'

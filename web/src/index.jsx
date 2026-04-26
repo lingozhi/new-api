@@ -24,10 +24,12 @@ import '@douyinfe/semi-ui/dist/css/semi.css';
 import { UserProvider } from './context/User';
 import 'react-toastify/dist/ReactToastify.css';
 import { StatusProvider } from './context/Status';
-import { ThemeProvider } from './context/Theme';
 import PageLayout from './components/layout/PageLayout';
 import './i18n/i18n';
 import './index.css';
+
+// Note: the VChart Playful theme is registered inside useDashboardCharts so
+// the (heavy) VChart core only ships with the dashboard chunk.
 import { LocaleProvider } from '@douyinfe/semi-ui';
 import { useTranslation } from 'react-i18next';
 import zh_CN from '@douyinfe/semi-ui/lib/es/locale/source/zh_CN';
@@ -65,11 +67,9 @@ root.render(
             v7_relativeSplatPath: true,
           }}
         >
-          <ThemeProvider>
-            <SemiLocaleWrapper>
-              <PageLayout />
-            </SemiLocaleWrapper>
-          </ThemeProvider>
+          <SemiLocaleWrapper>
+            <PageLayout />
+          </SemiLocaleWrapper>
         </BrowserRouter>
       </UserProvider>
     </StatusProvider>

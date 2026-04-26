@@ -2166,8 +2166,7 @@ const EditChannelModal = (props) => {
               {t('提交')}
             </Button>
             <Button
-              theme='light'
-              type='primary'
+              className='candy-btn-secondary'
               onClick={handleCancel}
               icon={<IconClose />}
             >
@@ -3783,9 +3782,9 @@ const EditChannelModal = (props) => {
       <Modal
         title={
           <div className='flex items-center'>
-            <div className='w-8 h-8 rounded-full bg-green-100 dark:bg-green-900 flex items-center justify-center mr-3'>
+            <div className='w-8 h-8 rounded-full bg-green-100 flex items-center justify-center mr-3'>
               <svg
-                className='w-4 h-4 text-green-600 dark:text-green-400'
+                className='w-4 h-4 text-green-600'
                 fill='currentColor'
                 viewBox='0 0 20 20'
               >

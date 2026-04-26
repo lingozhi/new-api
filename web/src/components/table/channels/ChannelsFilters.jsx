@@ -37,13 +37,13 @@ const ChannelsFilters = ({
   t,
 }) => {
   return (
-    <div className='flex flex-col md:flex-row justify-between items-center gap-2 w-full'>
-      <div className='flex gap-2 w-full md:w-auto order-2 md:order-1'>
+    <div className='playful-filter-toolbar flex flex-col md:flex-row justify-between items-center gap-3 w-full'>
+      <div className='playful-action-cluster w-full md:w-auto order-2 md:order-1'>
         <Button
           size='small'
           theme='light'
           type='primary'
-          className='w-full md:w-auto'
+          className='candy-btn w-full md:w-auto'
           onClick={() => {
             setEditingChannel({
               id: undefined,
@@ -57,7 +57,7 @@ const ChannelsFilters = ({
         <Button
           size='small'
           type='tertiary'
-          className='w-full md:w-auto'
+          className='candy-btn-secondary w-full md:w-auto'
           onClick={refresh}
         >
           {t('刷新')}
@@ -67,13 +67,13 @@ const ChannelsFilters = ({
           size='small'
           type='tertiary'
           onClick={() => setShowColumnSelector(true)}
-          className='w-full md:w-auto'
+          className='candy-btn-secondary w-full md:w-auto'
         >
           {t('列设置')}
         </Button>
       </div>
 
-      <div className='flex flex-col md:flex-row items-center gap-2 w-full md:w-auto order-1 md:order-2'>
+      <div className='playful-filter-form-shell flex flex-col md:flex-row items-center gap-2 w-full md:w-auto order-1 md:order-2'>
         <Form
           initValues={formInitValues}
           getFormApi={(api) => setFormApi(api)}
@@ -83,7 +83,7 @@ const ChannelsFilters = ({
           layout='horizontal'
           trigger='change'
           stopValidateWithError={false}
-          className='flex flex-col md:flex-row items-center gap-2 w-full'
+          className='playful-filter-form flex flex-col md:flex-row items-center gap-2 w-full'
         >
           <div className='relative w-full md:w-64'>
             <Form.Input
@@ -130,7 +130,7 @@ const ChannelsFilters = ({
             type='tertiary'
             htmlType='submit'
             loading={loading || searching}
-            className='w-full md:w-auto'
+            className='candy-btn-secondary w-full md:w-auto'
           >
             {t('查询')}
           </Button>
@@ -146,7 +146,7 @@ const ChannelsFilters = ({
                 }, 100);
               }
             }}
-            className='w-full md:w-auto'
+            className='candy-btn-secondary w-full md:w-auto'
           >
             {t('重置')}
           </Button>

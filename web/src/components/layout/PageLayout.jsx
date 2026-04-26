@@ -22,8 +22,11 @@ import { Layout } from '@douyinfe/semi-ui';
 import SiderBar from './SiderBar';
 import App from '../../App';
 import FooterBar from './Footer';
-import { ToastContainer } from 'react-toastify';
 import ErrorBoundary from '../common/ErrorBoundary';
+import {
+  DotGridBackdrop,
+  PlayfulToastContainer,
+} from '../common/ui/playful';
 import React, { useContext, useEffect, useState } from 'react';
 import { useIsMobile } from '../../hooks/common/useIsMobile';
 import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
@@ -158,9 +161,7 @@ const PageLayout = () => {
           padding: 0,
           height: 'auto',
           lineHeight: 'normal',
-          position: 'fixed',
           width: '100%',
-          top: 0,
           zIndex: 100,
         }}
       >
@@ -171,9 +172,11 @@ const PageLayout = () => {
       </Header>
       <Layout
         style={{
+          // Desktop: the middle Layout is the page scroller. Mobile: body scrolls.
           overflow: isMobile ? 'visible' : 'auto',
           display: 'flex',
           flexDirection: 'column',
+          background: 'var(--playful-bg)',
         }}
       >
         {showSider && (
@@ -182,7 +185,7 @@ const PageLayout = () => {
             style={{
               position: 'fixed',
               left: 0,
-              top: '64px',
+              top: 'var(--playful-header-offset, 96px)',
               zIndex: 99,
               border: 'none',
               paddingRight: '0',
@@ -209,16 +212,28 @@ const PageLayout = () => {
           }}
         >
           <Content
+            className='playful-content'
             style={{
               flex: '1 0 auto',
-              overflowY: isMobile ? 'visible' : 'hidden',
+              overflow: 'visible',
               WebkitOverflowScrolling: 'touch',
-              padding: shouldInnerPadding ? (isMobile ? '5px' : '24px') : '0',
+              padding: shouldInnerPadding ? (isMobile ? '8px' : '24px') : '0',
               position: 'relative',
+              background: 'var(--playful-bg)',
+              minWidth: 0,
             }}
           >
+            {shouldInnerPadding ? (
+              <DotGridBackdrop density='sparse' opacity={0.55} />
+            ) : null}
             <ErrorBoundary>
-              <App />
+              {shouldInnerPadding ? (
+                <div className='relative z-10 mx-auto w-full max-w-[96rem]'>
+                  <App />
+                </div>
+              ) : (
+                <App />
+              )}
             </ErrorBoundary>
           </Content>
           {!shouldHideFooter && (
@@ -233,7 +248,7 @@ const PageLayout = () => {
           )}
         </Layout>
       </Layout>
-      <ToastContainer />
+      <PlayfulToastContainer />
     </Layout>
   );
 };

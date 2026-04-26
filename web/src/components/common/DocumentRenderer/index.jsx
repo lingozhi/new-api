@@ -141,8 +141,10 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
   // 显示加载状态
   if (loading) {
     return (
-      <div className='flex justify-center items-center min-h-screen'>
-        <Spin size='large' />
+      <div className='playful-doc-shell'>
+        <div className='playful-doc-frame flex min-h-[50vh] items-center justify-center'>
+          <Spin size='large' />
+        </div>
       </div>
     );
   }
@@ -150,7 +152,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
   // 如果没有内容，显示空状态
   if (!content || content.trim() === '') {
     return (
-      <div className='flex justify-center items-center min-h-screen bg-gray-50'>
+      <div className='playful-doc-shell'>
         <Empty
           title={t('管理员未设置' + title + '内容')}
           image={
@@ -159,7 +161,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
           darkModeImage={
             <IllustrationConstructionDark style={{ width: 150, height: 150 }} />
           }
-          className='p-8'
+          className='playful-doc-frame p-8 sticker-card bg-white'
         />
       </div>
     );
@@ -168,13 +170,15 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
   // 如果是 URL，显示链接卡片
   if (isUrl(content)) {
     return (
-      <div className='flex justify-center items-center min-h-screen bg-gray-50 p-4'>
-        <Card className='max-w-md w-full'>
+      <div className='playful-doc-shell'>
+        <Card className='playful-doc-frame max-w-md w-full sticker-card bg-white relative z-10'>
+          <div className='absolute -top-6 -left-6 w-16 h-16 bg-playful-accent rounded-full -z-10 animate-bounce'></div>
+          <div className='absolute -bottom-6 -right-6 w-20 h-20 bg-playful-tertiary border-4 border-playful-foreground rounded-lg -z-10 rotate-12'></div>
           <div className='text-center'>
-            <Title heading={4} className='mb-4'>
+            <Title heading={4} className='mb-4 font-outfit font-black text-playful-foreground'>
               {title}
             </Title>
-            <p className='text-gray-600 mb-4'>
+            <p className='text-playful-foreground font-jakarta mb-4'>
               {t('管理员设置了外部链接，点击下方按钮访问')}
             </p>
             <a
@@ -183,7 +187,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
               rel='noopener noreferrer'
               title={content.trim()}
               aria-label={`${t('访问' + title)}: ${content.trim()}`}
-              className='inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors'
+              className='candy-btn bg-playful-accent !text-white inline-block px-6 py-3'
             >
               {t('访问' + title)}
             </a>
@@ -196,17 +200,16 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
   // 如果是 HTML 内容，直接渲染
   if (isHtmlContent(content)) {
     return (
-      <div className='min-h-screen bg-gray-50'>
-        <div className='max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8'>
-          <div className='bg-white rounded-lg shadow-sm p-8'>
-            <Title heading={2} className='text-center mb-8'>
-              {title}
-            </Title>
-            <div
-              className='prose prose-lg max-w-none'
-              dangerouslySetInnerHTML={{ __html: htmlPayload.content }}
-            />
-          </div>
+      <div className='playful-doc-shell'>
+        <div className='playful-doc-frame max-w-4xl sticker-card bg-white p-8 md:p-12'>
+          <Title heading={2} className='playful-doc-title text-center mb-8 font-outfit font-black text-playful-foreground relative'>
+              <span className='relative z-10'>{title}</span>
+              <div className='absolute -bottom-2 left-1/2 -translate-x-1/2 w-24 h-4 bg-playful-tertiary -z-10 -rotate-2'></div>
+          </Title>
+          <div
+            className='typography-content max-w-none'
+            dangerouslySetInnerHTML={{ __html: htmlPayload.content }}
+          />
         </div>
       </div>
     );
@@ -214,15 +217,14 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
 
   // 其他内容统一使用 Markdown 渲染器
   return (
-    <div className='min-h-screen bg-gray-50'>
-      <div className='max-w-4xl mx-auto py-12 px-4 sm:px-6 lg:px-8'>
-        <div className='bg-white rounded-lg shadow-sm p-8'>
-          <Title heading={2} className='text-center mb-8'>
-            {title}
-          </Title>
-          <div className='prose prose-lg max-w-none'>
-            <MarkdownRenderer content={content} />
-          </div>
+    <div className='playful-doc-shell'>
+      <div className='playful-doc-frame max-w-4xl sticker-card bg-white p-8 md:p-12'>
+        <Title heading={2} className='playful-doc-title text-center mb-8 font-outfit font-black text-playful-foreground relative'>
+          <span className='relative z-10'>{title}</span>
+          <div className='absolute -bottom-2 left-1/2 -translate-x-1/2 w-24 h-4 bg-playful-tertiary -z-10 -rotate-2'></div>
+        </Title>
+        <div className='typography-content max-w-none'>
+          <MarkdownRenderer content={content} />
         </div>
       </div>
     </div>

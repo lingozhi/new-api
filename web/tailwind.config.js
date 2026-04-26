@@ -20,8 +20,18 @@ For commercial licensing, please contact support@quantumnous.com
 export default {
   content: ['./index.html', './src/**/*.{js,jsx,ts,tsx}'],
   theme: {
-    colors: {
-      'semi-color-white': 'var(--semi-color-white)',
+    extend: {
+      borderRadius: {
+        'semi-border-radius-extra-small':
+          'var(--semi-border-radius-extra-small)',
+        'semi-border-radius-small': 'var(--semi-border-radius-small)',
+        'semi-border-radius-medium': 'var(--semi-border-radius-medium)',
+        'semi-border-radius-large': 'var(--semi-border-radius-large)',
+        'semi-border-radius-circle': 'var(--semi-border-radius-circle)',
+        'semi-border-radius-full': 'var(--semi-border-radius-full)',
+      },
+      colors: {
+        'semi-color-white': 'var(--semi-color-white)',
       'semi-color-black': 'var(--semi-color-black)',
       'semi-color-primary': 'var(--semi-color-primary)',
       'semi-color-primary-hover': 'var(--semi-color-primary-hover)',
@@ -132,18 +142,69 @@ export default {
       'semi-color-data-17': 'var(--semi-color-data-17)',
       'semi-color-data-18': 'var(--semi-color-data-18)',
       'semi-color-data-19': 'var(--semi-color-data-19)',
+      'playful-bg': '#FFFDF5',
+      'playful-foreground': '#1E293B',
+      'playful-muted': '#F1F5F9',
+      'playful-muted-fg': '#64748B',
+      'playful-accent': '#8B5CF6',
+      'playful-secondary': '#F472B6',
+      'playful-tertiary': '#FBBF24',
+      'playful-quaternary': '#34D399',
+      'playful-border': '#E2E8F0',
+      'playful-card': '#FFFFFF',
+      'playful-primary': '#8B5CF6',
+      'playful-accent-foreground': '#FFFFFF',
     },
-    extend: {
-      borderRadius: {
-        'semi-border-radius-extra-small':
-          'var(--semi-border-radius-extra-small)',
-        'semi-border-radius-small': 'var(--semi-border-radius-small)',
-        'semi-border-radius-medium': 'var(--semi-border-radius-medium)',
-        'semi-border-radius-large': 'var(--semi-border-radius-large)',
-        'semi-border-radius-circle': 'var(--semi-border-radius-circle)',
-        'semi-border-radius-full': 'var(--semi-border-radius-full)',
+    boxShadow: {
+        'pop': '4px 4px 0px 0px #1E293B',
+        'pop-hover': '6px 6px 0px 0px #1E293B',
+        'pop-active': '2px 2px 0px 0px #1E293B',
+        'pop-sm': '2px 2px 0px 0px #1E293B',
+        'pop-soft': '4px 4px 0px 0px #1E293B',
+        'pop-pink': '8px 8px 0px 0px #F472B6',
+        'pop-mint': '8px 8px 0px 0px #34D399',
+        'pop-tertiary': '8px 8px 0px 0px #FBBF24',
+        'pop-violet': '8px 8px 0px 0px #8B5CF6',
+      },
+      fontFamily: {
+        outfit: ['"Outfit"', 'system-ui', 'sans-serif'],
+        jakarta: ['"Plus Jakarta Sans"', 'system-ui', 'sans-serif'],
+        display: ['"Outfit"', 'system-ui', 'sans-serif'],
+      },
+      transitionTimingFunction: {
+        playful: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+        'playful-smooth': 'cubic-bezier(0.4, 0, 0.2, 1)',
+      },
+      transitionDuration: {
+        playful: '300ms',
+      },
+      keyframes: {
+        'playful-wiggle': {
+          '0%, 100%': { transform: 'rotate(0deg)' },
+          '25%': { transform: 'rotate(3deg)' },
+          '75%': { transform: 'rotate(-3deg)' },
+        },
+        'playful-pop-in': {
+          '0%': { transform: 'scale(0.6)', opacity: '0' },
+          '60%': { transform: 'scale(1.08)', opacity: '1' },
+          '100%': { transform: 'scale(1)', opacity: '1' },
+        },
+      },
+      animation: {
+        'playful-wiggle': 'playful-wiggle 600ms cubic-bezier(0.34, 1.56, 0.64, 1)',
+        'playful-pop-in': 'playful-pop-in 400ms cubic-bezier(0.34, 1.56, 0.64, 1)',
       },
     },
   },
-  plugins: [],
+  plugins: [
+    function ({ addUtilities }) {
+      addUtilities({
+        '.transition-playful': {
+          'transition-property': 'transform, box-shadow, background-color, color, border-color, opacity',
+          'transition-timing-function': 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+          'transition-duration': '300ms',
+        },
+      });
+    },
+  ],
 };

@@ -22,8 +22,10 @@ import TokensTable from '../../components/table/tokens';
 
 const Token = () => {
   return (
-    <div className='mt-[60px] px-2'>
-      <TokensTable />
+    <div className='playful-console-shell playful-console-shell--dense'>
+      <div className='playful-console-frame mx-auto max-w-[1800px]'>
+        <TokensTable />
+      </div>
     </div>
   );
 };
