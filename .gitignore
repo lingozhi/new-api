@@ -24,6 +24,10 @@ plans
 .claude
 .cla
 
+# repo-root screenshot artifacts and openapi dumps (not nested)
+/*.png
+/*.openapi.json
+
 electron/node_modules
 electron/dist
 data/
