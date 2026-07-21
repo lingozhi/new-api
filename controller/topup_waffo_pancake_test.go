@@ -89,3 +89,28 @@ func TestGetWaffoPancakePayMoney(t *testing.T) {
 		})
 	}
 }
+
+func TestGetWaffoPancakeCheckoutCurrency(t *testing.T) {
+	originalQuotaDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
+	t.Cleanup(func() {
+		operation_setting.GetGeneralSetting().QuotaDisplayType = originalQuotaDisplayType
+	})
+
+	testCases := []struct {
+		name             string
+		quotaDisplayType string
+		expected         string
+	}{
+		{name: "CNY display", quotaDisplayType: operation_setting.QuotaDisplayTypeCNY, expected: "CNY"},
+		{name: "USD display", quotaDisplayType: operation_setting.QuotaDisplayTypeUSD, expected: "USD"},
+		{name: "token display", quotaDisplayType: operation_setting.QuotaDisplayTypeTokens, expected: "USD"},
+		{name: "unknown display", quotaDisplayType: "UNKNOWN", expected: "USD"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			operation_setting.GetGeneralSetting().QuotaDisplayType = tc.quotaDisplayType
+			require.Equal(t, tc.expected, getWaffoPancakeCheckoutCurrency())
+		})
+	}
+}
