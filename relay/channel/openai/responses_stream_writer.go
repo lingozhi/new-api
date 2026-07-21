@@ -10,7 +10,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const maxBufferedResponsesMetadataPreludeEvents = 4
+const (
+	maxBufferedResponsesMetadataPreludeEvents = 4
+	maxBufferedResponsesMetadataPreludeBytes  = 256 << 10
+)
 
 type bufferedResponsesEvent struct {
 	eventType string
@@ -21,6 +24,7 @@ type ResponsesStreamWriter struct {
 	c                       *gin.Context
 	bufferMetadataPrelude   bool
 	bufferedMetadataPrelude []bufferedResponsesEvent
+	bufferedMetadataBytes   int
 	protocolStarted         bool
 	terminalWritten         bool
 	pendingTerminalType     string
@@ -44,11 +48,13 @@ func (w *ResponsesStreamWriter) WriteData(eventType, data string) error {
 	}
 	if w.bufferMetadataPrelude && !w.protocolStarted &&
 		len(w.bufferedMetadataPrelude) < maxBufferedResponsesMetadataPreludeEvents &&
+		len(data) <= maxBufferedResponsesMetadataPreludeBytes-w.bufferedMetadataBytes &&
 		isResponsesMetadataPrelude(eventType, data) {
 		w.bufferedMetadataPrelude = append(w.bufferedMetadataPrelude, bufferedResponsesEvent{
 			eventType: eventType,
 			data:      data,
 		})
+		w.bufferedMetadataBytes += len(data)
 		return nil
 	}
 	if err := w.flushMetadataPrelude(); err != nil {
@@ -60,6 +66,7 @@ func (w *ResponsesStreamWriter) WriteData(eventType, data string) error {
 func (w *ResponsesStreamWriter) flushMetadataPrelude() error {
 	buffered := w.bufferedMetadataPrelude
 	w.bufferedMetadataPrelude = nil
+	w.bufferedMetadataBytes = 0
 	for _, event := range buffered {
 		if err := w.writeData(event.eventType, event.data); err != nil {
 			return err
