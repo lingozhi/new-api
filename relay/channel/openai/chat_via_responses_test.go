@@ -307,6 +307,28 @@ func TestOaiChatToResponsesStreamHandlerReturnsPreCommitCapacityFailureForRetry(
 	require.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
 }
 
+func TestOaiChatToResponsesStreamHandlerRetriesCapacityFailureAfterMetadataOnlyPrelude(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1710000000,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
+		`data: {"error":{"message":"We're currently experiencing high demand, which may cause temporary errors.","type":"server_error","code":"server_error"}}`,
+		``,
+	}, "\n\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info.BeginChannelAttempt()
+
+	usage, apiErr := OaiChatToResponsesStreamHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+	require.True(t, types.IsPreCommitStreamCapacityError(apiErr))
+	require.False(t, c.Writer.Written())
+	require.Empty(t, recorder.Body.String())
+	require.False(t, info.HasSendResponse())
+	require.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+}
+
 func TestOaiChatToResponsesStreamHandlerTreatsPingAsPreCommitForCapacityRetry(t *testing.T) {
 	body := `data: {"error":{"message":"We're currently experiencing high demand, which may cause temporary errors.","type":"server_error","code":"server_error"}}` + "\n\n"
 	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)

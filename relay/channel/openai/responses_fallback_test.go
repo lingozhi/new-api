@@ -384,9 +384,50 @@ func TestOaiResponsesStreamHandlerRetryUsesOnlySuccessfulChannelHeaders(t *testi
 	require.Equal(t, []string{"response.completed"}, responsesTerminalEvents(t, recorder.Body.String()))
 }
 
-func TestOaiResponsesStreamHandlerDoesNotRetryCapacityFailureAfterCommit(t *testing.T) {
+func TestResponsesStreamWriterBuffersMetadataPreludeUntilProtocolOutput(t *testing.T) {
+	c, _, _, recorder := setupResponsesTest(t, strings.NewReader(""))
+	streamWriter := NewResponsesStreamWriter(c)
+
+	require.NoError(t, streamWriter.WriteData("response.created", `{"type":"response.created","response":{"id":"resp_buffered","status":"in_progress"}}`))
+	require.NoError(t, streamWriter.WriteData("response.in_progress", `{"type":"response.in_progress","response":{"id":"resp_buffered","status":"in_progress"}}`))
+	require.False(t, streamWriter.ProtocolStarted())
+	require.False(t, c.Writer.Written())
+	require.Empty(t, recorder.Body.String())
+
+	require.NoError(t, streamWriter.WriteData("response.output_text.delta", `{"type":"response.output_text.delta","delta":"hello"}`))
+	require.True(t, streamWriter.ProtocolStarted())
+	require.True(t, c.Writer.Written())
+	requireOrderedSubstrings(t, recorder.Body.String(),
+		`event: response.created`,
+		`event: response.in_progress`,
+		`event: response.output_text.delta`,
+	)
+}
+
+func TestOaiResponsesStreamHandlerRetriesCapacityFailureAfterMetadataOnlyPrelude(t *testing.T) {
 	body := strings.Join([]string{
 		`data: {"type":"response.created","response":{"id":"resp_busy","status":"in_progress"}}`,
+		`data: {"type":"response.in_progress","response":{"id":"resp_busy","status":"in_progress"}}`,
+		`data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}`,
+		``,
+	}, "\n\n")
+	c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(body))
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.True(t, types.IsPreCommitStreamCapacityError(apiErr))
+	require.False(t, c.Writer.Written())
+	require.Empty(t, recorder.Body.String())
+	assert.False(t, info.HasSendResponse())
+	assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+}
+
+func TestOaiResponsesStreamHandlerDoesNotRetryCapacityFailureAfterOutput(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_busy","status":"in_progress"}}`,
+		`data: {"type":"response.output_text.delta","delta":"partial"}`,
 		`data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}`,
 		``,
 	}, "\n\n")
@@ -396,8 +437,8 @@ func TestOaiResponsesStreamHandlerDoesNotRetryCapacityFailureAfterCommit(t *test
 
 	require.Nil(t, apiErr)
 	require.NotNil(t, usage)
-	assert.True(t, c.Writer.Written())
-	assert.Contains(t, recorder.Body.String(), `"type":"response.created"`)
+	require.True(t, c.Writer.Written())
+	require.Contains(t, recorder.Body.String(), `"type":"response.output_text.delta"`)
 	require.Equal(t, []string{"response.failed"}, responsesTerminalEvents(t, recorder.Body.String()))
 	assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
 }
