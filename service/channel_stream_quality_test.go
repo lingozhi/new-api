@@ -65,6 +65,34 @@ func TestObserveStreamChannelQualityImmediatelyIsolatesAccountConcurrencyFailure
 	assert.Equal(t, 29, boundChannel, "failed stream must not overwrite the healthy affinity")
 }
 
+func TestObserveStreamChannelQualityImmediatelyIsolatesHighDemandFailure(t *testing.T) {
+	model.ClearChannelCooldownsForTest()
+	clearStreamChannelQualityForTest()
+	t.Cleanup(func() {
+		model.ClearChannelCooldownsForTest()
+		clearStreamChannelQualityForTest()
+	})
+
+	info := newStreamQualityRelayInfoWithEndError(
+		18,
+		"gpt-5.6-sol",
+		relaycommon.StreamEndReasonUpstreamFailed,
+		1,
+		"upstream responses stream failed: We're currently experiencing high demand, which may cause temporary errors.",
+		nil,
+	)
+
+	ObserveStreamChannelQualityForRequest(nil, info)
+
+	reason, expires, cooling := model.GetChannelCooldown(18)
+	require.True(t, cooling)
+	assert.Contains(t, reason, "stream_capacity")
+	remaining := time.Until(time.Unix(expires, 0))
+	assert.Greater(t, remaining, 14*time.Minute)
+	assert.Less(t, remaining, 16*time.Minute)
+	assert.False(t, model.IsChannelCoolingFallbackAllowed(18), "high-demand cooldown must not be bypassed as fallback")
+}
+
 func TestObserveStreamChannelQualityKeepsGenericFailureThreshold(t *testing.T) {
 	model.ClearChannelCooldownsForTest()
 	clearStreamChannelQualityForTest()
@@ -130,6 +158,29 @@ func TestObserveStreamChannelQualityDoesNotImmediatelyCooldownMultiKeyChannel(t 
 	ObserveStreamChannelQualityForRequest(nil, info)
 
 	assert.False(t, model.IsChannelCoolingDown(17), "one busy account must not sideline the other keys")
+}
+
+func TestObserveStreamChannelQualityDoesNotImmediatelyCooldownMultiKeyHighDemand(t *testing.T) {
+	model.ClearChannelCooldownsForTest()
+	clearStreamChannelQualityForTest()
+	t.Cleanup(func() {
+		model.ClearChannelCooldownsForTest()
+		clearStreamChannelQualityForTest()
+	})
+
+	info := newStreamQualityRelayInfoWithEndError(
+		18,
+		"gpt-5.6-sol",
+		relaycommon.StreamEndReasonUpstreamFailed,
+		1,
+		"upstream responses stream failed: We're currently experiencing high demand, which may cause temporary errors.",
+		nil,
+	)
+	info.ChannelIsMultiKey = true
+
+	ObserveStreamChannelQualityForRequest(nil, info)
+
+	assert.False(t, model.IsChannelCoolingDown(18), "one high-demand key must not immediately sideline a multi-key channel")
 }
 
 func TestObserveStreamChannelQualityDoesNotPinGenericUpstreamFailure(t *testing.T) {

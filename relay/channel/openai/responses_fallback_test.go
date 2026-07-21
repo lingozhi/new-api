@@ -215,6 +215,55 @@ func TestOaiResponsesStreamHandlerNormalizesTopLevelErrorAsFailedTerminal(t *tes
 	assert.Equal(t, relaycommon.StreamEndReasonTerminalClientError, snapshot.EndReason)
 }
 
+func TestOaiResponsesStreamHandlerReturnsPreCommitCapacityFailureForRetry(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "top-level error",
+			body: `data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}` + "\n\n",
+		},
+		{
+			name: "failed terminal",
+			body: `data: {"type":"response.failed","response":{"id":"resp_busy","status":"failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}}}` + "\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(tt.body))
+
+			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+			require.Nil(t, usage)
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+			assert.False(t, c.Writer.Written(), "a retryable first event must not commit the downstream response")
+			assert.Empty(t, recorder.Body.String())
+			assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+		})
+	}
+}
+
+func TestOaiResponsesStreamHandlerDoesNotRetryCapacityFailureAfterCommit(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_busy","status":"in_progress"}}`,
+		`data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}`,
+		``,
+	}, "\n\n")
+	c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(body))
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	assert.True(t, c.Writer.Written())
+	assert.Contains(t, recorder.Body.String(), `"type":"response.created"`)
+	require.Equal(t, []string{"response.failed"}, responsesTerminalEvents(t, recorder.Body.String()))
+	assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+}
+
 func TestOaiResponsesStreamHandlerCommitsTerminalOnlyAfterSuccessfulWrite(t *testing.T) {
 	body := strings.Join([]string{
 		`data: {"type":"response.output_text.delta","delta":"hello"}`,
