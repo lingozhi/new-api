@@ -61,8 +61,8 @@ func ObserveStreamChannelQuality(relayInfo *relaycommon.RelayInfo) {
 
 // ObserveStreamChannelQualityForRequest applies request-local consequences in
 // addition to the rolling quality signal. A committed SSE failure cannot be
-// retried safely, but an explicit account-concurrency failure should stop this
-// request from pinning the failed channel again.
+// retried safely, but an explicit capacity failure should stop this request
+// from pinning the failed channel again.
 func ObserveStreamChannelQualityForRequest(c *gin.Context, relayInfo *relaycommon.RelayInfo) {
 	if relayInfo == nil || relayInfo.IsChannelTest || relayInfo.StreamStatus == nil || relayInfo.ChannelId == 0 {
 		ObserveStreamChannelQuality(relayInfo)
@@ -73,7 +73,7 @@ func ObserveStreamChannelQualityForRequest(c *gin.Context, relayInfo *relaycommo
 		suppressChannelAffinityRecord(c)
 	}
 	if snapshot.EndReason == relaycommon.StreamEndReasonUpstreamFailed &&
-		isStreamAccountConcurrencyFailure(snapshot) &&
+		isImmediateStreamCapacityFailure(snapshot) &&
 		!relayInfo.ChannelIsMultiKey {
 		modelName := relayInfo.OriginModelName
 		if modelName == "" {
@@ -88,7 +88,26 @@ func ObserveStreamChannelQualityForRequest(c *gin.Context, relayInfo *relaycommo
 	ObserveStreamChannelQuality(relayInfo)
 }
 
-func isStreamAccountConcurrencyFailure(snapshot relaycommon.StreamSnapshot) bool {
+var immediateStreamCapacityKeywords = []string{
+	"concurrency limit exceeded for account",
+	"we're currently experiencing high demand, which may cause temporary errors",
+}
+
+// IsImmediateStreamCapacityError identifies the narrow set of Responses SSE
+// failures that are safe to fail over before any downstream event is written.
+// Keep this exact: broader overload wording could turn a client-semantic error
+// into a duplicate upstream request.
+func IsImmediateStreamCapacityError(message string) bool {
+	message = strings.ToLower(message)
+	for _, keyword := range immediateStreamCapacityKeywords {
+		if strings.Contains(message, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func isImmediateStreamCapacityFailure(snapshot relaycommon.StreamSnapshot) bool {
 	messages := make([]string, 0, len(snapshot.Errors)+1)
 	if snapshot.EndError != nil {
 		messages = append(messages, snapshot.EndError.Error())
@@ -97,7 +116,7 @@ func isStreamAccountConcurrencyFailure(snapshot relaycommon.StreamSnapshot) bool
 		messages = append(messages, entry.Message)
 	}
 	for _, message := range messages {
-		if strings.Contains(strings.ToLower(message), "concurrency limit exceeded for account") {
+		if IsImmediateStreamCapacityError(message) {
 			return true
 		}
 	}
