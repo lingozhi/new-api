@@ -458,6 +458,18 @@ func TestResponsesStreamWriterBoundsMetadataPreludeBuffer(t *testing.T) {
 	require.Equal(t, maxBufferedResponsesMetadataPreludeEvents+1, strings.Count(recorder.Body.String(), `event: response.in_progress`))
 }
 
+func TestResponsesStreamWriterBoundsMetadataPreludeBytes(t *testing.T) {
+	c, _, _, recorder := setupResponsesTest(t, strings.NewReader(""))
+	streamWriter := NewRetryableResponsesStreamWriter(c)
+	largeInstructions := strings.Repeat("x", 1<<20)
+	data := fmt.Sprintf(`{"type":"response.created","response":{"id":"resp_large","status":"in_progress","instructions":%q}}`, largeInstructions)
+
+	require.NoError(t, streamWriter.WriteData("response.created", data))
+	require.False(t, streamWriter.HasBufferedMetadataPrelude())
+	require.True(t, streamWriter.ProtocolStarted())
+	require.Contains(t, recorder.Body.String(), `event: response.created`)
+}
+
 func TestOaiResponsesStreamHandlerRetriesCapacityFailureAfterMetadataOnlyPrelude(t *testing.T) {
 	terminals := []struct {
 		name string

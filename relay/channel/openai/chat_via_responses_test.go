@@ -329,6 +329,43 @@ func TestOaiChatToResponsesStreamHandlerRetriesCapacityFailureAfterMetadataOnlyP
 	require.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
 }
 
+func TestOaiChatToResponsesStreamHandlerDoesNotRetryErrorsAfterMetadataOnlyPrelude(t *testing.T) {
+	tests := []struct {
+		name    string
+		failure string
+	}{
+		{
+			name:    "ordinary upstream error",
+			failure: `data: {"error":{"message":"provider failed","type":"server_error","code":"server_error"}}`,
+		},
+		{
+			name:    "capacity error with usage",
+			failure: `data: {"error":{"message":"We're currently experiencing high demand, which may cause temporary errors.","type":"server_error","code":"server_error"},"usage":{"prompt_tokens":1,"completion_tokens":0,"total_tokens":1}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.Join([]string{
+				`data: {"id":"chatcmpl_1","object":"chat.completion.chunk","created":1710000000,"model":"gpt-test","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
+				tt.failure,
+				``,
+			}, "\n\n")
+			c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+			usage, apiErr := OaiChatToResponsesStreamHandler(c, info, resp)
+
+			require.Nil(t, apiErr)
+			require.NotNil(t, usage)
+			require.True(t, c.Writer.Written())
+			require.Contains(t, recorder.Body.String(), `event: response.created`)
+			require.Equal(t, []string{"response.failed"}, responsesTerminalEvents(t, recorder.Body.String()))
+			require.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+		})
+	}
+}
+
 func TestOaiChatToResponsesStreamHandlerTreatsPingAsPreCommitForCapacityRetry(t *testing.T) {
 	body := `data: {"error":{"message":"We're currently experiencing high demand, which may cause temporary errors.","type":"server_error","code":"server_error"}}` + "\n\n"
 	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
