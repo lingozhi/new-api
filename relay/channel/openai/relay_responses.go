@@ -81,7 +81,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
 	streamCtx := newResponsesStreamCtx()
-	streamWriter := NewResponsesStreamWriter(c)
+	streamWriter := NewRetryableResponsesStreamWriter(c)
 	var preCommitCapacityErr *types.NewAPIError
 	responseHeadersBeforeStream := c.Writer.Header().Clone()
 
