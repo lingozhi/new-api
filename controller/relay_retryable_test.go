@@ -28,6 +28,16 @@ func newTestContext() *gin.Context {
 	return c
 }
 
+func upstreamRelayServiceErrorForTest() *types.NewAPIError {
+	err := types.NewErrorWithStatusCode(
+		errors.New("Upstream request failed, please try again, 请重试 (Relay Service)"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+	err.UpstreamStatusCode = http.StatusBadRequest
+	return err
+}
+
 func TestIsRetryableChannelError(t *testing.T) {
 	cases := []struct {
 		name string
@@ -124,7 +134,39 @@ func TestShouldRetryUsesUpstream429ProvenanceAfterStatusMapping(t *testing.T) {
 	assert.True(t, shouldRetry(affinity, mapped503, 1), "429 retry behavior must not depend on the client-facing mapping")
 }
 
-func TestMarkAffinityColdStartForUpstream429Retry(t *testing.T) {
+func TestShouldRetryTreatsRelayService400AsTransient(t *testing.T) {
+	err := upstreamRelayServiceErrorForTest()
+
+	c := newTestContext()
+	assert.True(t, isRetryableChannelError(c, err))
+	assert.True(t, shouldRetry(c, err, 1))
+	assert.False(t, shouldRetry(c, err, 0), "the exact transient error must still respect the retry budget")
+
+	affinity := newTestContext()
+	affinity.Set("channel_affinity_skip_retry_on_failure", true)
+	assert.True(t, shouldRetry(affinity, err, 1), "an upstream relay outage must escape a sticky channel")
+
+	pinned := newTestContext()
+	pinned.Set("specific_channel_id", 31)
+	assert.False(t, shouldRetry(pinned, err, 1), "an explicitly pinned request cannot switch channels")
+
+	localCopy := types.NewErrorWithStatusCode(
+		errors.New("Upstream request failed, please try again, 请重试 (Relay Service)"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+	assert.False(t, shouldRetry(newTestContext(), localCopy, 1), "matching text without upstream HTTP provenance must stay terminal")
+
+	genericUpstream400 := types.NewErrorWithStatusCode(
+		errors.New("invalid request parameter: model"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+	genericUpstream400.UpstreamStatusCode = http.StatusBadRequest
+	assert.False(t, shouldRetry(newTestContext(), genericUpstream400, 1), "ordinary upstream 400 responses must not be retried")
+}
+
+func TestMarkAffinityColdStartForTransientUpstreamRetry(t *testing.T) {
 	err := types.NewErrorWithStatusCode(
 		errors.New("Upstream rate limit exceeded, please retry later"),
 		types.ErrorCodeBadResponseStatusCode,
@@ -139,6 +181,11 @@ func TestMarkAffinityColdStartForUpstream429Retry(t *testing.T) {
 	assert.True(t, info.AffinityColdStart, "switching away from a warm affinity channel must exempt the cold fallback from latency penalties")
 	assert.True(t, common.GetContextKeyBool(affinity, constant.ContextKeyAffinityColdStart))
 
+	relayServiceInfo := &relaycommon.RelayInfo{}
+	markAffinityColdStartForRetry(affinity, relayServiceInfo, upstreamRelayServiceErrorForTest())
+	assert.True(t, relayServiceInfo.AffinityColdStart,
+		"switching away from a failed relay-service affinity must exempt the cold fallback from latency penalties")
+
 	localRateLimit := types.NewErrorWithStatusCode(
 		errors.New("local rate limit"),
 		types.ErrorCodeBadResponseStatusCode,
@@ -151,6 +198,25 @@ func TestMarkAffinityColdStartForUpstream429Retry(t *testing.T) {
 	nonAffinityInfo := &relaycommon.RelayInfo{}
 	markAffinityColdStartForRetry(newTestContext(), nonAffinityInfo, err)
 	assert.False(t, nonAffinityInfo.AffinityColdStart)
+}
+
+func TestProcessChannelErrorCoolsRelayService400Briefly(t *testing.T) {
+	model.ClearChannelCooldownsForTest()
+	t.Cleanup(model.ClearChannelCooldownsForTest)
+
+	const channelID = 9012
+	processChannelError(
+		newTestContext(),
+		*types.NewChannelError(channelID, 1, "relay-service", false, "key", false),
+		upstreamRelayServiceErrorForTest(),
+	)
+
+	reason, expires, cooling := model.GetChannelCooldown(channelID)
+	require.True(t, cooling)
+	assert.Contains(t, reason, "retryable_transient")
+	remaining := time.Until(time.Unix(expires, 0))
+	assert.Greater(t, remaining, 4*time.Minute)
+	assert.Less(t, remaining, 6*time.Minute)
 }
 
 func TestProcessChannelErrorCoolsMappedUpstream429ForTwoHours(t *testing.T) {

@@ -579,6 +579,29 @@ func TestRecordChannelHealthOutcomeStillCountsImageFailures(t *testing.T) {
 	assert.False(t, IsChannelHealthAvailable(channelID, modelName, requestPath))
 }
 
+func TestRecordChannelHealthOutcomeCountsRelayServiceTransient400(t *testing.T) {
+	oldEnabled := common.AdaptiveChannelHealthEnabled
+	common.AdaptiveChannelHealthEnabled = true
+	t.Cleanup(func() { common.AdaptiveChannelHealthEnabled = oldEnabled })
+
+	const channelID = 9001443
+	const modelName = "test-relay-service-transient-400"
+	const requestPath = "/v1/responses"
+	err := types.NewErrorWithStatusCode(
+		errors.New("Upstream request failed, please try again, 请重试 (Relay Service)"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+	err.UpstreamStatusCode = http.StatusBadRequest
+
+	for i := 0; i < 3; i++ {
+		RecordChannelHealthOutcome(channelID, modelName, requestPath, nil, time.Now(), err, false)
+	}
+
+	assert.False(t, IsChannelHealthAvailable(channelID, modelName, requestPath),
+		"the confirmed upstream relay outage must count as a channel failure despite its HTTP 400 wrapper")
+}
+
 // TestRecordChannelHealthOutcomeIgnoresGatewayLocalErrors verifies that
 // failures which never reached the upstream channel (request conversion,
 // pricing, serialization — the gateway's own processing) don't open a

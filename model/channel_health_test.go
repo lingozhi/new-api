@@ -348,7 +348,7 @@ func TestChannelHealthHalfOpenSlowProbeReopens(t *testing.T) {
 	}
 }
 
-func TestChannelHealthUnknownLatencyDoesNotCloseSlowHalfOpen(t *testing.T) {
+func TestChannelHealthStatusOnlySuccessClosesSlowHalfOpenWithoutRestoringPriority(t *testing.T) {
 	health, clock := newTestChannelHealth(t)
 	key := ChannelHealthKey{ChannelID: 52, Model: "gpt-5.6-sol", Path: "/v1/responses"}
 	slow := channelHealthSlowLatency() + time.Second
@@ -359,8 +359,12 @@ func TestChannelHealthUnknownLatencyDoesNotCloseSlowHalfOpen(t *testing.T) {
 	require.True(t, health.Acquire(key), "expected half-open probe after open interval")
 
 	health.Record(key, ChannelOutcome{StatusCode: http.StatusOK})
-	require.Equal(t, ChannelHealthHalfOpen, health.State(key),
-		"a probe without measured TTFT cannot prove that a slow-open channel recovered")
+	require.Equal(t, ChannelHealthClosed, health.State(key),
+		"a successful request must restore availability even when it cannot prove TTFT recovery")
+	require.True(t, health.shouldDemotePriority(key),
+		"status-only success must not masquerade as fast latency or restore configured priority")
+	require.True(t, health.Acquire(key), "the recovered channel must not remain probe-lease throttled")
+	require.True(t, health.Acquire(key), "closed-state traffic must not be limited to one request per probe lease")
 }
 
 func TestChannelHealthStatusOnlySuccessClosesFailureHalfOpen(t *testing.T) {

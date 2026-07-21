@@ -39,6 +39,11 @@ func TestCooldownUpstreamHostForErrorOnlyIsolatesTransportFailures(t *testing.T)
 			want: true,
 		},
 		{
+			name: "relay service transient bad request",
+			err:  upstreamStatusErrorForTest(http.StatusBadRequest, "Upstream request failed, please try again, 请重试 (Relay Service)"),
+			want: true,
+		},
+		{
 			name: "local synthetic bad gateway has no upstream provenance",
 			err:  types.NewErrorWithStatusCode(errors.New("local conversion failed"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway),
 			want: false,
@@ -198,6 +203,33 @@ func TestIsUpstreamRateLimitErrorRequiresUpstreamProvenance(t *testing.T) {
 
 	assert.True(t, IsUpstreamRateLimitError(mappedUpstream429))
 	assert.False(t, IsUpstreamRateLimitError(local429))
+}
+
+func TestIsUpstreamRelayServiceTransientErrorIsNarrow(t *testing.T) {
+	exact := upstreamStatusErrorForTest(
+		http.StatusBadRequest,
+		"Upstream request failed, please try again, 请重试 (Relay Service)",
+	)
+	assert.True(t, IsUpstreamRelayServiceTransientError(exact))
+
+	wrapped := upstreamStatusErrorForTest(
+		http.StatusBadRequest,
+		"bad response status code 400, message: Upstream request failed, please try again (Relay Service)",
+	)
+	assert.True(t, IsUpstreamRelayServiceTransientError(wrapped))
+
+	localCopy := types.NewErrorWithStatusCode(
+		errors.New("Upstream request failed, please try again (Relay Service)"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+	assert.False(t, IsUpstreamRelayServiceTransientError(localCopy), "text alone cannot establish upstream provenance")
+
+	generic400 := upstreamStatusErrorForTest(http.StatusBadRequest, "invalid request parameter")
+	assert.False(t, IsUpstreamRelayServiceTransientError(generic400))
+
+	wrongStatus := upstreamStatusErrorForTest(http.StatusServiceUnavailable, "Upstream request failed, please try again (Relay Service)")
+	assert.False(t, IsUpstreamRelayServiceTransientError(wrongStatus), "existing 5xx policy handles actual 503 responses")
 }
 
 func TestCooldownChannelForRetryUsesFullDurationForCapabilityGap(t *testing.T) {
