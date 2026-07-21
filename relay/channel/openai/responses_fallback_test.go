@@ -236,6 +236,14 @@ func TestOaiResponsesStreamHandlerReturnsPreCommitCapacityFailureForRetry(t *tes
 			name: "failed terminal top-level error",
 			body: `data: {"type":"response.failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}}` + "\n\n",
 		},
+		{
+			name: "failed terminal split response error and top-level message",
+			body: `data: {"type":"response.failed","message":"We're currently experiencing high demand, which may cause temporary errors.","response":{"error":{"code":"server_error"}}}` + "\n\n",
+		},
+		{
+			name: "failed terminal split top-level error and message",
+			body: `data: {"type":"response.failed","message":"We're currently experiencing high demand, which may cause temporary errors.","error":{"type":"server_error"}}` + "\n\n",
+		},
 	}
 
 	for _, tt := range tests {
