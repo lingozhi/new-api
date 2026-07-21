@@ -30,6 +30,7 @@ func TestFormatWaffoPancakeAmount_UsesDisplayPriceString(t *testing.T) {
 func TestGetWaffoPancakePayMoney(t *testing.T) {
 	originalUnitPrice := setting.WaffoPancakeUnitPrice
 	originalQuotaDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
+	originalUSDExchangeRate := operation_setting.USDExchangeRate
 	originalDiscounts := make(map[int]float64, len(operation_setting.GetPaymentSetting().AmountDiscount))
 	for k, v := range operation_setting.GetPaymentSetting().AmountDiscount {
 		originalDiscounts[k] = v
@@ -39,11 +40,13 @@ func TestGetWaffoPancakePayMoney(t *testing.T) {
 	t.Cleanup(func() {
 		setting.WaffoPancakeUnitPrice = originalUnitPrice
 		operation_setting.GetGeneralSetting().QuotaDisplayType = originalQuotaDisplayType
+		operation_setting.USDExchangeRate = originalUSDExchangeRate
 		operation_setting.GetPaymentSetting().AmountDiscount = originalDiscounts
 		require.NoError(t, common.UpdateTopupGroupRatioByJSONString(originalTopupGroupRatio))
 	})
 
 	setting.WaffoPancakeUnitPrice = 2.5
+	operation_setting.USDExchangeRate = 7.3
 	operation_setting.GetPaymentSetting().AmountDiscount = map[int]float64{
 		10:                           0.8,
 		int(common.QuotaPerUnit * 3): 0.5,
@@ -64,6 +67,13 @@ func TestGetWaffoPancakePayMoney(t *testing.T) {
 			group:            "vip",
 			quotaDisplayType: operation_setting.QuotaDisplayTypeUSD,
 			expected:         24,
+		},
+		{
+			name:             "CNY display converts the USD charge with the configured exchange rate",
+			amount:           10,
+			group:            "vip",
+			quotaDisplayType: operation_setting.QuotaDisplayTypeCNY,
+			expected:         175.2,
 		},
 		{
 			name:             "tokens display converts quota to display units before pricing",
@@ -88,6 +98,23 @@ func TestGetWaffoPancakePayMoney(t *testing.T) {
 			require.InDelta(t, tc.expected, actual, 0.000001)
 		})
 	}
+}
+
+func TestGetWaffoPancakeCheckoutAmount(t *testing.T) {
+	originalQuotaDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
+	originalUSDExchangeRate := operation_setting.USDExchangeRate
+	t.Cleanup(func() {
+		operation_setting.GetGeneralSetting().QuotaDisplayType = originalQuotaDisplayType
+		operation_setting.USDExchangeRate = originalUSDExchangeRate
+	})
+
+	operation_setting.USDExchangeRate = 7.3
+
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeCNY
+	require.InDelta(t, 73, getWaffoPancakeCheckoutAmount(10), 0.000001)
+
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeUSD
+	require.InDelta(t, 10, getWaffoPancakeCheckoutAmount(10), 0.000001)
 }
 
 func TestGetWaffoPancakeCheckoutCurrency(t *testing.T) {

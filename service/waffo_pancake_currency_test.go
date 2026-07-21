@@ -14,6 +14,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/require"
 )
 
@@ -102,9 +103,12 @@ func TestCreateWaffoPancakeCheckoutSession_UsesRequestedCurrency(t *testing.T) {
 
 func TestCreateWaffoPancakePrimaryProduct_CreatesUSDAndCNYPrices(t *testing.T) {
 	originalTransport := http.DefaultClient.Transport
+	originalUSDExchangeRate := operation_setting.USDExchangeRate
 	t.Cleanup(func() {
 		http.DefaultClient.Transport = originalTransport
+		operation_setting.USDExchangeRate = originalUSDExchangeRate
 	})
+	operation_setting.USDExchangeRate = 7.3
 
 	var createPayload struct {
 		Prices map[string]struct {
@@ -142,7 +146,7 @@ func TestCreateWaffoPancakePrimaryProduct_CreatesUSDAndCNYPrices(t *testing.T) {
 	require.Equal(t, "PROD_AbCdEfGhIjKlMnOpQrStUv", productID)
 	require.Equal(t, "1.00", createPayload.Prices["USD"].Amount)
 	require.Equal(t, "saas", createPayload.Prices["USD"].TaxCategory)
-	require.Equal(t, "1.00", createPayload.Prices["CNY"].Amount)
+	require.Equal(t, "7.30", createPayload.Prices["CNY"].Amount)
 	require.Equal(t, "saas", createPayload.Prices["CNY"].TaxCategory)
 	require.Equal(t, 1, publishCalls)
 }
