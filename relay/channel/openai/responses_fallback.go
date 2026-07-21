@@ -475,24 +475,43 @@ func ensureResponsesTerminalOutputField(streamResponse dto.ResponsesStreamRespon
 }
 
 func responsesFailedUpstreamError(streamResponse dto.ResponsesStreamResponse) *types.OpenAIError {
+	merged := &types.OpenAIError{}
+	var responseErr *types.OpenAIError
 	if streamResponse.Response != nil {
-		if upstreamErr := streamResponse.Response.GetOpenAIError(); upstreamErr != nil &&
-			(upstreamErr.Type != "" || upstreamErr.Message != "" || upstreamErr.Param != "" || strings.TrimSpace(fmt.Sprint(upstreamErr.Code)) != "") {
-			return upstreamErr
+		responseErr = streamResponse.Response.GetOpenAIError()
+	}
+	for _, upstreamErr := range []*types.OpenAIError{responseErr, dto.GetOpenAIError(streamResponse.Error)} {
+		if upstreamErr == nil {
+			continue
+		}
+		if merged.Type == "" {
+			merged.Type = upstreamErr.Type
+		}
+		if (merged.Code == nil || strings.TrimSpace(fmt.Sprint(merged.Code)) == "") &&
+			upstreamErr.Code != nil && strings.TrimSpace(fmt.Sprint(upstreamErr.Code)) != "" {
+			merged.Code = upstreamErr.Code
+		}
+		if merged.Message == "" {
+			merged.Message = upstreamErr.Message
+		}
+		if merged.Param == "" {
+			merged.Param = upstreamErr.Param
 		}
 	}
-	if upstreamErr := dto.GetOpenAIError(streamResponse.Error); upstreamErr != nil &&
-		(upstreamErr.Type != "" || upstreamErr.Message != "" || upstreamErr.Param != "" || strings.TrimSpace(fmt.Sprint(upstreamErr.Code)) != "") {
-		return upstreamErr
+	if merged.Code == nil || strings.TrimSpace(fmt.Sprint(merged.Code)) == "" {
+		merged.Code = streamResponse.Code
 	}
-	if streamResponse.Message == "" && streamResponse.Code == "" && streamResponse.Param == "" {
+	if merged.Message == "" {
+		merged.Message = streamResponse.Message
+	}
+	if merged.Param == "" {
+		merged.Param = streamResponse.Param
+	}
+	if merged.Type == "" && merged.Message == "" && merged.Param == "" &&
+		(merged.Code == nil || strings.TrimSpace(fmt.Sprint(merged.Code)) == "") {
 		return nil
 	}
-	return &types.OpenAIError{
-		Code:    streamResponse.Code,
-		Message: streamResponse.Message,
-		Param:   streamResponse.Param,
-	}
+	return merged
 }
 
 func normalizeResponsesTerminalEvent(c *gin.Context, info *relaycommon.RelayInfo, streamCtx *responsesStreamCtx, streamResponse dto.ResponsesStreamResponse, data string) (dto.ResponsesStreamResponse, string, error) {
