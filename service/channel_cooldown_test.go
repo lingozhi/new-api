@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/assert"
@@ -320,4 +321,55 @@ func TestShouldCooldownChannelIgnoresUnrelatedError(t *testing.T) {
 	if ShouldCooldownChannel(err) {
 		t.Fatalf("expected unrelated bad request to skip channel cooldown")
 	}
+}
+
+func TestCooldownChannelForRetryStrictlyIsolatesDisabledUpstreamGroup(t *testing.T) {
+	model.ClearChannelCooldownsForTest()
+	oldRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		model.ClearChannelCooldownsForTest()
+		common.RedisEnabled = oldRedisEnabled
+	})
+
+	err := upstreamStatusErrorForTest(http.StatusForbidden, "API Key 所属分组已停用")
+	CooldownChannelForRetry(*types.NewChannelError(9011, 1, "disabled-group", false, "", true), err)
+
+	reason, expires, cooling := model.GetChannelCooldown(9011)
+	require.True(t, cooling)
+	assert.Contains(t, reason, "account_unavailable")
+	assert.False(t, model.IsChannelCoolingFallbackAllowed(9011))
+	assert.WithinDuration(t, time.Now().Add(ChannelCooldownDuration), time.Unix(expires, 0), time.Second)
+}
+
+func TestCooldownChannelForRetryStrictlyIsolatesUpstreamAccessDenial(t *testing.T) {
+	model.ClearChannelCooldownsForTest()
+	oldRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		model.ClearChannelCooldownsForTest()
+		common.RedisEnabled = oldRedisEnabled
+	})
+
+	err := upstreamStatusErrorForTest(http.StatusBadGateway, "Upstream access forbidden, please contact administrator")
+	CooldownChannelForRetry(*types.NewChannelError(9012, 1, "access-denied", false, "", true), err)
+
+	reason, _, cooling := model.GetChannelCooldown(9012)
+	require.True(t, cooling)
+	assert.Contains(t, reason, "account_unavailable")
+	assert.False(t, model.IsChannelCoolingFallbackAllowed(9012))
+}
+
+func TestCooldownChannelForRetryKeepsTemporaryUnavailableAsShortFallback(t *testing.T) {
+	model.ClearChannelCooldownsForTest()
+	t.Cleanup(model.ClearChannelCooldownsForTest)
+
+	err := upstreamStatusErrorForTest(http.StatusBadGateway, "Upstream service temporarily unavailable")
+	CooldownChannelForRetry(*types.NewChannelError(9013, 1, "temporary", false, "", true), err)
+
+	reason, expires, cooling := model.GetChannelCooldown(9013)
+	require.True(t, cooling)
+	assert.Contains(t, reason, "retryable_transient")
+	assert.True(t, model.IsChannelCoolingFallbackAllowed(9013))
+	assert.WithinDuration(t, time.Now().Add(ShortChannelCooldownDuration), time.Unix(expires, 0), time.Second)
 }

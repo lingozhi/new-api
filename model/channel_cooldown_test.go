@@ -5,9 +5,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func useChannelCooldownTestRedis(t *testing.T) *miniredis.Miniredis {
+	t.Helper()
+
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	oldRedisEnabled, oldRDB := common.RedisEnabled, common.RDB
+	common.RedisEnabled = true
+	common.RDB = client
+	t.Cleanup(func() {
+		clearChannelCooldownsForTest()
+		require.NoError(t, client.Close())
+		common.RedisEnabled = oldRedisEnabled
+		common.RDB = oldRDB
+	})
+	return server
+}
 
 func TestChannelCooldownSkipsChannelUntilExpiry(t *testing.T) {
 	clearChannelCooldownsForTest()
@@ -95,4 +115,65 @@ func TestGetChannelCooldownReportsActiveStrictReason(t *testing.T) {
 	require.True(t, cooling)
 	assert.Equal(t, "stream_capacity", reason)
 	assert.WithinDuration(t, startedAt.Add(15*time.Minute), time.Unix(expires, 0), time.Second)
+}
+
+func TestPersistentStrictChannelCooldownRestoresAfterProcessRestart(t *testing.T) {
+	useChannelCooldownTestRedis(t)
+	clearChannelCooldownsForTest()
+
+	startedAt := time.Now()
+	require.NoError(t, CooldownChannelPersistentWithoutFallback(57, "upstream_rate_limit", 2*time.Hour))
+	clearChannelCooldownsForTest()
+	assert.False(t, IsChannelCoolingDown(57), "clearing process memory should simulate a replacement instance")
+
+	require.NoError(t, RestorePersistentChannelCooldowns())
+	reason, expires, cooling := GetChannelCooldown(57)
+	require.True(t, cooling)
+	assert.Equal(t, "upstream_rate_limit", reason)
+	assert.False(t, IsChannelCoolingFallbackAllowed(57))
+	assert.WithinDuration(t, startedAt.Add(2*time.Hour), time.Unix(expires, 0), time.Second)
+}
+
+func TestTransientChannelCooldownDoesNotRestoreAfterProcessRestart(t *testing.T) {
+	useChannelCooldownTestRedis(t)
+	clearChannelCooldownsForTest()
+
+	CooldownChannelWithoutFallback(57, "stream_capacity", 15*time.Minute)
+	clearChannelCooldownsForTest()
+
+	require.NoError(t, RestorePersistentChannelCooldowns())
+	assert.False(t, IsChannelCoolingDown(57), "transient stream state must remain process-local")
+}
+
+func TestPersistentChannelCooldownCannotBeShortenedInRedis(t *testing.T) {
+	useChannelCooldownTestRedis(t)
+	clearChannelCooldownsForTest()
+
+	startedAt := time.Now()
+	require.NoError(t, CooldownChannelPersistentWithoutFallback(78, "upstream_rate_limit", 2*time.Hour))
+	require.NoError(t, CooldownChannelPersistentWithoutFallback(78, "account_unavailable", 30*time.Minute))
+	clearChannelCooldownsForTest()
+
+	require.NoError(t, RestorePersistentChannelCooldowns())
+	reason, expires, cooling := GetChannelCooldown(78)
+	require.True(t, cooling)
+	assert.Equal(t, "upstream_rate_limit", reason)
+	assert.WithinDuration(t, startedAt.Add(2*time.Hour), time.Unix(expires, 0), time.Second)
+}
+
+func TestPersistentChannelCooldownFailsOpenWhenRedisIsUnavailable(t *testing.T) {
+	clearChannelCooldownsForTest()
+	oldRedisEnabled, oldRDB := common.RedisEnabled, common.RDB
+	common.RedisEnabled = true
+	common.RDB = nil
+	t.Cleanup(func() {
+		clearChannelCooldownsForTest()
+		common.RedisEnabled = oldRedisEnabled
+		common.RDB = oldRDB
+	})
+
+	err := CooldownChannelPersistentWithoutFallback(91, "balance_exhausted", 30*time.Minute)
+	require.Error(t, err)
+	assert.True(t, IsChannelCoolingDown(91), "Redis failure must not disable local protection")
+	assert.False(t, IsChannelCoolingFallbackAllowed(91))
 }
