@@ -310,7 +310,7 @@ func CreateWaffoPancakeProductForPlan(ctx context.Context, merchantID, privateKe
 		return "", fmt.Errorf("create Waffo Pancake plan product: %w", err)
 	}
 	productID := prodRes.Product.ID
-	if _, err := client.OnetimeProducts.Publish(ctx, pancake.PublishOnetimeProductParams{ID: productID}); err != nil {
+	if err := ensureWaffoPancakeProductProductionVersion(ctx, client, productID); err != nil {
 		return "", fmt.Errorf("publish Waffo Pancake plan product: %w", err)
 	}
 	return productID, nil
@@ -338,10 +338,41 @@ func CreateWaffoPancakePrimaryProduct(ctx context.Context, merchantID, privateKe
 		return "", fmt.Errorf("create Waffo Pancake product: %w", err)
 	}
 	productID := prodRes.Product.ID
-	if _, err := client.OnetimeProducts.Publish(ctx, pancake.PublishOnetimeProductParams{ID: productID}); err != nil {
+	if err := ensureWaffoPancakeProductProductionVersion(ctx, client, productID); err != nil {
 		return "", fmt.Errorf("publish Waffo Pancake product: %w", err)
 	}
 	return productID, nil
+}
+
+func ensureWaffoPancakeProductProductionVersion(ctx context.Context, client *pancake.Client, productID string) error {
+	type queryShape struct {
+		OnetimeProductVersions []struct {
+			IsProdVersion bool `json:"isProdVersion"`
+		} `json:"onetimeProductVersions"`
+	}
+
+	response, err := pancake.GraphQLQuery[queryShape](ctx, client, pancake.GraphQLParams{
+		Query: `query ($productId: String!) {
+			onetimeProductVersions(productId: $productId) {
+				isProdVersion
+			}
+		}`,
+		Variables: map[string]any{"productId": productID},
+	})
+	if err != nil {
+		return fmt.Errorf("query Waffo Pancake product versions: %w", err)
+	}
+	if len(response.Errors) > 0 {
+		return fmt.Errorf("query Waffo Pancake product versions: %s", response.Errors[0].Message)
+	}
+	for _, version := range response.Data.OnetimeProductVersions {
+		if version.IsProdVersion {
+			return nil
+		}
+	}
+
+	_, err = client.OnetimeProducts.Publish(ctx, pancake.PublishOnetimeProductParams{ID: productID})
+	return err
 }
 
 func waffoPancakePrices(amount string) pancake.Prices {

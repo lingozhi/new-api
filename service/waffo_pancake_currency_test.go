@@ -112,6 +112,7 @@ func TestCreateWaffoPancakePrimaryProduct_CreatesUSDAndCNYPrices(t *testing.T) {
 			TaxCategory string `json:"taxCategory"`
 		} `json:"prices"`
 	}
+	publishCalls := 0
 	http.DefaultClient.Transport = waffoPancakeRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
 		case "/v1/actions/onetime-product/create-product":
@@ -119,7 +120,10 @@ func TestCreateWaffoPancakePrimaryProduct_CreatesUSDAndCNYPrices(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, common.Unmarshal(body, &createPayload))
 			return waffoPancakeTestResponse(`{"data":{"product":{"id":"PROD_AbCdEfGhIjKlMnOpQrStUv","storeId":"STO_AbCdEfGhIjKlMnOpQrStUv","name":"new-api-charge-product","prices":{"USD":{"amount":"1.00","taxCategory":"saas"},"CNY":{"amount":"1.00","taxCategory":"saas"}},"status":"active"}}}`), nil
+		case "/v1/graphql":
+			return waffoPancakeTestResponse(`{"data":{"onetimeProductVersions":[{"isProdVersion":false}]}}`), nil
 		case "/v1/actions/onetime-product/publish-product":
+			publishCalls++
 			return waffoPancakeTestResponse(`{"data":{"product":{"id":"PROD_AbCdEfGhIjKlMnOpQrStUv","storeId":"STO_AbCdEfGhIjKlMnOpQrStUv","name":"new-api-charge-product","prices":{"USD":{"amount":"1.00","taxCategory":"saas"},"CNY":{"amount":"1.00","taxCategory":"saas"}},"status":"active"}}}`), nil
 		default:
 			t.Fatalf("unexpected Waffo Pancake path: %s", req.URL.Path)
@@ -140,6 +144,7 @@ func TestCreateWaffoPancakePrimaryProduct_CreatesUSDAndCNYPrices(t *testing.T) {
 	require.Equal(t, "saas", createPayload.Prices["USD"].TaxCategory)
 	require.Equal(t, "1.00", createPayload.Prices["CNY"].Amount)
 	require.Equal(t, "saas", createPayload.Prices["CNY"].TaxCategory)
+	require.Equal(t, 1, publishCalls)
 }
 
 func TestCreateWaffoPancakePrimaryProduct_SkipsPublishForProductionVersion(t *testing.T) {
