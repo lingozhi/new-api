@@ -224,7 +224,7 @@ func CooldownChannel(channelError types.ChannelError, err *types.NewAPIError) {
 		return
 	}
 	common.SysLog(fmt.Sprintf("通道冷却：#%d，持续 %s，原因：%s", channelError.ChannelId, ChannelCooldownDuration, err.Error()))
-	model.CooldownChannel(channelError.ChannelId, err.Error(), ChannelCooldownDuration)
+	model.CooldownChannelWithoutFallback(channelError.ChannelId, err.Error(), ChannelCooldownDuration)
 }
 
 func CooldownChannelForUpstreamError(channelError types.ChannelError, err *types.NewAPIError) {
