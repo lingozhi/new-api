@@ -7,6 +7,8 @@ import (
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/shopspring/decimal"
 	pancake "github.com/waffo-com/waffo-pancake-sdk-go"
 )
 
@@ -300,10 +302,14 @@ func CreateWaffoPancakeProductForPlan(ctx context.Context, merchantID, privateKe
 	if err != nil {
 		return "", err
 	}
+	prices, err := waffoPancakePrices(amount)
+	if err != nil {
+		return "", err
+	}
 	prodRes, err := client.OnetimeProducts.Create(ctx, pancake.CreateOnetimeProductParams{
 		StoreID:    storeID,
 		Name:       name,
-		Prices:     waffoPancakePrices(amount),
+		Prices:     prices,
 		SuccessURL: optionalString(strings.TrimSpace(returnURL)),
 	})
 	if err != nil {
@@ -328,10 +334,14 @@ func CreateWaffoPancakePrimaryProduct(ctx context.Context, merchantID, privateKe
 	if err != nil {
 		return "", err
 	}
+	prices, err := waffoPancakePrices("1.00")
+	if err != nil {
+		return "", err
+	}
 	prodRes, err := client.OnetimeProducts.Create(ctx, pancake.CreateOnetimeProductParams{
 		StoreID:    storeID,
 		Name:       defaultWaffoPancakeProductName,
-		Prices:     waffoPancakePrices("1.00"), // overridden at checkout via PriceSnapshot
+		Prices:     prices, // overridden at checkout via PriceSnapshot
 		SuccessURL: optionalString(strings.TrimSpace(returnURL)),
 	})
 	if err != nil {
@@ -375,15 +385,24 @@ func ensureWaffoPancakeProductProductionVersion(ctx context.Context, client *pan
 	return err
 }
 
-func waffoPancakePrices(amount string) pancake.Prices {
-	price := pancake.PriceInfo{
-		Amount:      amount,
+func waffoPancakePrices(usdAmount string) (pancake.Prices, error) {
+	usdPrice, err := decimal.NewFromString(usdAmount)
+	if err != nil || !usdPrice.IsPositive() {
+		return nil, fmt.Errorf("invalid Waffo Pancake USD price: %q", usdAmount)
+	}
+	if operation_setting.USDExchangeRate <= 0 {
+		return nil, fmt.Errorf("invalid USD to CNY exchange rate: %v", operation_setting.USDExchangeRate)
+	}
+
+	usd := pancake.PriceInfo{
+		Amount:      usdPrice.StringFixed(2),
 		TaxCategory: pancake.TaxCategory("saas"),
 	}
-	return pancake.Prices{
-		"USD": price,
-		"CNY": price,
-	}
+	cny := usd
+	cny.Amount = usdPrice.
+		Mul(decimal.NewFromFloat(operation_setting.USDExchangeRate)).
+		StringFixed(2)
+	return pancake.Prices{"USD": usd, "CNY": cny}, nil
 }
 
 // WaffoPancakePairResult is the response of CreateWaffoPancakePrimaryPair.

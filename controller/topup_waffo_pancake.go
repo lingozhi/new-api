@@ -66,12 +66,21 @@ func getWaffoPancakePayMoney(amount int64, group string) float64 {
 		discount = ds
 	}
 
-	payMoney := dAmount.
+	usdPayMoney := dAmount.
 		Mul(decimal.NewFromFloat(setting.WaffoPancakeUnitPrice)).
 		Mul(decimal.NewFromFloat(topupGroupRatio)).
 		Mul(decimal.NewFromFloat(discount))
 
-	return payMoney.InexactFloat64()
+	return getWaffoPancakeCheckoutAmount(usdPayMoney.InexactFloat64())
+}
+
+func getWaffoPancakeCheckoutAmount(usdAmount float64) float64 {
+	if getWaffoPancakeCheckoutCurrency() != "CNY" {
+		return usdAmount
+	}
+	return decimal.NewFromFloat(usdAmount).
+		Mul(decimal.NewFromFloat(operation_setting.USDExchangeRate)).
+		InexactFloat64()
 }
 
 func getWaffoPancakeCheckoutCurrency() string {
