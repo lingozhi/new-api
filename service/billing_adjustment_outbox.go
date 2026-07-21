@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -24,6 +25,25 @@ const (
 )
 
 var billingAdjustmentWorkerOnce sync.Once
+
+func logBillingAdjustmentDrainResult(processed, failed int, err error) {
+	message := fmt.Sprintf(
+		"billing adjustment outbox drain incomplete: processed=%d failed=%d err=%v",
+		processed,
+		failed,
+		err,
+	)
+	if errors.Is(err, model.ErrBillingAdjustmentBalanceBlocked) {
+		logger.LogInfo(context.Background(), fmt.Sprintf(
+			"billing adjustment outbox waiting for balance headroom: processed=%d failed=%d err=%v",
+			processed,
+			failed,
+			err,
+		))
+		return
+	}
+	logger.LogWarn(context.Background(), message)
+}
 
 // enqueueBillingAdjustments returns after every required leg is durable. The
 // synchronous processing attempt is best-effort; failures remain retryable in
@@ -65,12 +85,7 @@ func StartBillingAdjustmentOutboxWorker() {
 				}
 				processed, failed, err := model.DrainDueBillingAdjustmentOutbox(billingAdjustmentDrainBatch)
 				if err != nil {
-					logger.LogWarn(context.Background(), fmt.Sprintf(
-						"billing adjustment outbox drain incomplete: processed=%d failed=%d err=%v",
-						processed,
-						failed,
-						err,
-					))
+					logBillingAdjustmentDrainResult(processed, failed, err)
 				}
 			}
 			cleanup := func() {

@@ -138,6 +138,12 @@ var capabilityCooldownKeywords = []string{
 	"not enabled for this group",
 }
 
+var persistentAccountErrorKeywords = []string{
+	"api key 所属分组已停用",
+	"upstream access forbidden",
+	"upstream access denied",
+}
+
 var upstreamErrorCooldownKeywords = []string{
 	"openai_error",
 	"empty or malformed response",
@@ -168,6 +174,25 @@ func isCapabilityError(err *types.NewAPIError) bool {
 		}
 	}
 	return false
+}
+
+func isPersistentAccountError(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error() + " " + string(err.GetErrorCode()) + " " + string(err.GetErrorType()))
+	for _, keyword := range persistentAccountErrorKeywords {
+		if strings.Contains(message, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func cooldownChannelPersistentWithoutFallback(channelId int, reason string, duration time.Duration) {
+	if err := model.CooldownChannelPersistentWithoutFallback(channelId, reason, duration); err != nil {
+		common.SysError(fmt.Sprintf("持久化通道冷却失败：#%d，原因：%v", channelId, err))
+	}
 }
 
 func ShouldCooldownChannel(err *types.NewAPIError) bool {
@@ -224,7 +249,7 @@ func CooldownChannel(channelError types.ChannelError, err *types.NewAPIError) {
 		return
 	}
 	common.SysLog(fmt.Sprintf("通道冷却：#%d，持续 %s，原因：%s", channelError.ChannelId, ChannelCooldownDuration, err.Error()))
-	model.CooldownChannelWithoutFallback(channelError.ChannelId, err.Error(), ChannelCooldownDuration)
+	cooldownChannelPersistentWithoutFallback(channelError.ChannelId, err.Error(), ChannelCooldownDuration)
 }
 
 func CooldownChannelForUpstreamError(channelError types.ChannelError, err *types.NewAPIError) {
@@ -242,7 +267,7 @@ func CooldownChannelForUpstreamRateLimit(channelError types.ChannelError, err *t
 	}
 	reason := fmt.Sprintf("upstream_rate_limit status=%d upstream_status=%d code=%s type=%s error=%s", err.StatusCode, err.UpstreamStatusCode, err.GetErrorCode(), err.GetErrorType(), err.Error())
 	common.SysLog(fmt.Sprintf("通道冷却：#%d，持续 %s，原因：%s", channelError.ChannelId, UpstreamRateLimitCooldownDuration, reason))
-	model.CooldownChannelWithoutFallback(channelError.ChannelId, reason, UpstreamRateLimitCooldownDuration)
+	cooldownChannelPersistentWithoutFallback(channelError.ChannelId, reason, UpstreamRateLimitCooldownDuration)
 }
 
 // CooldownChannelForRetry records a retry-triggering channel failure so later
@@ -257,12 +282,21 @@ func CooldownChannelForRetry(channelError types.ChannelError, err *types.NewAPIE
 	// for the full duration since a quick retry won't fix them.
 	duration := ShortChannelCooldownDuration
 	class := "retryable_transient"
-	if isCapabilityError(err) {
+	blockFallback := false
+	if isPersistentAccountError(err) {
+		duration = ChannelCooldownDuration
+		class = "account_unavailable"
+		blockFallback = true
+	} else if isCapabilityError(err) {
 		duration = ChannelCooldownDuration
 		class = "capability_gap"
 	}
 	reason := fmt.Sprintf("%s status=%d code=%s type=%s error=%s", class, err.StatusCode, err.GetErrorCode(), err.GetErrorType(), err.Error())
 	common.SysLog(fmt.Sprintf("通道冷却：#%d，持续 %s，原因：%s", channelError.ChannelId, duration, reason))
+	if blockFallback {
+		cooldownChannelPersistentWithoutFallback(channelError.ChannelId, reason, duration)
+		return
+	}
 	model.CooldownChannel(channelError.ChannelId, reason, duration)
 }
 

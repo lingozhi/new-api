@@ -35,11 +35,14 @@ func CooldownChannelWithoutFallback(channelId int, reason string, duration time.
 }
 
 func setChannelCooldown(channelId int, reason string, duration time.Duration, blockFallback bool) {
+	setChannelCooldownUntil(channelId, reason, time.Now().Add(duration), blockFallback)
+}
+
+func setChannelCooldownUntil(channelId int, reason string, expires time.Time, blockFallback bool) {
 	channelCooldowns.Lock()
 	defer channelCooldowns.Unlock()
 
 	now := time.Now()
-	expires := now.Add(duration)
 	current, ok := channelCooldowns.items[channelId]
 	if !ok || !now.Before(current.expires) {
 		current = channelCooldown{}
