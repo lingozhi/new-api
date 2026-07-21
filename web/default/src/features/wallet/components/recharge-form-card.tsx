@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Gift, ExternalLink, Loader2, Receipt, WalletCards } from 'lucide-react'
-import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -41,7 +40,7 @@ import { cn } from '@/lib/utils'
 import {
   getDiscountLabel,
   getPaymentIcon,
-  getMinTopupAmount,
+  getPaymentMethodMinTopup,
   calculatePresetPricing,
 } from '../lib'
 import type {
@@ -59,9 +58,6 @@ interface RechargeFormCardProps {
   selectedPreset: number | null
   onSelectPreset: (preset: PresetAmount) => void
   topupAmount: number
-  onTopupAmountChange: (amount: number) => void
-  paymentAmount: number
-  calculating: boolean
   onPaymentMethodSelect: (method: PaymentMethod) => void
   paymentLoading: string | null
   redemptionCode: string
@@ -89,9 +85,6 @@ export function RechargeFormCard({
   selectedPreset,
   onSelectPreset,
   topupAmount,
-  onTopupAmountChange,
-  paymentAmount,
-  calculating,
   onPaymentMethodSelect,
   paymentLoading,
   redemptionCode,
@@ -113,19 +106,6 @@ export function RechargeFormCard({
   enableWaffoPancakeTopup,
 }: RechargeFormCardProps) {
   const { t } = useTranslation()
-  const [localAmount, setLocalAmount] = useState(topupAmount.toString())
-
-  useEffect(() => {
-    setLocalAmount(topupAmount.toString())
-  }, [topupAmount])
-
-  const handleAmountChange = (value: string) => {
-    setLocalAmount(value)
-    const numValue = Number.parseInt(value) || 0
-    if (numValue >= 0) {
-      onTopupAmountChange(numValue)
-    }
-  }
 
   const hasConfigurableTopup =
     topupInfo?.enable_online_topup ||
@@ -137,7 +117,6 @@ export function RechargeFormCard({
     Array.isArray(topupInfo?.pay_methods) && topupInfo.pay_methods.length > 0
   const hasWaffoPaymentMethods =
     Array.isArray(waffoPayMethods) && waffoPayMethods.length > 0
-  const minTopup = getMinTopupAmount(topupInfo)
   const redemptionEnabled = topupInfo?.enable_redemption !== false
 
   if (loading) {
@@ -159,12 +138,6 @@ export function RechargeFormCard({
                   )
                 )}
               </div>
-            </div>
-
-            {/* Custom Amount Input Skeleton */}
-            <div className='space-y-3'>
-              <Skeleton className='h-3 w-28' />
-              <Skeleton className='h-[42px] w-full' />
             </div>
 
             {/* Payment Methods Skeleton */}
@@ -279,45 +252,16 @@ export function RechargeFormCard({
               )}
 
               <div className='space-y-2.5 sm:space-y-3'>
-                <Label
-                  htmlFor='topup-amount'
-                  className='text-muted-foreground text-xs font-medium tracking-wider uppercase'
-                >
-                  {t('Custom Amount')}
-                </Label>
-                <div className='grid grid-cols-[minmax(0,1fr)_minmax(110px,0.55fr)] gap-2 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center'>
-                  <Input
-                    id='topup-amount'
-                    type='number'
-                    value={localAmount}
-                    onChange={(e) => handleAmountChange(e.target.value)}
-                    min={minTopup}
-                    placeholder={`Minimum ${minTopup}`}
-                    className='h-9 text-base sm:h-10 sm:text-lg'
-                  />
-                  <div className='bg-muted/30 flex min-h-9 items-center justify-between gap-2 rounded-md border px-3 lg:min-w-52'>
-                    <span className='text-muted-foreground truncate text-xs'>
-                      {t('Amount to pay:')}
-                    </span>
-                    {calculating ? (
-                      <Skeleton className='h-5 w-16' />
-                    ) : (
-                      <span className='text-sm font-semibold'>
-                        {formatLocalCurrencyAmount(paymentAmount)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className='space-y-2.5 sm:space-y-3'>
                 <Label className='text-muted-foreground text-xs font-medium tracking-wider uppercase'>
                   {t('Payment Method')}
                 </Label>
                 {hasStandardPaymentMethods ? (
                   <div className='grid grid-cols-2 gap-1.5 sm:gap-3 lg:grid-cols-3'>
                     {topupInfo?.pay_methods?.map((method) => {
-                      const minTopup = method.min_topup || 0
+                      const minTopup = getPaymentMethodMinTopup(
+                        topupInfo,
+                        method
+                      )
                       const disabled = minTopup > topupAmount
                       const disabledReason = disabled
                         ? t('Minimum topup amount: {{amount}}', {

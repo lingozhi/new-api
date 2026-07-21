@@ -45,6 +45,7 @@ import {
 import {
   getDefaultPaymentType,
   getMinTopupAmount,
+  getPaymentMethodMinTopup,
   isWaffoPancakePayment,
 } from './lib'
 import type {
@@ -63,7 +64,6 @@ export function Wallet(props: WalletProps) {
   const [user, setUser] = useState<UserWalletData | null>(null)
   const [userLoading, setUserLoading] = useState(true)
   const [topupAmount, setTopupAmount] = useState(0)
-  const [selectedPreset, setSelectedPreset] = useState<number | null>(null)
   const [selectedPaymentMethod, setSelectedPaymentMethod] =
     useState<PaymentMethod>()
   const [paymentLoading, setPaymentLoading] = useState<string | null>(null)
@@ -132,17 +132,20 @@ export function Wallet(props: WalletProps) {
     }
   }, [props.initialShowHistory])
 
-  // Initialize topup amount when topup info is loaded
+  // Initialize with the first visible preset so every checkout uses a listed tier.
   useEffect(() => {
-    if (topupInfo && topupAmount === 0) {
+    if (topupInfo && topupAmount === 0 && presetAmounts.length > 0) {
       const minTopup = getMinTopupAmount(topupInfo)
-      setTopupAmount(minTopup)
+      const initialAmount =
+        presetAmounts.find((preset) => preset.value >= minTopup)?.value ||
+        presetAmounts[0].value
+      setTopupAmount(initialAmount)
 
       // Calculate initial payment amount with default payment type
       const defaultPaymentType = getDefaultPaymentType(topupInfo)
-      calculatePaymentAmount(minTopup, defaultPaymentType)
+      calculatePaymentAmount(initialAmount, defaultPaymentType)
     }
-  }, [topupInfo, topupAmount, calculatePaymentAmount])
+  }, [topupInfo, presetAmounts, topupAmount, calculatePaymentAmount])
 
   // Get current payment type (selected or default)
   const getCurrentPaymentType = useCallback(() => {
@@ -152,15 +155,7 @@ export function Wallet(props: WalletProps) {
   // Handle preset selection
   const handleSelectPreset = (preset: PresetAmount) => {
     setTopupAmount(preset.value)
-    setSelectedPreset(preset.value)
     calculatePaymentAmount(preset.value, getCurrentPaymentType())
-  }
-
-  // Handle topup amount change
-  const handleTopupAmountChange = (amount: number) => {
-    setTopupAmount(amount)
-    setSelectedPreset(null)
-    calculatePaymentAmount(amount, getCurrentPaymentType())
   }
 
   // Handle payment method selection
@@ -170,7 +165,7 @@ export function Wallet(props: WalletProps) {
 
     try {
       // Validate minimum topup
-      const minTopup = getMinTopupAmount(topupInfo)
+      const minTopup = getPaymentMethodMinTopup(topupInfo, method)
       if (topupAmount < minTopup) {
         return
       }
@@ -278,12 +273,9 @@ export function Wallet(props: WalletProps) {
                 <RechargeFormCard
                   topupInfo={topupInfo}
                   presetAmounts={presetAmounts}
-                  selectedPreset={selectedPreset}
+                  selectedPreset={topupAmount}
                   onSelectPreset={handleSelectPreset}
                   topupAmount={topupAmount}
-                  onTopupAmountChange={handleTopupAmountChange}
-                  paymentAmount={paymentAmount}
-                  calculating={calculating}
                   onPaymentMethodSelect={handlePaymentMethodSelect}
                   paymentLoading={paymentLoading}
                   redemptionCode={redemptionCode}

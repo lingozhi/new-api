@@ -22,7 +22,7 @@ import {
   DEFAULT_PAYMENT_TYPE,
   DEFAULT_MIN_TOPUP,
 } from '../constants'
-import type { PresetAmount, TopupInfo } from '../types'
+import type { PaymentMethod, PresetAmount, TopupInfo } from '../types'
 
 // ============================================================================
 // Payment Processing Functions
@@ -115,38 +115,88 @@ export function getDefaultPaymentType(topupInfo: TopupInfo | null): string {
 }
 
 /**
- * Get minimum topup amount from topup info
+ * Get the effective minimum for a standard payment method.
+ */
+export function getPaymentMethodMinTopup(
+  topupInfo: TopupInfo | null,
+  method: PaymentMethod
+): number {
+  const methodMinTopup = normalizeMinTopup(method.min_topup)
+
+  if (method.type === PAYMENT_TYPES.STRIPE) {
+    return Math.max(
+      methodMinTopup,
+      normalizeMinTopup(topupInfo?.stripe_min_topup)
+    )
+  }
+
+  if (method.type === PAYMENT_TYPES.WAFFO_PANCAKE) {
+    return Math.max(
+      methodMinTopup,
+      normalizeMinTopup(topupInfo?.waffo_pancake_min_topup)
+    )
+  }
+
+  return Math.max(methodMinTopup, normalizeMinTopup(topupInfo?.min_topup))
+}
+
+/**
+ * Get the smallest amount accepted by at least one visible payment path.
  */
 export function getMinTopupAmount(topupInfo: TopupInfo | null): number {
   if (!topupInfo) {
     return DEFAULT_MIN_TOPUP
   }
 
-  if (topupInfo.enable_online_topup) {
-    return topupInfo.min_topup
+  const minimums = topupInfo.pay_methods.map((method) =>
+    getPaymentMethodMinTopup(topupInfo, method)
+  )
+
+  if (
+    topupInfo.enable_waffo_topup &&
+    Array.isArray(topupInfo.waffo_pay_methods) &&
+    topupInfo.waffo_pay_methods.length > 0
+  ) {
+    minimums.push(normalizeMinTopup(topupInfo.waffo_min_topup))
+  }
+
+  if (minimums.length > 0) {
+    return Math.min(...minimums)
   }
 
   if (topupInfo.enable_stripe_topup) {
-    return topupInfo.stripe_min_topup
+    return normalizeMinTopup(topupInfo.stripe_min_topup)
   }
 
-  if (topupInfo.enable_waffo_topup) {
-    return topupInfo.waffo_min_topup || DEFAULT_MIN_TOPUP
+  if (topupInfo.enable_online_topup) {
+    return normalizeMinTopup(topupInfo.min_topup)
   }
 
   if (topupInfo.enable_waffo_pancake_topup) {
-    return topupInfo.waffo_pancake_min_topup || DEFAULT_MIN_TOPUP
+    return normalizeMinTopup(topupInfo.waffo_pancake_min_topup)
+  }
+
+  if (topupInfo.enable_waffo_topup) {
+    return normalizeMinTopup(topupInfo.waffo_min_topup)
   }
 
   return DEFAULT_MIN_TOPUP
+}
+
+function normalizeMinTopup(minAmount: number | undefined): number {
+  return Number.isFinite(minAmount) && Number(minAmount) > 0
+    ? Number(minAmount)
+    : DEFAULT_MIN_TOPUP
 }
 
 /**
  * Generate preset amounts based on minimum topup
  */
 export function generatePresetAmounts(minAmount: number): PresetAmount[] {
+  const normalizedMinAmount = normalizeMinTopup(minAmount)
+
   return DEFAULT_PRESET_MULTIPLIERS.map((multiplier) => ({
-    value: minAmount * multiplier,
+    value: normalizedMinAmount * multiplier,
   }))
 }
 
@@ -165,4 +215,32 @@ export function mergePresetAmounts(
     value: amount,
     discount: discounts[amount] || 1.0,
   }))
+}
+
+/**
+ * Resolve the visible preset tiers while ensuring each tier can be purchased.
+ */
+export function resolvePresetAmounts(
+  amountOptions: number[],
+  discounts: Record<number, number>,
+  minAmount: number
+): PresetAmount[] {
+  const normalizedMinAmount = normalizeMinTopup(minAmount)
+  const configuredPresets = mergePresetAmounts(amountOptions, discounts)
+
+  if (configuredPresets.length === 0) {
+    return generatePresetAmounts(normalizedMinAmount)
+  }
+
+  if (configuredPresets.some((preset) => preset.value >= normalizedMinAmount)) {
+    return configuredPresets
+  }
+
+  return [
+    ...configuredPresets,
+    {
+      value: normalizedMinAmount,
+      discount: discounts[normalizedMinAmount] || 1,
+    },
+  ]
 }
