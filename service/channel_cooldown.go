@@ -46,6 +46,9 @@ func ShouldObserveUpstreamHostFailure(err *types.NewAPIError) bool {
 			return false
 		}
 	}
+	if IsUpstreamRelayServiceTransientError(err) {
+		return true
+	}
 	if err.GetErrorCode() == types.ErrorCodeDoRequestFailed {
 		return true
 	}
@@ -101,6 +104,18 @@ var channelCooldownKeywords = []string{
 // and must not penalize a channel.
 func IsUpstreamRateLimitError(err *types.NewAPIError) bool {
 	return err != nil && err.UpstreamStatusCode == http.StatusTooManyRequests
+}
+
+// IsUpstreamRelayServiceTransientError identifies a known relay outage that is
+// incorrectly wrapped as HTTP 400. Upstream provenance and both stable message
+// markers are required so ordinary client validation errors remain terminal.
+func IsUpstreamRelayServiceTransientError(err *types.NewAPIError) bool {
+	if err == nil || err.UpstreamStatusCode != http.StatusBadRequest {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "upstream request failed, please try again") &&
+		strings.Contains(message, "(relay service)")
 }
 
 var upstreamErrorCooldownCodes = map[types.ErrorCode]bool{

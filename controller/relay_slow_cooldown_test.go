@@ -5,6 +5,7 @@ import (
 	"time"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
 )
 
@@ -20,7 +21,7 @@ func TestShouldCooldownSlowChannelMeasuresFromAttemptStart(t *testing.T) {
 	attemptStart := base.Add(30 * time.Second) // 30s burned on earlier dead channels
 	firstResp := attemptStart.Add(5 * time.Second)
 
-	info := &relaycommon.RelayInfo{StartTime: reqStart, FirstResponseTime: firstResp}
+	info := &relaycommon.RelayInfo{StartTime: reqStart, FirstResponseTime: firstResp, IsStream: true}
 
 	// Guard the premise: the OLD StartTime-based frt would have tripped the cooldown.
 	if firstResp.Sub(reqStart) < service.SlowChannelFRTThreshold {
@@ -46,6 +47,7 @@ func TestShouldCooldownSlowChannelUsesCurrentAttemptFirstDataAfterRetry(t *testi
 	info := &relaycommon.RelayInfo{
 		StartTime:         base,
 		FirstResponseTime: base.Add(2 * time.Second),
+		IsStream:          true,
 		StreamStatus:      status,
 	}
 
@@ -94,6 +96,7 @@ func TestShouldCooldownSlowChannelIgnoresAffinityColdStart(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		StartTime:         base,
 		FirstResponseTime: firstResp,
+		IsStream:          true,
 		AffinityColdStart: true,
 	}
 
@@ -113,11 +116,53 @@ func TestShouldCooldownSlowChannelTripsOnGenuinelySlowAttempt(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 	firstResp := base.Add(35 * time.Second) // 35s to first token on this attempt
 
-	info := &relaycommon.RelayInfo{StartTime: base, FirstResponseTime: firstResp}
+	info := &relaycommon.RelayInfo{StartTime: base, FirstResponseTime: firstResp, IsStream: true}
 
 	frt, slow := shouldCooldownSlowChannel(info, base)
 	if !slow {
 		t.Fatalf("a 35s-to-first-token attempt must be cooled (frt=%v)", frt)
+	}
+}
+
+func TestShouldCooldownSlowChannelSkipsNonStreamingCompletionLatency(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	info := &relaycommon.RelayInfo{
+		StartTime:         base,
+		FirstResponseTime: base.Add(35 * time.Second),
+		RelayMode:         relayconstant.RelayModeResponses,
+	}
+
+	if frt, slow := shouldCooldownSlowChannel(info, base); slow {
+		t.Fatalf("non-streaming completion time is not first-token latency and must not cool the channel (latency=%v)", frt)
+	}
+}
+
+func TestShouldCooldownSlowChannelSkipsImageGenerationCompletionLatency(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	info := &relaycommon.RelayInfo{
+		StartTime:         base,
+		FirstResponseTime: base.Add(35 * time.Second),
+		IsStream:          true,
+		RelayMode:         relayconstant.RelayModeImagesGenerations,
+		RequestURLPath:    "/v1/images/generations",
+	}
+
+	if latency, slow := shouldCooldownSlowChannel(info, base); slow {
+		t.Fatalf("image completion time is not text TTFT and must not cool the channel (latency=%v)", latency)
+	}
+}
+
+func TestShouldCooldownSlowChannelKeepsNonStreamingOperationalLatency(t *testing.T) {
+	base := time.Unix(1_700_000_000, 0)
+	info := &relaycommon.RelayInfo{
+		StartTime:         base,
+		FirstResponseTime: base.Add(35 * time.Second),
+		RelayMode:         relayconstant.RelayModeEmbeddings,
+	}
+
+	frt, slow := shouldCooldownSlowChannel(info, base)
+	if !slow {
+		t.Fatalf("non-streaming operational latency must retain the existing cooldown signal (latency=%v)", frt)
 	}
 }
 
@@ -128,6 +173,7 @@ func TestShouldCooldownSlowChannelSkipsTerminalClientErrors(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		StartTime:         base,
 		FirstResponseTime: base.Add(35 * time.Second),
+		IsStream:          true,
 		StreamStatus:      status,
 	}
 
@@ -142,12 +188,12 @@ func TestShouldCooldownSlowChannelSkipsTerminalClientErrors(t *testing.T) {
 func TestShouldCooldownSlowChannelSkipsNonAttributable(t *testing.T) {
 	base := time.Unix(1_700_000_000, 0)
 
-	if _, slow := shouldCooldownSlowChannel(&relaycommon.RelayInfo{StartTime: base}, base); slow {
+	if _, slow := shouldCooldownSlowChannel(&relaycommon.RelayInfo{StartTime: base, IsStream: true}, base); slow {
 		t.Fatal("no response sent must not cool the channel")
 	}
 
 	// First response was recorded before this attempt started.
-	info := &relaycommon.RelayInfo{StartTime: base, FirstResponseTime: base.Add(2 * time.Second)}
+	info := &relaycommon.RelayInfo{StartTime: base, FirstResponseTime: base.Add(2 * time.Second), IsStream: true}
 	if _, slow := shouldCooldownSlowChannel(info, base.Add(10*time.Second)); slow {
 		t.Fatal("a first response predating this attempt must not cool the channel")
 	}

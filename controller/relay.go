@@ -866,6 +866,15 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if types.IsSkipRetryError(openaiErr) || isSemanticClientError(openaiErr) {
 		return false
 	}
+	if service.IsUpstreamRelayServiceTransientError(openaiErr) {
+		if retryTimes <= 0 {
+			return false
+		}
+		if _, ok := c.Get("specific_channel_id"); ok {
+			return false
+		}
+		return true
+	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) && openaiErr.StatusCode < http.StatusInternalServerError {
 		return false
 	}
@@ -892,7 +901,10 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 }
 
 func markAffinityColdStartForRetry(c *gin.Context, info *relaycommon.RelayInfo, err *types.NewAPIError) {
-	if info == nil || !service.IsUpstreamRateLimitError(err) || !service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+	if info == nil || !service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+		return
+	}
+	if !service.IsUpstreamRateLimitError(err) && !service.IsUpstreamRelayServiceTransientError(err) {
 		return
 	}
 	info.AffinityColdStart = true
@@ -900,9 +912,10 @@ func markAffinityColdStartForRetry(c *gin.Context, info *relaycommon.RelayInfo, 
 }
 
 // cooldownSlowChannelIfNeeded cools a channel after a successful request whose
-// first-response-time exceeded SlowChannelFRTThreshold. FRT is only meaningful
-// when the handler actually recorded a first response; pinned (specific) channel
-// requests are skipped since they bypass selection anyway.
+// meaningful first-response time exceeded SlowChannelFRTThreshold. Non-streaming
+// text completion and image completion time are excluded because neither is text
+// TTFT; operational routes retain their existing timing. Pinned requests bypass
+// selection and are skipped.
 func cooldownSlowChannelIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, channel *model.Channel, attemptStart time.Time) {
 	if info == nil || channel == nil {
 		return
@@ -928,6 +941,11 @@ func cooldownSlowChannelIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, ch
 // the channel is not cooled.
 func shouldCooldownSlowChannel(info *relaycommon.RelayInfo, attemptStart time.Time) (time.Duration, bool) {
 	if info == nil {
+		return 0, false
+	}
+	healthPath := service.ChannelHealthPath(info.RequestURLPath)
+	if healthPath == "/v1/images/generations" || healthPath == "/v1/images/edits" ||
+		(!info.IsStream && service.IsTextGenerationHealthRequest(info, info.RequestURLPath)) {
 		return 0, false
 	}
 	firstResponseAt := info.FirstResponseTimeForAttempt(attemptStart)
@@ -966,6 +984,12 @@ func isRetryableChannelError(c *gin.Context, openaiErr *types.NewAPIError) bool 
 	}
 	if types.IsSkipRetryError(openaiErr) || isSemanticClientError(openaiErr) {
 		return false
+	}
+	if service.IsUpstreamRelayServiceTransientError(openaiErr) {
+		if _, ok := c.Get("specific_channel_id"); ok {
+			return false
+		}
+		return true
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) && openaiErr.StatusCode < http.StatusInternalServerError {
 		return false
@@ -1022,6 +1046,8 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		// the channel serves fine — exactly what cooled a healthy claude-sonnet-5
 		// on #25 because gpt-5.4-mini 404'd. Skip it.
 		logger.LogInfo(c, fmt.Sprintf("channel #%d does not serve model %q; isolating that pair via the health circuit instead of cooling the whole channel", channelError.ChannelId, common.GetContextKeyString(c, constant.ContextKeyOriginalModel)))
+	} else if service.IsUpstreamRelayServiceTransientError(err) {
+		service.CooldownChannelForRetry(channelError, err)
 	} else if service.ShouldCooldownChannel(err) {
 		service.CooldownChannel(channelError, err)
 	} else if isRetryableChannelError(c, err) {
