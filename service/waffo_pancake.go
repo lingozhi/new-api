@@ -21,6 +21,7 @@ type WaffoPancakePriceSnapshot struct {
 // OrderMerchantExternalID = our trade_no; Pancake echoes it back in webhooks.
 type WaffoPancakeCreateSessionParams struct {
 	ProductID               string
+	Currency                string
 	BuyerIdentity           string
 	PriceSnapshot           *WaffoPancakePriceSnapshot
 	BuyerEmail              string
@@ -106,6 +107,10 @@ func CreateWaffoPancakeCheckoutSession(ctx context.Context, params *WaffoPancake
 	if strings.TrimSpace(params.OrderMerchantExternalID) == "" {
 		return nil, fmt.Errorf("missing order merchant external id")
 	}
+	currency := strings.ToUpper(strings.TrimSpace(params.Currency))
+	if currency == "" {
+		currency = "USD"
+	}
 	client, err := newWaffoPancakeClient()
 	if err != nil {
 		return nil, fmt.Errorf("build Waffo Pancake client: %w", err)
@@ -114,7 +119,7 @@ func CreateWaffoPancakeCheckoutSession(ctx context.Context, params *WaffoPancake
 	sdkParams := pancake.AuthenticatedCheckoutParams{
 		CreateCheckoutSessionParams: pancake.CreateCheckoutSessionParams{
 			ProductID:               params.ProductID,
-			Currency:                "USD",
+			Currency:                currency,
 			BuyerEmail:              optionalString(params.BuyerEmail),
 			ExpiresInSeconds:        params.ExpiresInSeconds,
 			OrderMerchantExternalID: optionalString(params.OrderMerchantExternalID),
@@ -272,7 +277,7 @@ func CreateWaffoPancakePrimaryStore(ctx context.Context, merchantID, privateKey 
 }
 
 // CreateWaffoPancakeProductForPlan mints (and publishes) a Pancake
-// OnetimeProduct priced at `amount` USD, used as a subscription plan's
+// OnetimeProduct priced at `amount` in USD and CNY, used as a subscription plan's
 // SubscriptionPlan.WaffoPancakeProductId.
 //
 // OnetimeProduct (not SubscriptionProduct) because new-api has no renewal-
@@ -296,14 +301,9 @@ func CreateWaffoPancakeProductForPlan(ctx context.Context, merchantID, privateKe
 		return "", err
 	}
 	prodRes, err := client.OnetimeProducts.Create(ctx, pancake.CreateOnetimeProductParams{
-		StoreID: storeID,
-		Name:    name,
-		Prices: pancake.Prices{
-			"USD": {
-				Amount:      amount,
-				TaxCategory: pancake.TaxCategory("saas"),
-			},
-		},
+		StoreID:    storeID,
+		Name:       name,
+		Prices:     waffoPancakePrices(amount),
 		SuccessURL: optionalString(strings.TrimSpace(returnURL)),
 	})
 	if err != nil {
@@ -329,14 +329,9 @@ func CreateWaffoPancakePrimaryProduct(ctx context.Context, merchantID, privateKe
 		return "", err
 	}
 	prodRes, err := client.OnetimeProducts.Create(ctx, pancake.CreateOnetimeProductParams{
-		StoreID: storeID,
-		Name:    defaultWaffoPancakeProductName,
-		Prices: pancake.Prices{
-			"USD": {
-				Amount:      "1.00", // overridden at checkout via PriceSnapshot
-				TaxCategory: pancake.TaxCategory("saas"),
-			},
-		},
+		StoreID:    storeID,
+		Name:       defaultWaffoPancakeProductName,
+		Prices:     waffoPancakePrices("1.00"), // overridden at checkout via PriceSnapshot
 		SuccessURL: optionalString(strings.TrimSpace(returnURL)),
 	})
 	if err != nil {
@@ -347,6 +342,17 @@ func CreateWaffoPancakePrimaryProduct(ctx context.Context, merchantID, privateKe
 		return "", fmt.Errorf("publish Waffo Pancake product: %w", err)
 	}
 	return productID, nil
+}
+
+func waffoPancakePrices(amount string) pancake.Prices {
+	price := pancake.PriceInfo{
+		Amount:      amount,
+		TaxCategory: pancake.TaxCategory("saas"),
+	}
+	return pancake.Prices{
+		"USD": price,
+		"CNY": price,
+	}
 }
 
 // WaffoPancakePairResult is the response of CreateWaffoPancakePrimaryPair.

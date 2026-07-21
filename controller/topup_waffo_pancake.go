@@ -74,6 +74,13 @@ func getWaffoPancakePayMoney(amount int64, group string) float64 {
 	return payMoney.InexactFloat64()
 }
 
+func getWaffoPancakeCheckoutCurrency() string {
+	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeCNY {
+		return "CNY"
+	}
+	return "USD"
+}
+
 func normalizeWaffoPancakeTopUpAmount(amount int64) int64 {
 	if operation_setting.GetQuotaDisplayType() != operation_setting.QuotaDisplayTypeTokens {
 		return amount
@@ -391,6 +398,7 @@ func RequestWaffoPancakePay(c *gin.Context) {
 	expiresInSeconds := 45 * 60
 	session, err := service.CreateWaffoPancakeCheckoutSession(c.Request.Context(), &service.WaffoPancakeCreateSessionParams{
 		ProductID:     setting.WaffoPancakeProductID,
+		Currency:      getWaffoPancakeCheckoutCurrency(),
 		BuyerIdentity: getWaffoPancakeBuyerIdentity(user),
 		PriceSnapshot: &service.WaffoPancakePriceSnapshot{
 			Amount:      formatWaffoPancakeAmount(payMoney),
