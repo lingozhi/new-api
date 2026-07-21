@@ -50,8 +50,10 @@ func newResponsesStreamCtx() *responsesStreamCtx {
 	return &responsesStreamCtx{}
 }
 
-// observe inspects one parsed upstream SSE event after it was written
-// downstream, so seenTerminal only represents a terminal the client received.
+// observe inspects one parsed upstream SSE event after the stream writer
+// accepts it. Metadata preludes may still be buffered, but terminal events are
+// always written immediately, so seenTerminal only represents a terminal the
+// client received.
 func (ctx *responsesStreamCtx) observe(ev dto.ResponsesStreamResponse) {
 	switch ev.Type {
 	case "response.completed", "response.failed", "response.incomplete":

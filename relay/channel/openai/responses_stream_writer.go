@@ -10,22 +10,72 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const (
+	maxBufferedResponsesMetadataPreludeEvents = 4
+	maxBufferedResponsesMetadataPreludeBytes  = 256 << 10
+)
+
+type bufferedResponsesEvent struct {
+	eventType string
+	data      string
+}
+
 type ResponsesStreamWriter struct {
-	c                   *gin.Context
-	protocolStarted     bool
-	terminalWritten     bool
-	pendingTerminalType string
-	pendingTerminalData string
+	c                       *gin.Context
+	bufferMetadataPrelude   bool
+	bufferedMetadataPrelude []bufferedResponsesEvent
+	bufferedMetadataBytes   int
+	protocolStarted         bool
+	terminalWritten         bool
+	pendingTerminalType     string
+	pendingTerminalData     string
 }
 
 func NewResponsesStreamWriter(c *gin.Context) *ResponsesStreamWriter {
 	return &ResponsesStreamWriter{c: c}
 }
 
+func NewRetryableResponsesStreamWriter(c *gin.Context) *ResponsesStreamWriter {
+	return &ResponsesStreamWriter{
+		c:                     c,
+		bufferMetadataPrelude: true,
+	}
+}
+
 func (w *ResponsesStreamWriter) WriteData(eventType, data string) error {
 	if w.terminalWritten {
 		return nil
 	}
+	if w.bufferMetadataPrelude && !w.protocolStarted &&
+		len(w.bufferedMetadataPrelude) < maxBufferedResponsesMetadataPreludeEvents &&
+		len(data) <= maxBufferedResponsesMetadataPreludeBytes-w.bufferedMetadataBytes &&
+		isResponsesMetadataPrelude(eventType, data) {
+		w.bufferedMetadataPrelude = append(w.bufferedMetadataPrelude, bufferedResponsesEvent{
+			eventType: eventType,
+			data:      data,
+		})
+		w.bufferedMetadataBytes += len(data)
+		return nil
+	}
+	if err := w.flushMetadataPrelude(); err != nil {
+		return err
+	}
+	return w.writeData(eventType, data)
+}
+
+func (w *ResponsesStreamWriter) flushMetadataPrelude() error {
+	buffered := w.bufferedMetadataPrelude
+	w.bufferedMetadataPrelude = nil
+	w.bufferedMetadataBytes = 0
+	for _, event := range buffered {
+		if err := w.writeData(event.eventType, event.data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *ResponsesStreamWriter) writeData(eventType, data string) error {
 	// Mark the protocol boundary before writing. A partial event is already
 	// visible to the client and must never be replayed on another channel.
 	w.protocolStarted = true
@@ -42,6 +92,26 @@ func (w *ResponsesStreamWriter) WriteData(eventType, data string) error {
 		w.pendingTerminalData = ""
 	}
 	return nil
+}
+
+func isResponsesMetadataPrelude(eventType, data string) bool {
+	switch eventType {
+	case "response.created", "response.in_progress":
+	default:
+		return false
+	}
+
+	var event dto.ResponsesStreamResponse
+	if err := common.UnmarshalJsonStr(data, &event); err != nil {
+		return false
+	}
+	if event.Type != eventType || event.Response == nil {
+		return false
+	}
+	if event.Usage != nil || len(event.Output) > 0 {
+		return false
+	}
+	return event.Response.Usage == nil && len(event.Response.Output) == 0
 }
 
 func (w *ResponsesStreamWriter) RetryPendingTerminal() (string, bool, error) {
@@ -128,6 +198,10 @@ func (w *ResponsesStreamWriter) FailureData(responseID, model string, createdAt 
 
 func (w *ResponsesStreamWriter) TerminalWritten() bool {
 	return w != nil && w.terminalWritten
+}
+
+func (w *ResponsesStreamWriter) HasBufferedMetadataPrelude() bool {
+	return w != nil && len(w.bufferedMetadataPrelude) > 0
 }
 
 func (w *ResponsesStreamWriter) Started() bool {

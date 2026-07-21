@@ -82,7 +82,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	}
 	streamErr := (*types.NewAPIError)(nil)
 	streamFailureReason := relaycommon.StreamEndReasonInternalError
-	streamWriter := NewResponsesStreamWriter(c)
+	streamWriter := NewRetryableResponsesStreamWriter(c)
 	var preCommitCapacityErr *types.NewAPIError
 	responseHeadersBeforeStream := c.Writer.Header().Clone()
 	hasMeaningfulStreamData := false
@@ -271,7 +271,7 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		info.StreamStatus.SetProtocolTerminalEndReasonWithSource(endReason, endErr, "responses_bridge_terminal_retry")
 		return usage, nil
 	}
-	if !streamWriter.Started() {
+	if !streamWriter.Started() && !streamWriter.HasBufferedMetadataPrelude() {
 		return usage, streamErr
 	}
 	if !streamWriter.TerminalWritten() {

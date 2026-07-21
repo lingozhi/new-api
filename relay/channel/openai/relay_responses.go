@@ -81,7 +81,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var usage = &dto.Usage{}
 	var responseTextBuilder strings.Builder
 	streamCtx := newResponsesStreamCtx()
-	streamWriter := NewResponsesStreamWriter(c)
+	streamWriter := NewRetryableResponsesStreamWriter(c)
 	var preCommitCapacityErr *types.NewAPIError
 	responseHeadersBeforeStream := c.Writer.Header().Clone()
 
@@ -96,6 +96,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 		if streamResponse.Type == "error" {
+			hasBillableErrorPayload := responsesStreamEventHasBillablePayload(streamResponse)
 			failureErr := fmt.Errorf("upstream responses stream failed")
 			if streamResponse.Message != "" {
 				failureErr = fmt.Errorf("upstream responses stream failed: %s", streamResponse.Message)
@@ -124,7 +125,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				sr.Stop(err)
 				return
 			}
-			if channelFailure && !streamWriter.ProtocolStarted() && service.IsImmediateStreamCapacityError(failureErr.Error()) {
+			if channelFailure && !streamWriter.ProtocolStarted() && !hasBillableErrorPayload && service.IsImmediateStreamCapacityError(failureErr.Error()) {
 				preCommitCapacityErr = newResponsesPreCommitCapacityError(upstreamErr, failureErr)
 				sr.PreCommitUpstreamFailed(failureErr)
 				return
@@ -152,9 +153,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 
-		hasBillableFailurePayload := streamResponse.Type == "response.failed" &&
-			(streamResponse.Usage != nil || len(streamResponse.Output) > 0 ||
-				(streamResponse.Response != nil && (streamResponse.Response.Usage != nil || len(streamResponse.Response.Output) > 0)))
+		hasBillableFailurePayload := streamResponse.Type == "response.failed" && responsesStreamEventHasBillablePayload(streamResponse)
 		var normalizeErr error
 		streamResponse, data, normalizeErr = normalizeResponsesTerminalEvent(c, info, streamCtx, streamResponse, data)
 		if normalizeErr != nil {
@@ -336,6 +335,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
 	return usage, nil
+}
+
+func responsesStreamEventHasBillablePayload(event dto.ResponsesStreamResponse) bool {
+	if event.Usage != nil || len(event.Output) > 0 {
+		return true
+	}
+	return event.Response != nil && (event.Response.Usage != nil || len(event.Response.Output) > 0)
 }
 
 func newResponsesPreCommitCapacityError(upstreamErr *types.OpenAIError, fallback error) *types.NewAPIError {
