@@ -228,6 +228,14 @@ func TestOaiResponsesStreamHandlerReturnsPreCommitCapacityFailureForRetry(t *tes
 			name: "failed terminal",
 			body: `data: {"type":"response.failed","response":{"id":"resp_busy","status":"failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}}}` + "\n\n",
 		},
+		{
+			name: "failed terminal top-level message",
+			body: `data: {"type":"response.failed","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}` + "\n\n",
+		},
+		{
+			name: "failed terminal top-level error",
+			body: `data: {"type":"response.failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}}` + "\n\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -280,6 +288,50 @@ func TestOaiResponsesStreamHandlerDoesNotRetryCapacityFailureWithUsageOrOutput(t
 			require.NotNil(t, usage)
 			assert.True(t, c.Writer.Written())
 			require.Equal(t, []string{"response.failed"}, responsesTerminalEvents(t, recorder.Body.String()))
+			assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+		})
+	}
+}
+
+func TestOaiResponsesStreamHandlerPromotesTopLevelFailurePayloadBeforeForwarding(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		wantTotal     int
+		wantOutputLen int
+	}{
+		{
+			name:      "top-level usage",
+			body:      `data: {"type":"response.failed","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors.","usage":{"input_tokens":4,"output_tokens":1,"total_tokens":5}}` + "\n\n",
+			wantTotal: 5,
+		},
+		{
+			name:          "top-level output",
+			body:          `data: {"type":"response.failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."},"output":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"partial"}]}]}` + "\n\n",
+			wantOutputLen: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(tt.body))
+
+			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+			require.Nil(t, apiErr, "billable failure payloads must never be replayed")
+			require.NotNil(t, usage)
+			require.Equal(t, []string{"response.failed"}, responsesTerminalEvents(t, recorder.Body.String()))
+			var normalized dto.ResponsesStreamResponse
+			require.NoError(t, common.UnmarshalJsonStr(responsesEventData(t, recorder.Body.String(), "response.failed"), &normalized))
+			require.NotNil(t, normalized.Response)
+			upstreamErr := normalized.Response.GetOpenAIError()
+			require.NotNil(t, upstreamErr)
+			assert.Equal(t, "We're currently experiencing high demand, which may cause temporary errors.", upstreamErr.Message)
+			if tt.wantTotal > 0 {
+				require.NotNil(t, normalized.Response.Usage)
+				assert.Equal(t, tt.wantTotal, normalized.Response.Usage.TotalTokens)
+			}
+			assert.Len(t, normalized.Response.Output, tt.wantOutputLen)
 			assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
 		})
 	}
