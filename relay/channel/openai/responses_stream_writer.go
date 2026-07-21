@@ -12,6 +12,7 @@ import (
 
 type ResponsesStreamWriter struct {
 	c                   *gin.Context
+	protocolStarted     bool
 	terminalWritten     bool
 	pendingTerminalType string
 	pendingTerminalData string
@@ -25,6 +26,9 @@ func (w *ResponsesStreamWriter) WriteData(eventType, data string) error {
 	if w.terminalWritten {
 		return nil
 	}
+	// Mark the protocol boundary before writing. A partial event is already
+	// visible to the client and must never be replayed on another channel.
+	w.protocolStarted = true
 	if isResponsesTerminalEvent(eventType) && w.pendingTerminalType == "" {
 		w.pendingTerminalType = eventType
 		w.pendingTerminalData = data
@@ -128,6 +132,12 @@ func (w *ResponsesStreamWriter) TerminalWritten() bool {
 
 func (w *ResponsesStreamWriter) Started() bool {
 	return w != nil && w.c != nil && w.c.Writer != nil && w.c.Writer.Written()
+}
+
+// ProtocolStarted reports whether a real Responses event (rather than an SSE
+// keepalive comment) has been sent to the client.
+func (w *ResponsesStreamWriter) ProtocolStarted() bool {
+	return w != nil && w.protocolStarted
 }
 
 func isResponsesTerminalEvent(eventType string) bool {

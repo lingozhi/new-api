@@ -25,6 +25,12 @@ func TestChannelHealthOutcomeStatusScoresEmptyUpstreamAsFailure(t *testing.T) {
 	upstreamErr := types.NewErrorWithStatusCode(errors.New("do request failed"), types.ErrorCodeDoRequestFailed, http.StatusBadGateway)
 	mappedUpstreamErr := types.NewErrorWithStatusCode(errors.New("upstream overloaded"), types.ErrorCodeBadResponseStatusCode, http.StatusBadRequest)
 	mappedUpstreamErr.UpstreamStatusCode = http.StatusServiceUnavailable
+	streamCapacityErr := types.NewOpenAIError(
+		errors.New("We're currently experiencing high demand, which may cause temporary errors."),
+		types.ErrorCode("server_error"),
+		http.StatusBadRequest,
+		types.ErrOptionWithPreCommitStreamCapacity(),
+	)
 	localErr := types.NewErrorWithStatusCode(errors.New("convert request failed"), types.ErrorCodeConvertRequestFailed, http.StatusInternalServerError)
 	failedStream := relaycommon.NewStreamStatus()
 	failedStream.SetEndReason(relaycommon.StreamEndReasonUpstreamFailed, errors.New("upstream response.failed"))
@@ -49,6 +55,7 @@ func TestChannelHealthOutcomeStatusScoresEmptyUpstreamAsFailure(t *testing.T) {
 		{name: "client terminal failure wins over empty usage", apiErr: nil, relayInfo: &relaycommon.RelayInfo{StreamStatus: clientTerminalStream, UpstreamEmptyResponse: true}, wantStatus: http.StatusBadRequest, wantLocalErr: false},
 		{name: "upstream error wins over empty flag", apiErr: upstreamErr, relayInfo: &relaycommon.RelayInfo{UpstreamEmptyResponse: true}, wantStatus: http.StatusBadGateway, wantLocalErr: false},
 		{name: "immutable upstream status wins over client mapping", apiErr: mappedUpstreamErr, relayInfo: &relaycommon.RelayInfo{}, wantStatus: http.StatusServiceUnavailable, wantLocalErr: false},
+		{name: "marked stream capacity survives client mapping", apiErr: streamCapacityErr, relayInfo: &relaycommon.RelayInfo{}, wantStatus: http.StatusServiceUnavailable, wantLocalErr: false},
 		{name: "gateway-local error", apiErr: localErr, relayInfo: &relaycommon.RelayInfo{}, wantStatus: http.StatusInternalServerError, wantLocalErr: true},
 	}
 

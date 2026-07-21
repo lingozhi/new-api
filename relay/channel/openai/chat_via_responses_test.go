@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/types"
@@ -30,13 +31,11 @@ func newResponsesChatTestContext(t *testing.T, body string, isStream bool) (*gin
 		Body:       io.NopCloser(strings.NewReader(body)),
 		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
 	}
-	info := &relaycommon.RelayInfo{
-		ChannelMeta:        &relaycommon.ChannelMeta{UpstreamModelName: "gpt-test"},
-		IsStream:           isStream,
-		RelayFormat:        types.RelayFormatOpenAI,
-		ShouldIncludeUsage: true,
-		DisablePing:        true,
-	}
+	info := relaycommon.GenRelayInfoResponses(c, &dto.OpenAIResponsesRequest{Stream: common.GetPointer(isStream)})
+	info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: "gpt-test"}
+	info.RelayFormat = types.RelayFormatOpenAI
+	info.ShouldIncludeUsage = true
+	info.DisablePing = true
 	return c, recorder, resp, info
 }
 
@@ -235,6 +234,11 @@ func TestOaiChatToResponsesStreamHandlerTerminatesEarlyErrors(t *testing.T) {
 			wantCode: "server_error",
 		},
 		{
+			name:     "capacity error after protocol output",
+			failure:  `data: {"error":{"message":"We're currently experiencing high demand, which may cause temporary errors.","type":"server_error","code":"server_error"}}`,
+			wantCode: "server_error",
+		},
+		{
 			name:     "malformed chat chunk",
 			failure:  `data: {not-json}`,
 			wantCode: "bad_response_body",
@@ -275,7 +279,84 @@ func TestOaiChatToResponsesStreamHandlerMapsPreStreamServerErrorTo5xx(t *testing
 	require.NotNil(t, usage)
 	require.NotNil(t, apiErr)
 	require.GreaterOrEqual(t, apiErr.StatusCode, http.StatusInternalServerError)
+	require.False(t, types.IsPreCommitStreamCapacityError(apiErr))
 	require.Zero(t, recorder.Body.Len())
+}
+
+func TestOaiChatToResponsesStreamHandlerReturnsPreCommitCapacityFailureForRetry(t *testing.T) {
+	body := `data: {"error":{"message":"We're currently experiencing high demand, which may cause temporary errors.","type":"server_error","code":"server_error"}}` + "\n\n"
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Writer.Header().Set("X-Before-Stream", "keep")
+	resp.Header.Set("X-Codex-Turn-State", "failed-channel-state")
+	info.BeginChannelAttempt()
+
+	usage, apiErr := OaiChatToResponsesStreamHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+	require.True(t, types.IsPreCommitStreamCapacityError(apiErr))
+	require.False(t, c.Writer.Written())
+	require.Empty(t, recorder.Body.String())
+	require.Equal(t, "keep", c.Writer.Header().Get("X-Before-Stream"))
+	require.Empty(t, c.Writer.Header().Get("X-Codex-Turn-State"))
+	require.Empty(t, c.Writer.Header().Get("Content-Type"))
+	require.Empty(t, c.Writer.Header().Get("Transfer-Encoding"))
+	require.False(t, info.HasSendResponse())
+	require.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+}
+
+func TestOaiChatToResponsesStreamHandlerTreatsPingAsPreCommitForCapacityRetry(t *testing.T) {
+	body := `data: {"error":{"message":"We're currently experiencing high demand, which may cause temporary errors.","type":"server_error","code":"server_error"}}` + "\n\n"
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	resp.Header.Set("X-Codex-Turn-State", "failed-channel-state")
+	info.BeginChannelAttempt()
+	require.NoError(t, relayhelper.PingData(c))
+
+	usage, apiErr := OaiChatToResponsesStreamHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.True(t, types.IsPreCommitStreamCapacityError(apiErr))
+	require.True(t, c.Writer.Written())
+	require.Equal(t, ": PING\n\n", recorder.Body.String())
+	require.NotContains(t, recorder.Body.String(), "response.failed")
+	require.Equal(t, "failed-channel-state", c.Writer.Header().Get("X-Codex-Turn-State"))
+	require.False(t, info.HasSendResponse())
+	require.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+}
+
+func TestOaiChatToResponsesStreamHandlerDoesNotRetryCapacityErrorWithUsageOrOutput(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "usage",
+			body: `data: {"error":{"message":"We're currently experiencing high demand, which may cause temporary errors.","type":"server_error","code":"server_error"},"usage":{"prompt_tokens":4,"completion_tokens":1,"total_tokens":5}}` + "\n\n",
+		},
+		{
+			name: "output",
+			body: `data: {"error":{"message":"We're currently experiencing high demand, which may cause temporary errors.","type":"server_error","code":"server_error"},"choices":[{"index":0,"message":{"role":"assistant","content":"partial"},"finish_reason":"stop"}]}` + "\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, recorder, resp, info := newResponsesChatTestContext(t, tt.body, true)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+			usage, apiErr := OaiChatToResponsesStreamHandler(c, info, resp)
+
+			require.NotNil(t, usage)
+			require.NotNil(t, apiErr)
+			require.False(t, types.IsPreCommitStreamCapacityError(apiErr))
+			require.False(t, c.Writer.Written())
+			require.Empty(t, recorder.Body.String())
+		})
+	}
 }
 
 func TestOaiChatToResponsesStreamHandlerScannerErrorAfterPartialWritesFailed(t *testing.T) {

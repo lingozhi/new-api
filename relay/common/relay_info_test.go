@@ -71,3 +71,27 @@ func TestRelayInfoTracksFirstResponsePerChannelAttempt(t *testing.T) {
 	require.Equal(t, firstRequestResponse, info.FirstResponseTime,
 		"request-level first response must remain anchored to the first attempt")
 }
+
+func TestRelayInfoDiscardCurrentAttemptFirstResponseRestoresRequestTiming(t *testing.T) {
+	start := time.Now().Add(-time.Second)
+	info := &RelayInfo{
+		StartTime:         start,
+		FirstResponseTime: start.Add(-time.Second),
+		isFirstResponse:   true,
+	}
+
+	firstAttemptStart := info.BeginChannelAttempt()
+	info.SetFirstResponseTime()
+	require.True(t, info.HasSendResponse())
+	require.False(t, info.FirstResponseTimeForAttempt(firstAttemptStart).IsZero())
+
+	info.DiscardCurrentAttemptFirstResponse()
+	require.False(t, info.HasSendResponse())
+	require.Equal(t, start.Add(-time.Second), info.FirstResponseTime)
+	require.True(t, info.FirstResponseTimeForAttempt(firstAttemptStart).IsZero())
+
+	secondAttemptStart := info.BeginChannelAttempt()
+	info.SetFirstResponseTime()
+	require.True(t, info.HasSendResponse())
+	require.False(t, info.FirstResponseTimeForAttempt(secondAttemptStart).IsZero())
+}

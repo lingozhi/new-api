@@ -1,11 +1,14 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +23,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+var preCommitCapacityTestChannelID atomic.Int64
+
+type failOnceOnResponsesTerminalWriter struct {
+	gin.ResponseWriter
+	failed bool
+}
+
+func (w *failOnceOnResponsesTerminalWriter) Write(data []byte) (int, error) {
+	if !w.failed && bytes.Contains(data, []byte("event: response.failed")) {
+		w.failed = true
+		return 0, errors.New("temporary terminal write failure")
+	}
+	return w.ResponseWriter.Write(data)
+}
 
 func newTestContext() *gin.Context {
 	gin.SetMode(gin.TestMode)
@@ -36,6 +54,15 @@ func upstreamRelayServiceErrorForTest() *types.NewAPIError {
 	)
 	err.UpstreamStatusCode = http.StatusBadRequest
 	return err
+}
+
+func preCommitStreamCapacityErrorForTest(statusCode int) *types.NewAPIError {
+	return types.NewOpenAIError(
+		errors.New("We're currently experiencing high demand, which may cause temporary errors."),
+		types.ErrorCode("server_error"),
+		statusCode,
+		types.ErrOptionWithPreCommitStreamCapacity(),
+	)
 }
 
 func TestIsRetryableChannelError(t *testing.T) {
@@ -175,7 +202,8 @@ func TestMarkAffinityColdStartForTransientUpstreamRetry(t *testing.T) {
 	err.UpstreamStatusCode = http.StatusTooManyRequests
 
 	affinity := newTestContext()
-	affinity.Set("channel_affinity_skip_retry_on_failure", true)
+	service.MarkChannelAffinityUsed(affinity, "gpt pro", 17)
+	assert.False(t, service.ShouldSkipRetryAfterChannelAffinityFailure(affinity), "the default soft affinity rule remains retryable")
 	info := &relaycommon.RelayInfo{}
 	markAffinityColdStartForRetry(affinity, info, err)
 	assert.True(t, info.AffinityColdStart, "switching away from a warm affinity channel must exempt the cold fallback from latency penalties")
@@ -243,6 +271,35 @@ func TestProcessChannelErrorCoolsMappedUpstream429ForTwoHours(t *testing.T) {
 	remaining := time.Until(time.Unix(expires, 0))
 	assert.Greater(t, remaining, 119*time.Minute)
 	assert.Less(t, remaining, 121*time.Minute)
+}
+
+func TestProcessChannelErrorDoesNotDuplicateMultiKeyStreamCapacityCooldown(t *testing.T) {
+	model.ClearChannelCooldownsForTest()
+	t.Cleanup(model.ClearChannelCooldownsForTest)
+
+	channelID := int(9_013_000 + preCommitCapacityTestChannelID.Add(1))
+	c := newTestContext()
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelId:         channelID,
+			ChannelIsMultiKey: true,
+		},
+		OriginModelName: "gpt-5.6-sol",
+		StreamStatus:    relaycommon.NewStreamStatus(),
+	}
+	failureErr := errors.New("upstream responses stream failed: We're currently experiencing high demand, which may cause temporary errors.")
+	info.StreamStatus.RecordError(failureErr.Error())
+	info.StreamStatus.SetEndReasonWithSource(relaycommon.StreamEndReasonUpstreamFailed, failureErr, "upstream_precommit")
+
+	service.ObserveStreamChannelQualityForRequest(c, info)
+	processChannelError(
+		c,
+		*types.NewChannelError(channelID, 1, "multi-key-capacity", true, "busy-key", false),
+		preCommitStreamCapacityErrorForTest(http.StatusServiceUnavailable),
+	)
+
+	_, _, cooling := model.GetChannelCooldown(channelID)
+	assert.False(t, cooling, "one busy key must not trigger the controller's generic whole-channel cooldown")
 }
 
 func TestShouldRetryStopsOnSemanticContextLimitError(t *testing.T) {
@@ -418,7 +475,7 @@ func TestUpstreamCapacityFallbackRequiresUncommittedTransientCapacityError(t *te
 
 	committed := newTestContext()
 	committed.Writer.WriteHeaderNow()
-	assert.True(t, relayResponseCommitted(committed, newResponsesInfo()))
+	assert.True(t, relayResponseCommitted(committed, newResponsesInfo(), upstream429))
 	assert.False(t, shouldUseUpstreamCapacityFallback(committed, newResponsesInfo(), upstream429))
 }
 
@@ -433,8 +490,130 @@ func TestUpstreamCapacityFallbackStopsAfterAttemptStreamData(t *testing.T) {
 	streamStatus.RecordDataReceived()
 	info := &relaycommon.RelayInfo{IsStream: true, RelayMode: relayconstant.RelayModeResponses, StreamStatus: streamStatus}
 
-	assert.True(t, relayResponseCommitted(newTestContext(), info))
+	assert.True(t, relayResponseCommitted(newTestContext(), info, apiErr))
 	assert.False(t, shouldUseUpstreamCapacityFallback(newTestContext(), info, apiErr))
+}
+
+func TestUpstreamCapacityFallbackRetriesUncommittedStreamCapacityFailure(t *testing.T) {
+	apiErr := preCommitStreamCapacityErrorForTest(http.StatusBadRequest)
+	info := &relaycommon.RelayInfo{
+		IsStream:     true,
+		RelayMode:    relayconstant.RelayModeResponses,
+		StreamStatus: relaycommon.NewStreamStatus(),
+	}
+	info.StreamStatus.RecordDataReceived()
+	c := newTestContext()
+
+	assert.True(t, isFastUpstreamCapacityError(apiErr))
+	assert.False(t, relayResponseCommitted(c, info, apiErr), "upstream data is not a downstream commit when the marked handler withheld it")
+	assert.True(t, shouldUseUpstreamCapacityFallback(c, info, apiErr))
+	assert.True(t, scheduleUpstreamCapacityFallback(c, info, &service.RetryParam{
+		Ctx:        c,
+		TokenGroup: "auto",
+		Retry:      common.GetPointer(0),
+	}, apiErr, 500*time.Millisecond, 0, 0, time.Time{}, time.Now()), "an immediate explicit stream capacity error should get one bounded fallback even when RetryTimes is zero")
+	assert.True(t, scheduleUpstreamCapacityFallback(c, info, &service.RetryParam{
+		Ctx:        c,
+		TokenGroup: "auto",
+		Retry:      common.GetPointer(0),
+	}, apiErr, 20*time.Second, 0, 0, time.Time{}, time.Now()), "an output-free delayed SSE capacity error gets one bounded fallback")
+	assert.False(t, scheduleUpstreamCapacityFallback(c, info, &service.RetryParam{
+		Ctx:        c,
+		TokenGroup: "auto",
+		Retry:      common.GetPointer(0),
+	}, apiErr, 20*time.Second, 1, 0, time.Time{}, time.Now()), "a delayed SSE capacity fallback must remain single-attempt")
+
+	affinity := newTestContext()
+	affinity.Set("channel_affinity_skip_retry_on_failure", true)
+	service.MarkChannelAffinityUsed(affinity, "gpt pro", 17)
+	assert.True(t, shouldUseUpstreamCapacityFallback(affinity, info, apiErr), "an uncommitted capacity failure must escape a sticky channel")
+	assert.True(t, shouldRetry(affinity, apiErr, 1), "status mapping must not strand a capacity failure on an affinity channel")
+	affinityInfo := &relaycommon.RelayInfo{}
+	markAffinityColdStartForRetry(affinity, affinityInfo, apiErr)
+	assert.True(t, affinityInfo.AffinityColdStart)
+
+	c.Writer.WriteHeaderNow()
+	assert.False(t, relayResponseCommitted(c, info, apiErr), "keepalives do not make an explicitly output-free capacity failure unsafe to retry")
+
+	unmarked := types.NewOpenAIError(
+		errors.New("We're currently experiencing high demand, which may cause temporary errors."),
+		types.ErrorCode("server_error"),
+		http.StatusServiceUnavailable,
+	)
+	assert.True(t, relayResponseCommitted(newTestContext(), info, unmarked), "an unmarked upstream event must retain the normal commit boundary")
+	assert.False(t, isFastUpstreamCapacityError(unmarked), "message text without internal provenance must not expand retries")
+	assert.False(t, shouldUseUpstreamCapacityFallback(newTestContext(), info, unmarked))
+}
+
+func TestPrepareUncommittedRelayErrorResponseClearsSSEHeaders(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Transfer-Encoding", "chunked")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Header().Set("X-Codex-Turn-State", "failed-channel-state")
+
+	err := preCommitStreamCapacityErrorForTest(http.StatusServiceUnavailable)
+	prepareUncommittedRelayErrorResponse(c, err)
+	c.JSON(err.StatusCode, gin.H{"error": err.ToOpenAIError()})
+
+	response := recorder.Result()
+	assert.Equal(t, "application/json; charset=utf-8", response.Header.Get("Content-Type"))
+	assert.Empty(t, response.Header.Get("Transfer-Encoding"))
+	assert.Empty(t, response.Header.Get("Connection"))
+	assert.Empty(t, response.Header.Get("X-Accel-Buffering"))
+	assert.Empty(t, response.Header.Get("X-Codex-Turn-State"))
+}
+
+func TestWriteCommittedResponsesCapacityTerminalKeepsSSEFraming(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	_, err := c.Writer.Write([]byte(": PING\n\n"))
+	require.NoError(t, err)
+
+	info := &relaycommon.RelayInfo{
+		IsStream:     true,
+		RelayMode:    relayconstant.RelayModeResponses,
+		ChannelMeta:  &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.6-sol"},
+		StreamStatus: relaycommon.NewStreamStatus(),
+	}
+	apiErr := preCommitStreamCapacityErrorForTest(http.StatusServiceUnavailable)
+
+	assert.True(t, writeCommittedResponsesCapacityTerminal(c, info, apiErr))
+	body := recorder.Body.String()
+	assert.True(t, strings.HasPrefix(body, ": PING\n\n"))
+	assert.Contains(t, body, "event: response.failed")
+	assert.Contains(t, body, "We're currently experiencing high demand")
+	assert.NotContains(t, body, "\n{\"error\":", "a committed SSE stream must never receive a naked JSON error body")
+	assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+}
+
+func TestWriteCommittedResponsesCapacityTerminalRetriesPendingTerminalOnce(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	_, err := c.Writer.Write([]byte(": PING\n\n"))
+	require.NoError(t, err)
+	c.Writer = &failOnceOnResponsesTerminalWriter{ResponseWriter: c.Writer}
+
+	info := &relaycommon.RelayInfo{
+		IsStream:     true,
+		RelayMode:    relayconstant.RelayModeResponses,
+		ChannelMeta:  &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.6-sol"},
+		StreamStatus: relaycommon.NewStreamStatus(),
+	}
+
+	assert.True(t, writeCommittedResponsesCapacityTerminal(c, info, preCommitStreamCapacityErrorForTest(http.StatusServiceUnavailable)))
+	body := recorder.Body.String()
+	assert.True(t, strings.HasPrefix(body, ": PING\n\n"))
+	assert.Equal(t, 1, strings.Count(body, "event: response.failed"))
+	assert.Contains(t, body, "We're currently experiencing high demand")
+	assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
 }
 
 func TestScheduleUpstreamCapacityFallbackIsBoundedAndRestartsAutoSelection(t *testing.T) {
@@ -453,6 +632,10 @@ func TestScheduleUpstreamCapacityFallbackIsBoundedAndRestartsAutoSelection(t *te
 	startedAt := time.Unix(100, 0)
 
 	info := &relaycommon.RelayInfo{IsStream: true, RelayMode: relayconstant.RelayModeResponses}
+	delayedCapacity := preCommitStreamCapacityErrorForTest(http.StatusServiceUnavailable)
+	assert.True(t, shouldEvaluateUpstreamCapacityFallback(false, 0, 3, delayedCapacity, 20*time.Second),
+		"a delayed output-free capacity error must bypass a larger normal retry budget and stay single-attempt")
+	assert.False(t, shouldEvaluateUpstreamCapacityFallback(false, 0, 3, delayedCapacity, 500*time.Millisecond))
 	assert.True(t, scheduleUpstreamCapacityFallback(c, info, retryParam, apiErr, 500*time.Millisecond, 0, 2, time.Time{}, startedAt))
 	retryParam.IncreaseRetry()
 	assert.Equal(t, 2, retryParam.GetRetry())
@@ -465,6 +648,10 @@ func TestScheduleUpstreamCapacityFallbackIsBoundedAndRestartsAutoSelection(t *te
 		"a slow fallback attempt must not expand first-token latency with another channel")
 	assert.True(t, scheduleUpstreamCapacityFallback(c, info, retryParam, apiErr, 3*time.Second, 0, 2, time.Time{}, startedAt),
 		"a delayed genuine upstream 429 must still be shielded from Codex")
+	assert.True(t, scheduleUpstreamCapacityFallback(c, info, retryParam, delayedCapacity, 20*time.Second, 0, 2, time.Time{}, startedAt),
+		"a delayed output-free SSE capacity terminal gets one bounded fallback")
+	assert.False(t, scheduleUpstreamCapacityFallback(c, info, retryParam, delayedCapacity, 20*time.Second, 1, 2, time.Time{}, startedAt),
+		"a delayed output-free SSE fallback cannot expand into a second attempt")
 
 	distributor503 := types.WithOpenAIError(
 		types.OpenAIError{
@@ -477,6 +664,36 @@ func TestScheduleUpstreamCapacityFallbackIsBoundedAndRestartsAutoSelection(t *te
 	distributor503.UpstreamStatusCode = http.StatusServiceUnavailable
 	assert.False(t, scheduleUpstreamCapacityFallback(c, info, retryParam, distributor503, 3*time.Second, 0, 2, time.Time{}, startedAt),
 		"a slow distributor 503 must not expand first-token latency")
+}
+
+func TestCapacityFallbackAffinityResumeRequiresSuccessfulTerminal(t *testing.T) {
+	for _, reason := range []relaycommon.StreamEndReason{
+		relaycommon.StreamEndReasonUpstreamFailed,
+		relaycommon.StreamEndReasonTimeout,
+		relaycommon.StreamEndReasonScannerErr,
+		relaycommon.StreamEndReasonPingFail,
+		relaycommon.StreamEndReasonInternalError,
+		relaycommon.StreamEndReasonTerminalClientError,
+	} {
+		info := &relaycommon.RelayInfo{StreamStatus: relaycommon.NewStreamStatus()}
+		info.StreamStatus.SetEndReason(reason, errors.New("fallback terminal"))
+		assert.False(t, capacityFallbackSucceeded(info), "terminal %s must remain suppressed", reason)
+	}
+
+	for _, reason := range []relaycommon.StreamEndReason{
+		relaycommon.StreamEndReasonDone,
+		relaycommon.StreamEndReasonEOF,
+	} {
+		info := &relaycommon.RelayInfo{StreamStatus: relaycommon.NewStreamStatus()}
+		info.StreamStatus.SetEndReason(reason, nil)
+		assert.True(t, capacityFallbackSucceeded(info), "terminal %s is a successful fallback", reason)
+	}
+	info := &relaycommon.RelayInfo{StreamStatus: relaycommon.NewStreamStatus()}
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonHandlerStop, nil)
+	assert.False(t, capacityFallbackSucceeded(info), "handler_stop is ambiguous and must not resume affinity")
+	info = &relaycommon.RelayInfo{StreamStatus: relaycommon.NewStreamStatus()}
+	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonEOF, errors.New("scanner eof after failure"))
+	assert.False(t, capacityFallbackSucceeded(info), "EOF with an error must not resume affinity")
 }
 
 func TestChannelSelectionExhaustionIsDistinctFromSelectorFailure(t *testing.T) {

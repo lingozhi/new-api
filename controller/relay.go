@@ -22,6 +22,7 @@ import (
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
+	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	"github.com/QuantumNous/new-api/relay/channel/openai/image_stream"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -71,6 +72,74 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 	return err
 }
 
+func prepareUncommittedRelayErrorResponse(c *gin.Context, err *types.NewAPIError) {
+	if c == nil || c.Writer == nil || c.Writer.Written() || !service.IsImmediateStreamCapacityAPIError(err) {
+		return
+	}
+	for _, name := range []string{
+		"Cache-Control",
+		"Connection",
+		"Transfer-Encoding",
+		"X-Accel-Buffering",
+		"X-Codex-Turn-State",
+		"X-Reasoning-Included",
+	} {
+		c.Writer.Header().Del(name)
+	}
+	c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")
+	helper.ResetEventStreamHeaders(c)
+}
+
+// writeCommittedResponsesCapacityTerminal finishes an SSE connection that was
+// committed only by keepalives before a capacity fallback. Once HTTP headers
+// are on the wire, a Responses terminal must be emitted in-band; appending a
+// JSON error body would make Codex report a disconnected stream.
+func writeCommittedResponsesCapacityTerminal(c *gin.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) bool {
+	if c == nil || c.Writer == nil || !c.Writer.Written() || info == nil || apiErr == nil {
+		return false
+	}
+	modelName := info.OriginModelName
+	if info.ChannelMeta != nil && info.UpstreamModelName != "" {
+		modelName = info.UpstreamModelName
+	}
+	service.SuppressChannelAffinityRecord(c)
+	upstreamErr := apiErr.ToOpenAIError()
+	writer := openaichannel.NewResponsesStreamWriter(c)
+	if err := writer.WriteFailure(helper.GetResponseID(c), modelName, common.GetTimestamp(), nil, &upstreamErr); err != nil {
+		_, retried, retryErr := writer.RetryPendingTerminal()
+		if retried && retryErr == nil {
+			logger.LogWarn(c, "recovered final Responses capacity fallback terminal after one write retry")
+			if info.StreamStatus != nil {
+				info.StreamStatus.SetProtocolTerminalEndReasonWithSource(relaycommon.StreamEndReasonUpstreamFailed, apiErr, "responses_capacity_fallback_terminal")
+			}
+			return true
+		}
+		finalErr := err
+		if retryErr != nil {
+			finalErr = retryErr
+			logger.LogError(c, fmt.Sprintf("failed to write final Responses capacity fallback terminal: initial=%v retry=%v", err, retryErr))
+		} else {
+			logger.LogError(c, "failed to write final Responses capacity fallback terminal: "+err.Error())
+		}
+		if info.StreamStatus != nil {
+			if contextErr := c.Request.Context().Err(); contextErr != nil {
+				info.StreamStatus.OverrideEndReasonIfNoProtocolTerminal(relaycommon.StreamEndReasonClientGone, contextErr, "responses_capacity_fallback_terminal")
+			} else {
+				info.StreamStatus.OverrideEndReasonIfNoProtocolTerminal(relaycommon.StreamEndReasonInternalError, finalErr, "responses_capacity_fallback_terminal")
+			}
+			info.StreamStatus.RecordError(err.Error())
+			if retryErr != nil {
+				info.StreamStatus.RecordError(retryErr.Error())
+			}
+		}
+		return true
+	}
+	if info.StreamStatus != nil {
+		info.StreamStatus.SetProtocolTerminalEndReasonWithSource(relaycommon.StreamEndReasonUpstreamFailed, apiErr, "responses_capacity_fallback_terminal")
+	}
+	return true
+}
+
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	requestId := c.GetString(common.RequestIdKey)
@@ -78,8 +147,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	//originalModel := common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
 
 	var (
-		newAPIError *types.NewAPIError
-		ws          *websocket.Conn
+		newAPIError                             *types.NewAPIError
+		relayInfo                               *relaycommon.RelayInfo
+		ws                                      *websocket.Conn
+		capacityFallbackOnCommittedResponsesSSE bool
 	)
 
 	if relayFormat == types.RelayFormatOpenAIRealtime {
@@ -96,6 +167,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
+			if capacityFallbackOnCommittedResponsesSSE && writeCommittedResponsesCapacityTerminal(c, relayInfo, newAPIError) {
+				return
+			}
+			prepareUncommittedRelayErrorResponse(c, newAPIError)
 			switch relayFormat {
 			case types.RelayFormatOpenAIRealtime:
 				helper.WssError(c, ws, newAPIError.ToOpenAIError())
@@ -133,7 +208,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 
-	relayInfo, err := relaycommon.GenRelayInfo(c, relayFormat, request, ws)
+	relayInfo, err = relaycommon.GenRelayInfo(c, relayFormat, request, ws)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
@@ -315,6 +390,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	capacityFallbackExecuted := 0
 	capacityFallbackPending := false
 	capacityFallbackStartedAt := time.Time{}
+	capacityFallbackSingleAttempt := false
 	lastAttemptElapsed := time.Duration(0)
 	var capacityFallbackError *types.NewAPIError
 
@@ -336,14 +412,20 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			}
 
 			fallbackNow := time.Now()
-			if isChannelSelectionExhausted(channelErr) && scheduleUpstreamCapacityFallback(c, relayInfo, retryParam, relayInfo.LastError, lastAttemptElapsed, capacityFallbackScheduled, common.RetryTimes, capacityFallbackStartedAt, fallbackNow) {
+			if isChannelSelectionExhausted(channelErr) && !capacityFallbackSingleAttempt && scheduleUpstreamCapacityFallback(c, relayInfo, retryParam, relayInfo.LastError, lastAttemptElapsed, capacityFallbackScheduled, common.RetryTimes, capacityFallbackStartedAt, fallbackNow) {
 				if capacityFallbackStartedAt.IsZero() {
 					capacityFallbackStartedAt = fallbackNow
 				}
+				capacityFallbackSingleAttempt = isDelayedStreamCapacityFallback(relayInfo.LastError, lastAttemptElapsed)
 				capacityFallbackScheduled++
 				capacityFallbackPending = true
 				capacityFallbackError = relayInfo.LastError
-				logger.LogWarn(c, fmt.Sprintf("upstream capacity exhausted configured auto-group retries; trying uncommitted channel fallback %d/%d", capacityFallbackScheduled, maxUpstreamCapacityFallbackAttempts))
+				markAffinityColdStartForRetry(c, relayInfo, relayInfo.LastError)
+				attemptLimit := maxUpstreamCapacityFallbackAttempts
+				if capacityFallbackSingleAttempt {
+					attemptLimit = 1
+				}
+				logger.LogWarn(c, fmt.Sprintf("upstream capacity exhausted configured auto-group retries; trying pre-output channel fallback %d/%d", capacityFallbackScheduled, attemptLimit))
 				continue
 			}
 			newAPIError = channelErr
@@ -398,10 +480,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		attemptElapsed := time.Since(attemptStart)
 		lastAttemptElapsed = attemptElapsed
+		if service.IsImmediateStreamCapacityAPIError(newAPIError) && c.Writer.Written() {
+			capacityFallbackOnCommittedResponsesSSE = true
+		}
 
 		if usingCapacityFallback && errors.Is(newAPIError, relaychannel.ErrCapacityFallbackHeaderDeadline) && capacityFallbackError != nil {
 			fallbackNow := time.Now()
-			if canContinueCapacityFallbackAfterHeaderDeadline(capacityFallbackScheduled, capacityFallbackStartedAt, fallbackNow) {
+			if !capacityFallbackSingleAttempt && canContinueCapacityFallbackAfterHeaderDeadline(capacityFallbackScheduled, capacityFallbackStartedAt, fallbackNow) {
 				preferDifferentRetryHost(c, retryParam, relayInfo, true)
 				retryParam.PrepareAvailabilityFallback(common.RetryTimes)
 				capacityFallbackScheduled++
@@ -422,8 +507,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
+			fallbackSucceeded := usingCapacityFallback && capacityFallbackSucceeded(relayInfo)
+			if fallbackSucceeded {
+				service.ResumeChannelAffinityRecordAfterFallback(c)
+			}
 			if usingCapacityFallback {
-				logger.LogInfo(c, fmt.Sprintf("upstream capacity fallback succeeded on additional channel attempt %d/%d", capacityFallbackScheduled, maxUpstreamCapacityFallbackAttempts))
+				if fallbackSucceeded {
+					logger.LogInfo(c, fmt.Sprintf("upstream capacity fallback succeeded on additional channel attempt %d/%d", capacityFallbackScheduled, maxUpstreamCapacityFallbackAttempts))
+				} else {
+					logger.LogInfo(c, fmt.Sprintf("upstream capacity fallback emitted a non-success terminal on additional channel attempt %d/%d; keeping affinity suppressed", capacityFallbackScheduled, maxUpstreamCapacityFallbackAttempts))
+				}
 			}
 			if !asyncImageSubmitted {
 				cooldownSlowChannelIfNeeded(c, relayInfo, channel, attemptStart)
@@ -465,16 +558,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 
-		if usingCapacityFallback || retryParam.GetRetry() >= common.RetryTimes {
+		if shouldEvaluateUpstreamCapacityFallback(usingCapacityFallback, retryParam.GetRetry(), common.RetryTimes, newAPIError, attemptElapsed) {
 			fallbackNow := time.Now()
-			if scheduleUpstreamCapacityFallback(c, relayInfo, retryParam, newAPIError, attemptElapsed, capacityFallbackScheduled, common.RetryTimes, capacityFallbackStartedAt, fallbackNow) {
+			if !capacityFallbackSingleAttempt && scheduleUpstreamCapacityFallback(c, relayInfo, retryParam, newAPIError, attemptElapsed, capacityFallbackScheduled, common.RetryTimes, capacityFallbackStartedAt, fallbackNow) {
 				if capacityFallbackStartedAt.IsZero() {
 					capacityFallbackStartedAt = fallbackNow
 				}
+				capacityFallbackSingleAttempt = isDelayedStreamCapacityFallback(newAPIError, attemptElapsed)
 				capacityFallbackScheduled++
 				capacityFallbackPending = true
 				capacityFallbackError = newAPIError
-				logger.LogWarn(c, fmt.Sprintf("upstream capacity exhausted configured retries; trying uncommitted channel fallback %d/%d", capacityFallbackScheduled, maxUpstreamCapacityFallbackAttempts))
+				markAffinityColdStartForRetry(c, relayInfo, newAPIError)
+				attemptLimit := maxUpstreamCapacityFallbackAttempts
+				if capacityFallbackSingleAttempt {
+					attemptLimit = 1
+				}
+				logger.LogWarn(c, fmt.Sprintf("upstream capacity exhausted configured retries; trying pre-output channel fallback %d/%d", capacityFallbackScheduled, attemptLimit))
 				continue
 			}
 		}
@@ -795,6 +894,9 @@ func isFastUpstreamCapacityError(apiErr *types.NewAPIError) bool {
 	if isUpstreamRateLimitError(apiErr) {
 		return !service.ShouldCooldownChannel(apiErr)
 	}
+	if service.IsImmediateStreamCapacityAPIError(apiErr) {
+		return true
+	}
 	if apiErr == nil ||
 		apiErr.UpstreamStatusCode != http.StatusServiceUnavailable {
 		return false
@@ -802,7 +904,12 @@ func isFastUpstreamCapacityError(apiErr *types.NewAPIError) bool {
 	return service.IsUpstreamDistributorCapacityError(apiErr)
 }
 
-func relayResponseCommitted(c *gin.Context, info *relaycommon.RelayInfo) bool {
+func relayResponseCommitted(c *gin.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) bool {
+	// The handler only marks this error when no real Responses event, output, or
+	// usage reached the client. SSE keepalive comments do not make replay unsafe.
+	if service.IsImmediateStreamCapacityAPIError(apiErr) {
+		return false
+	}
 	if c != nil && c.Writer != nil && c.Writer.Written() {
 		return true
 	}
@@ -813,7 +920,7 @@ func relayResponseCommitted(c *gin.Context, info *relaycommon.RelayInfo) bool {
 }
 
 func shouldUseUpstreamCapacityFallback(c *gin.Context, info *relaycommon.RelayInfo, apiErr *types.NewAPIError) bool {
-	if c == nil || info == nil || !isFastUpstreamCapacityError(apiErr) || relayResponseCommitted(c, info) {
+	if c == nil || info == nil || !isFastUpstreamCapacityError(apiErr) || relayResponseCommitted(c, info, apiErr) {
 		return false
 	}
 	if !info.IsStream || info.RelayMode != relayconstant.RelayModeResponses {
@@ -825,14 +932,45 @@ func shouldUseUpstreamCapacityFallback(c *gin.Context, info *relaycommon.RelayIn
 	if _, ok := c.Get("specific_channel_id"); ok {
 		return false
 	}
-	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+	streamCapacityError := service.IsImmediateStreamCapacityAPIError(apiErr)
+	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) && !streamCapacityError {
 		return false
+	}
+	if streamCapacityError {
+		return operation_setting.ShouldRetryByStatusCode(http.StatusServiceUnavailable)
 	}
 	return operation_setting.ShouldRetryByStatusCode(apiErr.UpstreamStatusCode)
 }
 
+func isDelayedStreamCapacityFallback(apiErr *types.NewAPIError, elapsed time.Duration) bool {
+	return elapsed > upstreamCapacityErrorMaxElapsed && service.IsImmediateStreamCapacityAPIError(apiErr)
+}
+
+func shouldEvaluateUpstreamCapacityFallback(usingFallback bool, retryIndex, configuredRetryLimit int, apiErr *types.NewAPIError, elapsed time.Duration) bool {
+	return usingFallback || retryIndex >= configuredRetryLimit || isDelayedStreamCapacityFallback(apiErr, elapsed)
+}
+
+func capacityFallbackSucceeded(info *relaycommon.RelayInfo) bool {
+	if info == nil || info.StreamStatus == nil {
+		return false
+	}
+	snapshot := info.StreamStatus.Snapshot()
+	switch snapshot.EndReason {
+	case relaycommon.StreamEndReasonDone:
+		return true
+	case relaycommon.StreamEndReasonEOF:
+		return snapshot.ErrorCount == 0 && snapshot.EndError == nil
+	default:
+		return false
+	}
+}
+
 func scheduleUpstreamCapacityFallback(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam, apiErr *types.NewAPIError, capacityErrorElapsed time.Duration, attemptsScheduled int, configuredRetryLimit int, fallbackStartedAt time.Time, now time.Time) bool {
-	if capacityErrorElapsed <= 0 || (capacityErrorElapsed > upstreamCapacityErrorMaxElapsed && !isUpstreamRateLimitError(apiErr)) {
+	delayedStreamCapacity := isDelayedStreamCapacityFallback(apiErr, capacityErrorElapsed)
+	if capacityErrorElapsed <= 0 || (capacityErrorElapsed > upstreamCapacityErrorMaxElapsed && !isUpstreamRateLimitError(apiErr) && !delayedStreamCapacity) {
+		return false
+	}
+	if delayedStreamCapacity && attemptsScheduled > 0 {
 		return false
 	}
 	if attemptsScheduled >= maxUpstreamCapacityFallbackAttempts || retryParam == nil || !shouldUseUpstreamCapacityFallback(c, info, apiErr) {
@@ -862,6 +1000,15 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 			return false
 		}
 		return true
+	}
+	if service.IsImmediateStreamCapacityAPIError(openaiErr) {
+		if retryTimes <= 0 {
+			return false
+		}
+		if _, ok := c.Get("specific_channel_id"); ok {
+			return false
+		}
+		return operation_setting.ShouldRetryByStatusCode(http.StatusServiceUnavailable)
 	}
 	if types.IsSkipRetryError(openaiErr) || isSemanticClientError(openaiErr) {
 		return false
@@ -901,10 +1048,12 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 }
 
 func markAffinityColdStartForRetry(c *gin.Context, info *relaycommon.RelayInfo, err *types.NewAPIError) {
-	if info == nil || !service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
+	if info == nil || !service.WasChannelAffinityUsed(c) {
 		return
 	}
-	if !service.IsUpstreamRateLimitError(err) && !service.IsUpstreamRelayServiceTransientError(err) {
+	if !service.IsUpstreamRateLimitError(err) &&
+		!service.IsUpstreamRelayServiceTransientError(err) &&
+		!service.IsImmediateStreamCapacityAPIError(err) {
 		return
 	}
 	info.AffinityColdStart = true
@@ -982,6 +1131,12 @@ func isRetryableChannelError(c *gin.Context, openaiErr *types.NewAPIError) bool 
 		}
 		return true
 	}
+	if service.IsImmediateStreamCapacityAPIError(openaiErr) {
+		if _, ok := c.Get("specific_channel_id"); ok {
+			return false
+		}
+		return operation_setting.ShouldRetryByStatusCode(http.StatusServiceUnavailable)
+	}
 	if types.IsSkipRetryError(openaiErr) || isSemanticClientError(openaiErr) {
 		return false
 	}
@@ -1046,6 +1201,8 @@ func processChannelError(c *gin.Context, channelError types.ChannelError, err *t
 		// the channel serves fine — exactly what cooled a healthy claude-sonnet-5
 		// on #25 because gpt-5.4-mini 404'd. Skip it.
 		logger.LogInfo(c, fmt.Sprintf("channel #%d does not serve model %q; isolating that pair via the health circuit instead of cooling the whole channel", channelError.ChannelId, common.GetContextKeyString(c, constant.ContextKeyOriginalModel)))
+	} else if service.IsImmediateStreamCapacityAPIError(err) {
+		logger.LogInfo(c, fmt.Sprintf("channel #%d emitted pre-commit stream capacity; stream-quality policy owns cooldown scope", channelError.ChannelId))
 	} else if service.IsUpstreamRelayServiceTransientError(err) {
 		service.CooldownChannelForRetry(channelError, err)
 	} else if service.ShouldCooldownChannel(err) {

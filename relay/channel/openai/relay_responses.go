@@ -82,6 +82,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	var responseTextBuilder strings.Builder
 	streamCtx := newResponsesStreamCtx()
 	streamWriter := NewResponsesStreamWriter(c)
+	var preCommitCapacityErr *types.NewAPIError
+	responseHeadersBeforeStream := c.Writer.Header().Clone()
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
@@ -103,6 +105,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				Message: streamResponse.Message,
 				Param:   streamResponse.Param,
 			}
+			channelFailure := IsResponsesChannelFailure(upstreamErr)
 			failureData, buildErr := streamWriter.FailureData(
 				streamCtx.resolveResponseID(c),
 				streamCtx.resolveModel(info),
@@ -121,9 +124,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				sr.Stop(err)
 				return
 			}
+			if channelFailure && !streamWriter.ProtocolStarted() && service.IsImmediateStreamCapacityError(failureErr.Error()) {
+				preCommitCapacityErr = newResponsesPreCommitCapacityError(upstreamErr, failureErr)
+				sr.PreCommitUpstreamFailed(failureErr)
+				return
+			}
 			streamCtx.stageTerminal(failureResponse, failureData)
 			writeErr := streamWriter.WriteData("response.failed", failureData)
-			channelFailure := IsResponsesChannelFailure(upstreamErr)
 			if writeErr != nil {
 				logger.LogError(c, "failed to write normalized responses error: "+writeErr.Error())
 				if contextErr := c.Request.Context().Err(); contextErr != nil {
@@ -145,6 +152,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 
+		hasBillableFailurePayload := streamResponse.Type == "response.failed" && streamResponse.Response != nil &&
+			(streamResponse.Response.Usage != nil || len(streamResponse.Response.Output) > 0)
 		var normalizeErr error
 		streamResponse, data, normalizeErr = normalizeResponsesTerminalEvent(c, info, streamCtx, streamResponse, data)
 		if normalizeErr != nil {
@@ -152,7 +161,6 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			sr.Stop(normalizeErr)
 			return
 		}
-		streamCtx.stageTerminal(streamResponse, data)
 		var failureErr error
 		var upstreamErr *types.OpenAIError
 		if streamResponse.Type == "response.failed" {
@@ -163,7 +171,13 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 					failureErr = fmt.Errorf("upstream responses stream failed: %s", upstreamErr.Message)
 				}
 			}
+			if IsResponsesChannelFailure(upstreamErr) && !streamWriter.ProtocolStarted() && !hasBillableFailurePayload && service.IsImmediateStreamCapacityError(failureErr.Error()) {
+				preCommitCapacityErr = newResponsesPreCommitCapacityError(upstreamErr, failureErr)
+				sr.PreCommitUpstreamFailed(failureErr)
+				return
+			}
 		}
+		streamCtx.stageTerminal(streamResponse, data)
 		if err := streamWriter.WriteData(streamResponse.Type, data); err != nil {
 			if contextErr := c.Request.Context().Err(); contextErr != nil {
 				info.StreamStatus.SetEndReasonWithSource(relaycommon.StreamEndReasonClientGone, contextErr, "responses_stream_write")
@@ -239,6 +253,24 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			}
 		}
 	})
+	if preCommitCapacityErr != nil {
+		// A first-event capacity failure is safe to retry even when the SSE
+		// keepalive already committed the HTTP response. Roll back request-level
+		// TTFT in both cases; attempt-local status remains for channel health.
+		info.DiscardCurrentAttemptFirstResponse()
+		if !streamWriter.Started() {
+			headers := c.Writer.Header()
+			clear(headers)
+			for name, values := range responseHeadersBeforeStream {
+				headers[name] = append([]string(nil), values...)
+			}
+			helper.ResetEventStreamHeaders(c)
+		}
+		if contextErr := c.Request.Context().Err(); contextErr != nil {
+			return nil, types.NewError(contextErr, types.ErrorCodeDoRequestFailed)
+		}
+		return nil, preCommitCapacityErr
+	}
 	if contextErr := c.Request.Context().Err(); contextErr != nil && !streamWriter.TerminalWritten() {
 		info.StreamStatus.OverrideEndReasonIfNoProtocolTerminal(relaycommon.StreamEndReasonClientGone, contextErr, "responses_post_scanner_context")
 	}
@@ -305,6 +337,23 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 
 	return usage, nil
+}
+
+func newResponsesPreCommitCapacityError(upstreamErr *types.OpenAIError, fallback error) *types.NewAPIError {
+	if upstreamErr == nil {
+		return types.NewOpenAIError(fallback, types.ErrorCodeBadResponse, http.StatusServiceUnavailable, types.ErrOptionWithPreCommitStreamCapacity())
+	}
+	normalized := *upstreamErr
+	if normalized.Message == "" {
+		normalized.Message = fallback.Error()
+	}
+	if normalized.Type == "" {
+		normalized.Type = "server_error"
+	}
+	if normalized.Code == nil || strings.TrimSpace(fmt.Sprint(normalized.Code)) == "" {
+		normalized.Code = "server_error"
+	}
+	return types.WithOpenAIError(normalized, http.StatusServiceUnavailable, types.ErrOptionWithPreCommitStreamCapacity())
 }
 
 func IsResponsesChannelFailure(upstreamErr *types.OpenAIError) bool {

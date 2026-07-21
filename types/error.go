@@ -93,13 +93,14 @@ const (
 )
 
 type NewAPIError struct {
-	Err            error
-	RelayError     any
-	skipRetry      bool
-	recordErrorLog *bool
-	errorType      ErrorType
-	errorCode      ErrorCode
-	StatusCode     int
+	Err                     error
+	RelayError              any
+	skipRetry               bool
+	preCommitStreamCapacity bool
+	recordErrorLog          *bool
+	errorType               ErrorType
+	errorCode               ErrorCode
+	StatusCode              int
 	// UpstreamStatusCode is the immutable HTTP status received from an upstream.
 	// StatusCode may later be remapped for the client, so routing health must use
 	// this field when it needs proof that a 502/503 came from the provider.
@@ -387,9 +388,21 @@ func IsSkipRetryError(err *NewAPIError) bool {
 	return err.skipRetry
 }
 
+// IsPreCommitStreamCapacityError reports whether a Responses SSE handler
+// explicitly withheld a first-event capacity failure before downstream commit.
+func IsPreCommitStreamCapacityError(err *NewAPIError) bool {
+	return err != nil && err.preCommitStreamCapacity
+}
+
 func ErrOptionWithSkipRetry() NewAPIErrorOptions {
 	return func(e *NewAPIError) {
 		e.skipRetry = true
+	}
+}
+
+func ErrOptionWithPreCommitStreamCapacity() NewAPIErrorOptions {
+	return func(e *NewAPIError) {
+		e.preCommitStreamCapacity = true
 	}
 }
 
