@@ -261,6 +261,8 @@ export interface TopupRecord {
   amount: number
   /** Payment amount (actual money paid) */
   money: number
+  /** Provider currency snapshot for new payment records */
+  provider_currency?: string
   /** Trade/order number */
   trade_no: string
   /** Payment method type */

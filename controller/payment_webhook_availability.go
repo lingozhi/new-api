@@ -77,19 +77,13 @@ func isWaffoPancakeTopUpEnabled() bool {
 	if !isPaymentComplianceConfirmed() {
 		return false
 	}
-	// Presence-of-credentials = enabled. Webhook public keys ship inside
-	// the SDK; mode (test/prod) is read from each event.
+	// Presence of a complete, environment-bound configuration enables new
+	// checkout creation. Webhook settlement remains independent of this.
 	return strings.TrimSpace(setting.WaffoPancakeMerchantID) != "" &&
 		strings.TrimSpace(setting.WaffoPancakePrivateKey) != "" &&
+		strings.TrimSpace(setting.WaffoPancakeStoreID) != "" &&
+		setting.IsValidWaffoPancakeEnvironment(setting.WaffoPancakeEnvironment) &&
 		strings.TrimSpace(setting.WaffoPancakeProductID) != ""
-}
-
-func isWaffoPancakeWebhookConfigured() bool {
-	return isWaffoPancakeTopUpEnabled()
-}
-
-func isWaffoPancakeWebhookEnabled() bool {
-	return isWaffoPancakeTopUpEnabled()
 }
 
 func isEpayTopUpEnabled() bool {

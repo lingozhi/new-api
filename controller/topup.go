@@ -21,6 +21,8 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const maxOnlineTopUpAmount int64 = 10_000
+
 func GetTopUpInfo(c *gin.Context) {
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
 

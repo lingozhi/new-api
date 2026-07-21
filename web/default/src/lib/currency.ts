@@ -159,9 +159,9 @@ export function parseCurrencyDisplayType(
   return isCurrencyDisplayType(value) ? value : fallback
 }
 
-function getConfig(): CurrencyConfig {
-  const { config } = useSystemConfigStore.getState()
-  const currency = config?.currency ?? DEFAULT_CURRENCY_CONFIG
+function normalizeCurrencyConfig(
+  currency: Partial<CurrencyConfig> | undefined
+): CurrencyConfig {
   return {
     ...DEFAULT_CURRENCY_CONFIG,
     ...currency,
@@ -182,6 +182,11 @@ function getConfig(): CurrencyConfig {
       currency?.customCurrencySymbol?.trim() ||
       DEFAULT_CURRENCY_CONFIG.customCurrencySymbol,
   }
+}
+
+function getConfig(): CurrencyConfig {
+  const { config } = useSystemConfigStore.getState()
+  return normalizeCurrencyConfig(config?.currency)
 }
 
 function getDisplayMeta(config: CurrencyConfig): DisplayMeta {
@@ -427,6 +432,7 @@ export function formatCurrencyFromUSD(
  *
  * @param amountUSD - Amount in system USD units
  * @param options - Optional formatting configuration
+ * @param currencyConfig - Optional reactive currency snapshot supplied by UI callers
  * @returns Formatted string with currency symbol (never tokens)
  *
  * @example
@@ -450,11 +456,14 @@ export function formatCurrencyFromUSD(
  */
 export function formatBillingCurrencyFromUSD(
   amountUSD: number | null | undefined,
-  options?: CurrencyFormatOptions
+  options?: CurrencyFormatOptions,
+  currencyConfig?: CurrencyConfig
 ): string {
   if (amountUSD == null || Number.isNaN(amountUSD)) return '-'
 
-  const { config } = getCurrencyDisplay()
+  const config = currencyConfig
+    ? normalizeCurrencyConfig(currencyConfig)
+    : getConfig()
   const meta = getBillingDisplayMeta(config)
   const merged = mergeOptions(options)
   const value =

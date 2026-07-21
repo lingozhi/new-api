@@ -68,12 +68,17 @@ import {
   normalizeJsonForComparison,
   removeTrailingSlash,
 } from './utils'
-import { saveWaffoPancakeConfig } from './waffo-pancake-api'
+import { type CatalogStore, saveWaffoPancakeConfig } from './waffo-pancake-api'
 import {
   WaffoPancakeSettingsSection,
-  type WaffoPancakeBinding,
   type WaffoPancakeSettingsValues,
 } from './waffo-pancake-settings-section'
+import {
+  type WaffoPancakeBinding,
+  type WaffoPancakeVerificationPhase,
+  canSaveWaffoPancakeConfig,
+  isVerifiedWaffoPancakeEnvironment,
+} from './waffo-pancake-verification'
 import {
   type PayMethod,
   WaffoSettingsSection,
@@ -176,6 +181,7 @@ const paymentSchema = z.object({
   WaffoPancakeMerchantID: z.string(),
   WaffoPancakePrivateKey: z.string(),
   WaffoPancakeReturnURL: z.string(),
+  WaffoPancakeEnvironment: z.enum(['', 'test', 'prod']),
 })
 
 type PaymentFormValues = z.infer<typeof paymentSchema>
@@ -259,6 +265,11 @@ export function PaymentSettingsSection({
       storeID: waffoPancakeProvisionedStoreID ?? '',
       productID: waffoPancakeProvisionedProductID ?? '',
     })
+  const [waffoPancakeCatalog, setWaffoPancakeCatalog] = React.useState<
+    CatalogStore[]
+  >([])
+  const [waffoPancakeVerificationPhase, setWaffoPancakeVerificationPhase] =
+    React.useState<WaffoPancakeVerificationPhase>('unverified')
 
   React.useEffect(() => {
     setWaffoPayMethods(parseWaffoPayMethods(waffoDefaultValues.WaffoPayMethods))
@@ -457,6 +468,7 @@ export function PaymentSettingsSection({
       WaffoPancakeReturnURL: removeTrailingSlash(
         values.WaffoPancakeReturnURL.trim()
       ),
+      WaffoPancakeEnvironment: values.WaffoPancakeEnvironment,
     }
 
     const initial = {
@@ -504,6 +516,7 @@ export function PaymentSettingsSection({
       WaffoPancakeReturnURL: removeTrailingSlash(
         initialRef.current.WaffoPancakeReturnURL.trim()
       ),
+      WaffoPancakeEnvironment: initialRef.current.WaffoPancakeEnvironment,
     }
 
     const updates: Array<{ key: string; value: string | number | boolean }> = []
@@ -705,6 +718,7 @@ export function PaymentSettingsSection({
       sanitized.WaffoPancakeMerchantID !== initial.WaffoPancakeMerchantID ||
       sanitized.WaffoPancakePrivateKey.length > 0 ||
       sanitized.WaffoPancakeReturnURL !== initial.WaffoPancakeReturnURL ||
+      sanitized.WaffoPancakeEnvironment !== initial.WaffoPancakeEnvironment ||
       waffoPancakeSelection.storeID !== waffoPancakeSavedBinding.storeID ||
       waffoPancakeSelection.productID !== waffoPancakeSavedBinding.productID
 
@@ -713,11 +727,36 @@ export function PaymentSettingsSection({
       return
     }
 
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
+    if (!hasWaffoPancakeChanges) {
+      for (const update of updates) {
+        await updateOption.mutateAsync(update)
+      }
+      return
     }
 
-    if (!hasWaffoPancakeChanges) {
+    const verifiedEnvironment = isVerifiedWaffoPancakeEnvironment(
+      sanitized.WaffoPancakeEnvironment
+    )
+      ? sanitized.WaffoPancakeEnvironment
+      : null
+    if (waffoPancakeVerificationPhase !== 'verified' || !verifiedEnvironment) {
+      toast.error(
+        t(
+          'Credentials verification failed — double-check Merchant ID and API private key.'
+        )
+      )
+      return
+    }
+
+    if (
+      !canSaveWaffoPancakeConfig({
+        phase: waffoPancakeVerificationPhase,
+        environment: verifiedEnvironment,
+        binding: waffoPancakeSelection,
+        catalog: waffoPancakeCatalog,
+      })
+    ) {
+      toast.error(t('Pick or create both a store and a product before saving.'))
       return
     }
 
@@ -726,9 +765,8 @@ export function PaymentSettingsSection({
       return
     }
 
-    if (!waffoPancakeSelection.storeID || !waffoPancakeSelection.productID) {
-      toast.error(t('Pick or create both a store and a product before saving.'))
-      return
+    for (const update of updates) {
+      await updateOption.mutateAsync(update)
     }
 
     try {
@@ -738,6 +776,7 @@ export function PaymentSettingsSection({
         returnURL: sanitized.WaffoPancakeReturnURL,
         storeID: waffoPancakeSelection.storeID,
         productID: waffoPancakeSelection.productID,
+        environment: verifiedEnvironment,
       })
 
       if (
@@ -794,6 +833,7 @@ export function PaymentSettingsSection({
     WaffoPancakeMerchantID: currentFormValues.WaffoPancakeMerchantID,
     WaffoPancakePrivateKey: currentFormValues.WaffoPancakePrivateKey,
     WaffoPancakeReturnURL: currentFormValues.WaffoPancakeReturnURL,
+    WaffoPancakeEnvironment: currentFormValues.WaffoPancakeEnvironment,
   }
 
   return (
@@ -1596,9 +1636,13 @@ export function PaymentSettingsSection({
                 defaultValues={waffoPancakeDefaultValues}
                 values={waffoPancakeValues}
                 onValueChange={setWaffoPancakeValue}
+                catalog={waffoPancakeCatalog}
+                onCatalogChange={setWaffoPancakeCatalog}
                 selectedBinding={waffoPancakeSelection}
                 savedBinding={waffoPancakeSavedBinding}
                 onSelectedBindingChange={setWaffoPancakeSelection}
+                verificationPhase={waffoPancakeVerificationPhase}
+                onVerificationPhaseChange={setWaffoPancakeVerificationPhase}
               />
             </TabsContent>
 

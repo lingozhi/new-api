@@ -112,34 +112,39 @@ func TestWaffoWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	require.True(t, isWaffoWebhookEnabled())
 }
 
-func TestWaffoPancakeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
+func TestWaffoPancakeTopUpEnabledRequiresCompleteEnvironmentBoundConfig(t *testing.T) {
 	confirmPaymentComplianceForTest(t)
 	originalMerchantID := setting.WaffoPancakeMerchantID
 	originalPrivateKey := setting.WaffoPancakePrivateKey
+	originalStoreID := setting.WaffoPancakeStoreID
 	originalProductID := setting.WaffoPancakeProductID
+	originalEnvironment := setting.WaffoPancakeEnvironment
 	t.Cleanup(func() {
 		setting.WaffoPancakeMerchantID = originalMerchantID
 		setting.WaffoPancakePrivateKey = originalPrivateKey
+		setting.WaffoPancakeStoreID = originalStoreID
 		setting.WaffoPancakeProductID = originalProductID
+		setting.WaffoPancakeEnvironment = originalEnvironment
 	})
 
-	// Presence of all three credentials enables the gateway. Webhook public
-	// keys are bundled in the SDK and there is no separate Enabled toggle —
-	// clear any of the three fields to disable.
+	// Presence of credentials, store, product, and a valid environment enables
+	// new checkouts. Webhook verification is route-bound and tested separately.
 	setting.WaffoPancakeMerchantID = ""
 	setting.WaffoPancakePrivateKey = "private"
+	setting.WaffoPancakeStoreID = "store"
 	setting.WaffoPancakeProductID = "product"
-	require.False(t, isWaffoPancakeWebhookEnabled())
+	setting.WaffoPancakeEnvironment = setting.WaffoPancakeEnvironmentTest
+	require.False(t, isWaffoPancakeTopUpEnabled())
 
 	setting.WaffoPancakeMerchantID = "merchant"
-	require.True(t, isWaffoPancakeWebhookEnabled())
+	require.True(t, isWaffoPancakeTopUpEnabled())
 
 	setting.WaffoPancakeProductID = ""
-	require.False(t, isWaffoPancakeWebhookEnabled())
+	require.False(t, isWaffoPancakeTopUpEnabled())
 
 	setting.WaffoPancakeProductID = "product"
 	setting.WaffoPancakePrivateKey = ""
-	require.False(t, isWaffoPancakeWebhookEnabled())
+	require.False(t, isWaffoPancakeTopUpEnabled())
 }
 
 func TestEpayWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {

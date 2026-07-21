@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { StatusBadgeProps } from '@/components/status-badge'
-import { formatTimestampToDate } from '@/lib/format'
+import { formatNumber, formatTimestampToDate } from '@/lib/format'
 
 import type { TopupStatus } from '../types'
 
@@ -74,6 +74,16 @@ export function getPaymentMethodName(
 ): string {
   const name = PAYMENT_METHOD_NAMES[method] || method
   return t ? t(name) : name
+}
+
+export function formatProviderPaymentAmount(
+  money: number,
+  providerCurrency?: string
+): string {
+  const amount = formatNumber(money)
+  const currency = providerCurrency?.trim().toUpperCase()
+  if (currency !== 'CNY' && currency !== 'USD') return amount
+  return `${currency} ${amount}`
 }
 
 /**

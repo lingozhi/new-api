@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,6 +32,7 @@ type controllerWaffoCheckoutPayload struct {
 	Currency      string `json:"currency"`
 	PriceSnapshot struct {
 		Amount      string `json:"amount"`
+		TaxIncluded bool   `json:"taxIncluded"`
 		TaxCategory string `json:"taxCategory"`
 	} `json:"priceSnapshot"`
 }
@@ -48,7 +50,9 @@ func configureWaffoPancakeCNYCheckoutTest(t *testing.T) {
 	originalTopupGroupRatio := common.TopupGroupRatio2JSONString()
 	originalMerchantID := setting.WaffoPancakeMerchantID
 	originalPrivateKey := setting.WaffoPancakePrivateKey
+	originalStoreID := setting.WaffoPancakeStoreID
 	originalProductID := setting.WaffoPancakeProductID
+	originalEnvironment := setting.WaffoPancakeEnvironment
 	originalUnitPrice := setting.WaffoPancakeUnitPrice
 	originalMinTopUp := setting.WaffoPancakeMinTopUp
 	t.Cleanup(func() {
@@ -58,7 +62,9 @@ func configureWaffoPancakeCNYCheckoutTest(t *testing.T) {
 		require.NoError(t, common.UpdateTopupGroupRatioByJSONString(originalTopupGroupRatio))
 		setting.WaffoPancakeMerchantID = originalMerchantID
 		setting.WaffoPancakePrivateKey = originalPrivateKey
+		setting.WaffoPancakeStoreID = originalStoreID
 		setting.WaffoPancakeProductID = originalProductID
+		setting.WaffoPancakeEnvironment = originalEnvironment
 		setting.WaffoPancakeUnitPrice = originalUnitPrice
 		setting.WaffoPancakeMinTopUp = originalMinTopUp
 	})
@@ -77,7 +83,9 @@ func configureWaffoPancakeCNYCheckoutTest(t *testing.T) {
 		Type:  "PRIVATE KEY",
 		Bytes: encodedPrivateKey,
 	}))
+	setting.WaffoPancakeStoreID = "STO_AbCdEfGhIjKlMnOpQrStUv"
 	setting.WaffoPancakeProductID = "PROD_AbCdEfGhIjKlMnOpQrStUv"
+	setting.WaffoPancakeEnvironment = setting.WaffoPancakeEnvironmentTest
 	setting.WaffoPancakeUnitPrice = 1
 	setting.WaffoPancakeMinTopUp = 1
 }
@@ -87,12 +95,15 @@ func installWaffoPancakeCheckoutCapture(t *testing.T) <-chan controllerWaffoChec
 
 	originalTransport := http.DefaultClient.Transport
 	captured := make(chan controllerWaffoCheckoutPayload, 1)
+	catalogPayload := controllerWaffoCatalogPayload(t)
 	t.Cleanup(func() {
 		http.DefaultClient.Transport = originalTransport
 	})
 
 	http.DefaultClient.Transport = controllerWaffoRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch req.URL.Path {
+		case "/v1/graphql":
+			return controllerWaffoTestResponse(catalogPayload), nil
 		case "/v1/actions/auth/issue-session-token":
 			return controllerWaffoTestResponse(`{"data":{"token":"JWT","expiresAt":"2026-07-21T01:00:00Z"}}`), nil
 		case "/v1/actions/checkout/create-session":
@@ -108,6 +119,44 @@ func installWaffoPancakeCheckoutCapture(t *testing.T) <-chan controllerWaffoChec
 	})
 
 	return captured
+}
+
+func controllerWaffoCatalogPayload(t *testing.T) string {
+	t.Helper()
+	payload, err := common.Marshal(map[string]any{
+		"data": map[string]any{
+			"apiKeys": []map[string]any{{
+				"privateKey":  setting.WaffoPancakePrivateKey,
+				"environment": setting.WaffoPancakeEnvironmentTest,
+			}},
+			"stores": []map[string]any{
+				{
+					"id":          setting.WaffoPancakeStoreID,
+					"name":        "Wallet",
+					"status":      "active",
+					"prodEnabled": false,
+					"onetimeProducts": []map[string]any{{
+						"id":     setting.WaffoPancakeProductID,
+						"name":   "Wallet Credits",
+						"status": "active",
+					}},
+				},
+				{
+					"id":          "STO_plan",
+					"name":        "Subscriptions",
+					"status":      "active",
+					"prodEnabled": false,
+					"onetimeProducts": []map[string]any{{
+						"id":     "PROD_ZyXwVuTsRqPoNmLkJiHgFe",
+						"name":   "Pro",
+						"status": "active",
+					}},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	return string(payload)
 }
 
 func controllerWaffoTestResponse(body string) *http.Response {
@@ -158,12 +207,16 @@ func TestRequestWaffoPancakePay_ConvertsCNYCheckoutAmount(t *testing.T) {
 	require.Equal(t, setting.WaffoPancakeProductID, payload.ProductID)
 	require.Equal(t, "CNY", payload.Currency)
 	require.Equal(t, "73.00", payload.PriceSnapshot.Amount)
+	require.True(t, payload.PriceSnapshot.TaxIncluded)
 	require.Equal(t, "saas", payload.PriceSnapshot.TaxCategory)
 
 	var topUp model.TopUp
 	require.NoError(t, db.Where("user_id = ?", 101).First(&topUp).Error)
 	require.Equal(t, int64(10), topUp.Amount)
 	require.InDelta(t, 73, topUp.Money, 0.000001)
+	require.Equal(t, setting.WaffoPancakeStoreID, topUp.ProviderStoreId)
+	require.Equal(t, setting.WaffoPancakeEnvironmentTest, topUp.ProviderEnvironment)
+	require.Equal(t, "CNY", topUp.ProviderCurrency)
 }
 
 func TestSubscriptionRequestWaffoPancakePay_ConvertsCNYCheckoutAmount(t *testing.T) {
@@ -211,9 +264,123 @@ func TestSubscriptionRequestWaffoPancakePay_ConvertsCNYCheckoutAmount(t *testing
 	require.Equal(t, plan.WaffoPancakeProductId, payload.ProductID)
 	require.Equal(t, "CNY", payload.Currency)
 	require.Equal(t, "73.00", payload.PriceSnapshot.Amount)
+	require.True(t, payload.PriceSnapshot.TaxIncluded)
 	require.Equal(t, "saas", payload.PriceSnapshot.TaxCategory)
 
 	var order model.SubscriptionOrder
 	require.NoError(t, db.Where("user_id = ? AND plan_id = ?", 102, plan.Id).First(&order).Error)
 	require.InDelta(t, 73, order.Money, 0.000001)
+	require.Equal(t, "STO_plan", order.ProviderStoreId)
+	require.Equal(t, setting.WaffoPancakeEnvironmentTest, order.ProviderEnvironment)
+	require.Equal(t, "CNY", order.ProviderCurrency)
+}
+
+func TestRequestWaffoPancakePayClassifiesCheckoutFailureByStage(t *testing.T) {
+	testCases := []struct {
+		name                 string
+		tokenResult          func() (*http.Response, error)
+		sessionResult        func() (*http.Response, error)
+		expectedStatus       string
+		expectedSessionCalls int
+	}{
+		{
+			name: "token transport failure is conclusive before session creation",
+			tokenResult: func() (*http.Response, error) {
+				return nil, errors.New("connection reset after write")
+			},
+			expectedStatus: common.TopUpStatusFailed,
+		},
+		{
+			name: "empty token is conclusive before session creation",
+			tokenResult: func() (*http.Response, error) {
+				return controllerWaffoTestResponse(`{"data":{"token":"","expiresAt":"2026-07-21T01:00:00Z"}}`), nil
+			},
+			expectedStatus: common.TopUpStatusFailed,
+		},
+		{
+			name: "explicit token API rejection is failed",
+			tokenResult: func() (*http.Response, error) {
+				response := controllerWaffoTestResponse(`{"data":null,"errors":[{"message":"checkout rejected","layer":"product"}]}`)
+				response.StatusCode = http.StatusUnprocessableEntity
+				return response, nil
+			},
+			expectedStatus: common.TopUpStatusFailed,
+		},
+		{
+			name: "session transport failure remains pending",
+			tokenResult: func() (*http.Response, error) {
+				return controllerWaffoTestResponse(`{"data":{"token":"JWT","expiresAt":"2026-07-21T01:00:00Z"}}`), nil
+			},
+			sessionResult: func() (*http.Response, error) {
+				return nil, errors.New("connection reset after session write")
+			},
+			expectedStatus:       common.TopUpStatusPending,
+			expectedSessionCalls: 1,
+		},
+		{
+			name: "session response missing critical fields remains pending",
+			tokenResult: func() (*http.Response, error) {
+				return controllerWaffoTestResponse(`{"data":{"token":"JWT","expiresAt":"2026-07-21T01:00:00Z"}}`), nil
+			},
+			sessionResult: func() (*http.Response, error) {
+				return controllerWaffoTestResponse(`{"data":{"sessionId":"","checkoutUrl":"","expiresAt":"2026-07-21T00:45:00Z"}}`), nil
+			},
+			expectedStatus:       common.TopUpStatusPending,
+			expectedSessionCalls: 1,
+		},
+	}
+
+	for index, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupModelListControllerTestDB(t)
+			require.NoError(t, db.AutoMigrate(&model.TopUp{}))
+			userID := 110 + index
+			require.NoError(t, db.Create(&model.User{
+				Id:       userID,
+				Username: fmt.Sprintf("waffo-failure-%d", index),
+				Password: "password123",
+				Group:    "default",
+				Email:    fmt.Sprintf("failure-%d@example.com", index),
+			}).Error)
+			configureWaffoPancakeCNYCheckoutTest(t)
+
+			originalTransport := http.DefaultClient.Transport
+			t.Cleanup(func() { http.DefaultClient.Transport = originalTransport })
+			catalogPayload := controllerWaffoCatalogPayload(t)
+			sessionCalls := 0
+			http.DefaultClient.Transport = controllerWaffoRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.URL.Path {
+				case "/v1/graphql":
+					return controllerWaffoTestResponse(catalogPayload), nil
+				case "/v1/actions/auth/issue-session-token":
+					return tc.tokenResult()
+				case "/v1/actions/checkout/create-session":
+					sessionCalls++
+					if tc.sessionResult == nil {
+						return nil, errors.New("checkout session request was not expected")
+					}
+					return tc.sessionResult()
+				default:
+					return nil, fmt.Errorf("unexpected Waffo Pancake path: %s", req.URL.Path)
+				}
+			})
+
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Set("id", userID)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/api/user/waffo-pancake/pay", strings.NewReader(`{"amount":10}`))
+			ctx.Request.Header.Set("Content-Type", "application/json")
+			RequestWaffoPancakePay(ctx)
+
+			var response struct {
+				Message string `json:"message"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			require.Equal(t, "error", response.Message)
+			var topUp model.TopUp
+			require.NoError(t, db.Where("user_id = ?", userID).First(&topUp).Error)
+			require.Equal(t, tc.expectedStatus, topUp.Status)
+			require.Equal(t, tc.expectedSessionCalls, sessionCalls)
+		})
+	}
 }

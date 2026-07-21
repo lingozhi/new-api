@@ -101,6 +101,7 @@ const defaultBillingSettings: BillingSettings = {
   WaffoPancakeMerchantID: '',
   WaffoPancakePrivateKey: '',
   WaffoPancakeReturnURL: '',
+  WaffoPancakeEnvironment: '',
   WaffoPancakeStoreID: '',
   WaffoPancakeProductID: '',
   'checkin_setting.enabled': false,

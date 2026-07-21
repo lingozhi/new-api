@@ -217,12 +217,15 @@ type SubscriptionOrder struct {
 	PlanId int     `json:"plan_id" gorm:"index"`
 	Money  float64 `json:"money"`
 
-	TradeNo         string `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod   string `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider string `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	Status          string `json:"status"`
-	CreateTime      int64  `json:"create_time"`
-	CompleteTime    int64  `json:"complete_time"`
+	TradeNo             string `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod       string `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider     string `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	ProviderStoreId     string `json:"provider_store_id" gorm:"type:varchar(128);default:''"`
+	ProviderEnvironment string `json:"provider_environment" gorm:"type:varchar(8);default:''"`
+	ProviderCurrency    string `json:"provider_currency" gorm:"type:varchar(8);default:''"`
+	Status              string `json:"status"`
+	CreateTime          int64  `json:"create_time"`
+	CompleteTime        int64  `json:"complete_time"`
 
 	ProviderPayload string `json:"provider_payload" gorm:"type:text"`
 }
@@ -239,14 +242,55 @@ func (o *SubscriptionOrder) Update() error {
 }
 
 func GetSubscriptionOrderByTradeNo(tradeNo string) *SubscriptionOrder {
-	if tradeNo == "" {
+	order, err := FindSubscriptionOrderByTradeNo(tradeNo)
+	if err != nil {
 		return nil
+	}
+	return order
+}
+
+func FindSubscriptionOrderByTradeNo(tradeNo string) (*SubscriptionOrder, error) {
+	if tradeNo == "" {
+		return nil, ErrSubscriptionOrderNotFound
 	}
 	var order SubscriptionOrder
 	if err := DB.Where("trade_no = ?", tradeNo).First(&order).Error; err != nil {
-		return nil
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrSubscriptionOrderNotFound
+		}
+		return nil, err
 	}
-	return &order
+	return &order, nil
+}
+
+func UpdatePendingSubscriptionOrderStatus(tradeNo string, expectedPaymentProvider string, targetStatus string) error {
+	if tradeNo == "" {
+		return errors.New("tradeNo is empty")
+	}
+
+	refCol := "`trade_no`"
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		refCol = `"trade_no"`
+	}
+
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var order SubscriptionOrder
+		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrSubscriptionOrderNotFound
+			}
+			return err
+		}
+		if expectedPaymentProvider != "" && order.PaymentProvider != expectedPaymentProvider {
+			return ErrPaymentMethodMismatch
+		}
+		if order.Status != common.TopUpStatusPending {
+			return ErrSubscriptionOrderStatusInvalid
+		}
+
+		order.Status = targetStatus
+		return tx.Save(&order).Error
+	})
 }
 
 // User subscription instance
@@ -641,14 +685,18 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 	if err := tx.Where("trade_no = ?", order.TradeNo).First(&topup).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			topup = TopUp{
-				UserId:        order.UserId,
-				Amount:        0,
-				Money:         order.Money,
-				TradeNo:       order.TradeNo,
-				PaymentMethod: order.PaymentMethod,
-				CreateTime:    order.CreateTime,
-				CompleteTime:  now,
-				Status:        common.TopUpStatusSuccess,
+				UserId:              order.UserId,
+				Amount:              0,
+				Money:               order.Money,
+				TradeNo:             order.TradeNo,
+				PaymentMethod:       order.PaymentMethod,
+				PaymentProvider:     order.PaymentProvider,
+				ProviderStoreId:     order.ProviderStoreId,
+				ProviderEnvironment: order.ProviderEnvironment,
+				ProviderCurrency:    order.ProviderCurrency,
+				CreateTime:          order.CreateTime,
+				CompleteTime:        now,
+				Status:              common.TopUpStatusSuccess,
 			}
 			return tx.Create(&topup).Error
 		}
@@ -658,6 +706,26 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 	if topup.PaymentMethod == "" {
 		topup.PaymentMethod = order.PaymentMethod
 	} else if topup.PaymentMethod != order.PaymentMethod {
+		return ErrPaymentMethodMismatch
+	}
+	if topup.PaymentProvider == "" {
+		topup.PaymentProvider = order.PaymentProvider
+	} else if order.PaymentProvider != "" && topup.PaymentProvider != order.PaymentProvider {
+		return ErrPaymentMethodMismatch
+	}
+	if topup.ProviderStoreId == "" {
+		topup.ProviderStoreId = order.ProviderStoreId
+	} else if order.ProviderStoreId != "" && topup.ProviderStoreId != order.ProviderStoreId {
+		return ErrPaymentMethodMismatch
+	}
+	if topup.ProviderEnvironment == "" {
+		topup.ProviderEnvironment = order.ProviderEnvironment
+	} else if order.ProviderEnvironment != "" && topup.ProviderEnvironment != order.ProviderEnvironment {
+		return ErrPaymentMethodMismatch
+	}
+	if topup.ProviderCurrency == "" {
+		topup.ProviderCurrency = order.ProviderCurrency
+	} else if order.ProviderCurrency != "" && topup.ProviderCurrency != order.ProviderCurrency {
 		return ErrPaymentMethodMismatch
 	}
 	if topup.CreateTime == 0 {
