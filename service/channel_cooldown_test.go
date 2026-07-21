@@ -277,6 +277,19 @@ func TestShouldCooldownChannelForBalanceError(t *testing.T) {
 	}
 }
 
+func TestCooldownChannelForBalanceErrorBlocksCoolingFallback(t *testing.T) {
+	model.ClearChannelCooldownsForTest()
+	t.Cleanup(model.ClearChannelCooldownsForTest)
+
+	const channelID = 9005
+	err := types.NewErrorWithStatusCode(errors.New("Insufficient account balance"), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
+
+	CooldownChannel(*types.NewChannelError(channelID, 1, "balance-exhausted", false, "", false), err)
+
+	assert.True(t, model.IsChannelCoolingDown(channelID))
+	assert.False(t, model.IsChannelCoolingFallbackAllowed(channelID), "a known-empty upstream account must not be retried as last-resort capacity")
+}
+
 func TestShouldCooldownChannelForChineseBalanceError(t *testing.T) {
 	err := types.NewErrorWithStatusCode(errors.New("账户余额不足"), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
 
