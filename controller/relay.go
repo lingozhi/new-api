@@ -900,9 +900,10 @@ func markAffinityColdStartForRetry(c *gin.Context, info *relaycommon.RelayInfo, 
 }
 
 // cooldownSlowChannelIfNeeded cools a channel after a successful request whose
-// first-response-time exceeded SlowChannelFRTThreshold. FRT is only meaningful
-// when the handler actually recorded a first response; pinned (specific) channel
-// requests are skipped since they bypass selection anyway.
+// meaningful first-response time exceeded SlowChannelFRTThreshold. Non-streaming
+// text completion and image completion time are excluded because neither is text
+// TTFT; operational routes retain their existing timing. Pinned requests bypass
+// selection and are skipped.
 func cooldownSlowChannelIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, channel *model.Channel, attemptStart time.Time) {
 	if info == nil || channel == nil {
 		return
@@ -928,6 +929,11 @@ func cooldownSlowChannelIfNeeded(c *gin.Context, info *relaycommon.RelayInfo, ch
 // the channel is not cooled.
 func shouldCooldownSlowChannel(info *relaycommon.RelayInfo, attemptStart time.Time) (time.Duration, bool) {
 	if info == nil {
+		return 0, false
+	}
+	healthPath := service.ChannelHealthPath(info.RequestURLPath)
+	if healthPath == "/v1/images/generations" || healthPath == "/v1/images/edits" ||
+		(!info.IsStream && service.IsTextGenerationHealthRequest(info, info.RequestURLPath)) {
 		return 0, false
 	}
 	firstResponseAt := info.FirstResponseTimeForAttempt(attemptStart)

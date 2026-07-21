@@ -97,10 +97,14 @@ type ChannelHealthKey struct {
 }
 
 type ChannelOutcome struct {
-	StatusCode    int
-	Latency       time.Duration
-	SemanticError bool
-	LocalError    bool
+	StatusCode int
+	Latency    time.Duration
+	// LatencyObserved distinguishes a status-only success from a measured
+	// response. Status-only success counts for availability but is never treated
+	// as proof that the channel is fast.
+	LatencyObserved bool
+	SemanticError   bool
+	LocalError      bool
 	// ColdCacheStart marks an attempt whose latency is dominated by a prompt
 	// prefill this channel had no cache for, because we just released the
 	// request's affinity from a slower channel. Its Latency measures work we
@@ -323,7 +327,11 @@ func (r *channelHealthRegistry) Record(key ChannelHealthKey, outcome ChannelOutc
 	// on a 240k-token prompt). Folding that into the EWMA would make the channel
 	// we just migrated to look slow to *every* affinity key on it — one
 	// migration would stampede the rest away, each paying its own cold prefill.
-	if outcome.Latency > 0 && !outcome.ColdCacheStart {
+	// Positive latency remains self-evidently observed for existing direct
+	// callers. LatencyObserved also preserves a genuine zero-duration sample.
+	latencyObserved := outcome.LatencyObserved || outcome.Latency > 0
+	latencyScored := latencyObserved && outcome.Latency >= 0 && !outcome.ColdCacheStart
+	if latencyScored {
 		latency := float64(outcome.Latency)
 		if entry.latencyEWMA == 0 {
 			entry.latencyEWMA = latency
@@ -335,22 +343,40 @@ func (r *channelHealthRegistry) Record(key ChannelHealthKey, outcome ChannelOutc
 	// A successful-but-slow response is a soft failure: repeated slowness first
 	// lowers the effective priority, then evicts and re-probes the channel like a
 	// failing one if it persists to the circuit threshold.
-	slow := outcome.Latency >= channelHealthSlowLatency() && !outcome.ColdCacheStart
+	slow := latencyScored && outcome.Latency >= channelHealthSlowLatency()
 
 	if entry.state == ChannelHealthHalfOpen {
 		if slow {
 			entry.openWithBackoff(now, true)
 			return
 		}
-		entry.state = ChannelHealthClosed
-		entry.failures = nil
-		entry.slowSamples = nil
-		entry.recentOutcomes = nil
-		entry.openUntil = time.Time{}
-		entry.probeLeaseUntil = time.Time{}
+		// A success without a scored latency can prove availability, but it
+		// cannot prove recovery from a latency-open circuit. Keep that circuit
+		// half-open until a measured, non-cold TTFT arrives.
+		if latencyScored || !entry.openedBySlow {
+			entry.state = ChannelHealthClosed
+			entry.failures = nil
+			entry.slowSamples = nil
+			entry.recentOutcomes = nil
+			entry.openUntil = time.Time{}
+			entry.probeLeaseUntil = time.Time{}
+		}
 	}
 
 	entry.pushRecentOutcome(false)
+	if !latencyScored {
+		// Status-only success contributes to the availability window, but is not
+		// evidence that the channel is fast. Preserve accumulated slowness, while
+		// allowing sustained availability to reset failure-open backoff. A circuit
+		// opened by slowness still requires measured fast samples to recover.
+		if entry.openedBySlow {
+			entry.healthyStreak = 0
+		} else {
+			entry.registerHealthySuccess()
+		}
+		entry.resetPriorityFastSamples()
+		return
+	}
 
 	if slow {
 		entry.slowSamples = pruneChannelHealthFailures(entry.slowSamples, now.Add(-channelHealthFailureWindow))

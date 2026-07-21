@@ -96,6 +96,7 @@ type RelayInfo struct {
 	StartTime                time.Time
 	FirstResponseTime        time.Time
 	isFirstResponse          bool
+	attemptStartedAt         time.Time
 	attemptFirstResponseTime time.Time
 	//SendLastReasoningResponse bool
 	IsStream                 bool
@@ -700,6 +701,7 @@ func (info *RelayInfo) BeginChannelAttempt() time.Time {
 	if info == nil {
 		return startedAt
 	}
+	info.attemptStartedAt = startedAt
 	info.attemptFirstResponseTime = time.Time{}
 	info.StreamStatus = nil
 	return startedAt
@@ -738,6 +740,20 @@ func (info *RelayInfo) FirstResponseTimeForAttempt(attemptStart time.Time) time.
 		return info.FirstResponseTime
 	}
 	return time.Time{}
+}
+
+// CurrentAttemptFirstResponseLatency reports the final selected channel's
+// attempt-local FRT. Request-level FirstResponseTime intentionally remains
+// anchored to the user's total wait across retries.
+func (info *RelayInfo) CurrentAttemptFirstResponseLatency() (time.Duration, bool) {
+	if info == nil || info.attemptStartedAt.IsZero() {
+		return 0, false
+	}
+	firstResponseAt := info.FirstResponseTimeForAttempt(info.attemptStartedAt)
+	if firstResponseAt.IsZero() {
+		return 0, false
+	}
+	return firstResponseAt.Sub(info.attemptStartedAt), true
 }
 
 func (info *RelayInfo) HasSendResponse() bool {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/types"
 )
 
@@ -53,6 +54,28 @@ func channelHealthKey(channelID int, modelName, requestPath string) model.Channe
 		ChannelID: channelID,
 		Model:     modelName,
 		Path:      normalizeChannelHealthPath(requestPath),
+	}
+}
+
+// IsTextGenerationHealthRequest reports whether latency on this request is
+// first-token latency rather than whole-operation completion latency.
+func IsTextGenerationHealthRequest(relayInfo *relaycommon.RelayInfo, requestPath string) bool {
+	healthPath := normalizeChannelHealthPath(requestPath)
+	if relayInfo != nil {
+		switch relayInfo.RelayMode {
+		case relayconstant.RelayModeChatCompletions,
+			relayconstant.RelayModeCompletions,
+			relayconstant.RelayModeResponses:
+			return true
+		case relayconstant.RelayModeGemini:
+			return healthPath == "/gemini/generate" || healthPath == "/gemini/stream_generate"
+		}
+	}
+	switch healthPath {
+	case "/v1/chat/completions", "/v1/responses", "/v1/messages", "/gemini/generate", "/gemini/stream_generate":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -138,6 +161,7 @@ func RecordChannelHealthOutcome(channelID int, modelName, requestPath string, re
 	}
 	healthKey := channelHealthKey(channelID, modelName, requestPath)
 	statusCode, localError := channelHealthOutcomeStatus(apiErr, relayInfo)
+	latencyNotApplicable := healthKey.Path == "/v1/images/generations" || healthKey.Path == "/v1/images/edits"
 	outcome := model.ChannelOutcome{
 		StatusCode:    statusCode,
 		SemanticError: semanticError,
@@ -147,19 +171,28 @@ func RecordChannelHealthOutcome(channelID int, modelName, requestPath string, re
 		// imposed against the channel's latency.
 		ColdCacheStart: relayInfo != nil && relayInfo.AffinityColdStart,
 	}
-	// Non-streaming image providers return their first bytes only after the full
-	// generation completes. That duration is expected to exceed the text TTFT
-	// slow threshold, so image routes use health failures but not latency scoring.
-	if healthKey.Path != "/v1/images/generations" && healthKey.Path != "/v1/images/edits" {
+	// Text generation shares one health key between streaming and non-streaming
+	// requests. Only score its latency when a real first response was observed;
+	// using a non-streaming completion duration as TTFT would penalize streaming
+	// traffic. Operational endpoints such as embeddings, rerank, audio and task
+	// submission retain their completion-latency signal.
+	if !latencyNotApplicable {
+		textGeneration := IsTextGenerationHealthRequest(relayInfo, requestPath)
 		if relayInfo != nil {
-			firstResponseAt := relayInfo.FirstResponseTimeForAttempt(attemptStart)
-			if !firstResponseAt.IsZero() {
-				outcome.Latency = firstResponseAt.Sub(attemptStart)
-			} else if !relayInfo.IsStream && !attemptStart.IsZero() {
-				outcome.Latency = time.Since(attemptStart)
+			if relayInfo.IsStream || !textGeneration {
+				firstResponseAt := relayInfo.FirstResponseTimeForAttempt(attemptStart)
+				if !firstResponseAt.IsZero() {
+					outcome.Latency = firstResponseAt.Sub(attemptStart)
+					outcome.LatencyObserved = true
+				}
 			}
-		} else if !attemptStart.IsZero() {
+			if !outcome.LatencyObserved && !textGeneration && !attemptStart.IsZero() {
+				outcome.Latency = time.Since(attemptStart)
+				outcome.LatencyObserved = true
+			}
+		} else if !textGeneration && !attemptStart.IsZero() {
 			outcome.Latency = time.Since(attemptStart)
+			outcome.LatencyObserved = true
 		}
 	}
 	model.RecordChannelOutcome(healthKey, outcome)
