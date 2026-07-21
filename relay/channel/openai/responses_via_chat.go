@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 func OaiChatToResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
@@ -82,6 +83,8 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	streamErr := (*types.NewAPIError)(nil)
 	streamFailureReason := relaycommon.StreamEndReasonInternalError
 	streamWriter := NewResponsesStreamWriter(c)
+	var preCommitCapacityErr *types.NewAPIError
+	responseHeadersBeforeStream := c.Writer.Header().Clone()
 	hasMeaningfulStreamData := false
 
 	sendEvent := func(event relayconvert.ChatToResponsesStreamEvent) bool {
@@ -113,6 +116,16 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		if err := common.UnmarshalJsonStr(data, &errorResp); err == nil {
 			if oaiError := errorResp.GetOpenAIError(); oaiError != nil && (oaiError.Type != "" || oaiError.Message != "" || oaiError.Code != nil) {
 				channelFailure := IsResponsesChannelFailure(oaiError)
+				hasBillableErrorPayload := gjson.Get(data, "usage").Exists() || len(errorResp.Choices) > 0
+				failureErr := fmt.Errorf("upstream chat stream failed")
+				if oaiError.Message != "" {
+					failureErr = fmt.Errorf("upstream chat stream failed: %s", oaiError.Message)
+				}
+				if channelFailure && !streamWriter.ProtocolStarted() && !hasMeaningfulStreamData && !hasBillableErrorPayload && service.IsImmediateStreamCapacityError(failureErr.Error()) {
+					preCommitCapacityErr = newResponsesPreCommitCapacityError(oaiError, failureErr)
+					sr.PreCommitUpstreamFailed(failureErr)
+					return
+				}
 				statusCode := http.StatusBadRequest
 				if channelFailure {
 					statusCode = http.StatusBadGateway
@@ -159,6 +172,21 @@ func OaiChatToResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			}
 		}
 	})
+	if preCommitCapacityErr != nil {
+		info.DiscardCurrentAttemptFirstResponse()
+		if !streamWriter.Started() {
+			headers := c.Writer.Header()
+			clear(headers)
+			for name, values := range responseHeadersBeforeStream {
+				headers[name] = append([]string(nil), values...)
+			}
+			helper.ResetEventStreamHeaders(c)
+		}
+		if contextErr := c.Request.Context().Err(); contextErr != nil {
+			return nil, types.NewError(contextErr, types.ErrorCodeDoRequestFailed)
+		}
+		return nil, preCommitCapacityErr
+	}
 
 	usage := state.Usage()
 	if usage == nil || usage.TotalTokens == 0 {

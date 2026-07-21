@@ -41,6 +41,26 @@ func TestShouldDisableChannelIgnoresUpstream429(t *testing.T) {
 	assert.False(t, ShouldDisableChannel(err), "upstream 429 should use a temporary cooldown instead of permanently disabling the channel")
 }
 
+func TestShouldDisableChannelIgnoresPreCommitStreamCapacity(t *testing.T) {
+	oldAutomaticDisableChannelEnabled := common.AutomaticDisableChannelEnabled
+	oldDisableRanges := operation_setting.AutomaticDisableStatusCodeRanges
+	common.AutomaticDisableChannelEnabled = true
+	operation_setting.AutomaticDisableStatusCodeRanges = []operation_setting.StatusCodeRange{{Start: http.StatusServiceUnavailable, End: http.StatusServiceUnavailable}}
+	t.Cleanup(func() {
+		common.AutomaticDisableChannelEnabled = oldAutomaticDisableChannelEnabled
+		operation_setting.AutomaticDisableStatusCodeRanges = oldDisableRanges
+	})
+
+	err := types.NewOpenAIError(
+		errors.New("We're currently experiencing high demand, which may cause temporary errors."),
+		types.ErrorCode("server_error"),
+		http.StatusServiceUnavailable,
+		types.ErrOptionWithPreCommitStreamCapacity(),
+	)
+
+	assert.False(t, ShouldDisableChannel(err), "a transient pre-commit capacity signal must use stream-quality cooldowns, not permanent auto-disable")
+}
+
 func TestShouldCooldownChannelForUpstreamErrorCoolsMalformedResponses(t *testing.T) {
 	err := types.NewErrorWithStatusCode(errors.New("API returned an empty or malformed response (HTTP 200)"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 

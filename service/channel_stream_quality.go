@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
 
@@ -70,7 +71,7 @@ func ObserveStreamChannelQualityForRequest(c *gin.Context, relayInfo *relaycommo
 	}
 	snapshot := relayInfo.StreamStatus.Snapshot()
 	if streamInstabilityReason(relayInfo) != "" {
-		suppressChannelAffinityRecord(c)
+		SuppressChannelAffinityRecord(c)
 	}
 	if snapshot.EndReason == relaycommon.StreamEndReasonUpstreamFailed &&
 		isImmediateStreamCapacityFailure(snapshot) &&
@@ -105,6 +106,13 @@ func IsImmediateStreamCapacityError(message string) bool {
 		}
 	}
 	return false
+}
+
+// IsImmediateStreamCapacityAPIError preserves the explicit handler
+// classification even if a channel mapping changes the client-facing status.
+func IsImmediateStreamCapacityAPIError(err *types.NewAPIError) bool {
+	return types.IsPreCommitStreamCapacityError(err) &&
+		IsImmediateStreamCapacityError(err.Error())
 }
 
 func isImmediateStreamCapacityFailure(snapshot relaycommon.StreamSnapshot) bool {

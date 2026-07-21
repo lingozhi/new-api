@@ -83,6 +83,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	streamCtx := newResponsesStreamCtx()
 	streamWriter := NewResponsesStreamWriter(c)
 	var preCommitCapacityErr *types.NewAPIError
+	responseHeadersBeforeStream := c.Writer.Header().Clone()
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
@@ -105,11 +106,6 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 				Param:   streamResponse.Param,
 			}
 			channelFailure := IsResponsesChannelFailure(upstreamErr)
-			if channelFailure && !streamWriter.Started() && service.IsImmediateStreamCapacityError(failureErr.Error()) {
-				preCommitCapacityErr = newResponsesPreCommitCapacityError(upstreamErr, failureErr)
-				sr.UpstreamFailed(failureErr)
-				return
-			}
 			failureData, buildErr := streamWriter.FailureData(
 				streamCtx.resolveResponseID(c),
 				streamCtx.resolveModel(info),
@@ -126,6 +122,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			if err := common.UnmarshalJsonStr(failureData, &failureResponse); err != nil {
 				info.StreamStatus.SetEndReasonWithSource(relaycommon.StreamEndReasonInternalError, err, "responses_error_reparse")
 				sr.Stop(err)
+				return
+			}
+			if channelFailure && !streamWriter.ProtocolStarted() && service.IsImmediateStreamCapacityError(failureErr.Error()) {
+				preCommitCapacityErr = newResponsesPreCommitCapacityError(upstreamErr, failureErr)
+				sr.PreCommitUpstreamFailed(failureErr)
 				return
 			}
 			streamCtx.stageTerminal(failureResponse, failureData)
@@ -151,6 +152,8 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 
+		hasBillableFailurePayload := streamResponse.Type == "response.failed" && streamResponse.Response != nil &&
+			(streamResponse.Response.Usage != nil || len(streamResponse.Response.Output) > 0)
 		var normalizeErr error
 		streamResponse, data, normalizeErr = normalizeResponsesTerminalEvent(c, info, streamCtx, streamResponse, data)
 		if normalizeErr != nil {
@@ -168,9 +171,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 					failureErr = fmt.Errorf("upstream responses stream failed: %s", upstreamErr.Message)
 				}
 			}
-			if IsResponsesChannelFailure(upstreamErr) && !streamWriter.Started() && service.IsImmediateStreamCapacityError(failureErr.Error()) {
+			if IsResponsesChannelFailure(upstreamErr) && !streamWriter.ProtocolStarted() && !hasBillableFailurePayload && service.IsImmediateStreamCapacityError(failureErr.Error()) {
 				preCommitCapacityErr = newResponsesPreCommitCapacityError(upstreamErr, failureErr)
-				sr.UpstreamFailed(failureErr)
+				sr.PreCommitUpstreamFailed(failureErr)
 				return
 			}
 		}
@@ -251,6 +254,18 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		}
 	})
 	if preCommitCapacityErr != nil {
+		// A first-event capacity failure is safe to retry even when the SSE
+		// keepalive already committed the HTTP response. Roll back request-level
+		// TTFT in both cases; attempt-local status remains for channel health.
+		info.DiscardCurrentAttemptFirstResponse()
+		if !streamWriter.Started() {
+			headers := c.Writer.Header()
+			clear(headers)
+			for name, values := range responseHeadersBeforeStream {
+				headers[name] = append([]string(nil), values...)
+			}
+			helper.ResetEventStreamHeaders(c)
+		}
 		if contextErr := c.Request.Context().Err(); contextErr != nil {
 			return nil, types.NewError(contextErr, types.ErrorCodeDoRequestFailed)
 		}
@@ -326,7 +341,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 func newResponsesPreCommitCapacityError(upstreamErr *types.OpenAIError, fallback error) *types.NewAPIError {
 	if upstreamErr == nil {
-		return types.NewOpenAIError(fallback, types.ErrorCodeBadResponse, http.StatusServiceUnavailable)
+		return types.NewOpenAIError(fallback, types.ErrorCodeBadResponse, http.StatusServiceUnavailable, types.ErrOptionWithPreCommitStreamCapacity())
 	}
 	normalized := *upstreamErr
 	if normalized.Message == "" {
@@ -338,7 +353,7 @@ func newResponsesPreCommitCapacityError(upstreamErr *types.OpenAIError, fallback
 	if normalized.Code == nil || strings.TrimSpace(fmt.Sprint(normalized.Code)) == "" {
 		normalized.Code = "server_error"
 	}
-	return types.WithOpenAIError(normalized, http.StatusServiceUnavailable)
+	return types.WithOpenAIError(normalized, http.StatusServiceUnavailable, types.ErrOptionWithPreCommitStreamCapacity())
 }
 
 func IsResponsesChannelFailure(upstreamErr *types.OpenAIError) bool {

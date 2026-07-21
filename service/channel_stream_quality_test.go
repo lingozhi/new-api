@@ -101,9 +101,15 @@ func TestIsImmediateStreamCapacityAPIErrorSurvivesStatusMapping(t *testing.T) {
 		errors.New("We're currently experiencing high demand, which may cause temporary errors."),
 		types.ErrorCode("server_error"),
 		http.StatusBadRequest,
+		types.ErrOptionWithPreCommitStreamCapacity(),
 	)
 
 	assert.True(t, IsImmediateStreamCapacityAPIError(err))
+	assert.False(t, IsImmediateStreamCapacityAPIError(types.NewOpenAIError(
+		errors.New("We're currently experiencing high demand, which may cause temporary errors."),
+		types.ErrorCode("server_error"),
+		http.StatusServiceUnavailable,
+	)), "the client-visible message alone must not create retry provenance")
 }
 
 func TestObserveStreamChannelQualityKeepsGenericFailureThreshold(t *testing.T) {
@@ -225,6 +231,46 @@ func TestObserveStreamChannelQualityDoesNotPinGenericUpstreamFailure(t *testing.
 	require.NoError(t, err)
 	require.True(t, found)
 	assert.Equal(t, 29, boundChannel, "a failed stream must not become the affinity success")
+}
+
+func TestSuccessfulFallbackCanResumeSuppressedChannelAffinity(t *testing.T) {
+	cacheKeySuffix := fmt.Sprintf("codex cli trace:default:fallback-success-%d", time.Now().UnixNano())
+	cacheKeyFull := channelAffinityCacheNamespace + ":" + cacheKeySuffix
+	cache := getChannelAffinityCache()
+	require.NoError(t, cache.SetWithTTL(cacheKeySuffix, 17, time.Minute))
+	t.Cleanup(func() {
+		_, _ = cache.DeleteMany([]string{cacheKeySuffix})
+	})
+	ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
+		CacheKey:   cacheKeyFull,
+		TTLSeconds: 60,
+		RuleName:   "codex cli trace",
+		SkipRetry:  false,
+	})
+	MarkChannelAffinityUsed(ctx, "default", 17)
+	info := newStreamQualityRelayInfoWithEndError(
+		17,
+		"gpt-5.6-sol",
+		relaycommon.StreamEndReasonUpstreamFailed,
+		1,
+		"upstream responses stream failed: temporary provider error",
+		nil,
+	)
+
+	ObserveStreamChannelQualityForRequest(ctx, info)
+	ctx.Set("channel_id", 29)
+	RecordChannelAffinity(ctx, 17)
+	boundChannel, found, err := cache.Get(cacheKeySuffix)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, 17, boundChannel, "a failed attempt must remain suppressed until fallback success is explicit")
+
+	ResumeChannelAffinityRecordAfterFallback(ctx)
+	RecordChannelAffinity(ctx, 17)
+	boundChannel, found, err = cache.Get(cacheKeySuffix)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, 29, boundChannel, "the successful fallback channel should take over the affinity")
 }
 
 func TestObserveStreamChannelQualityCoolsAfterRepeatedTimeouts(t *testing.T) {

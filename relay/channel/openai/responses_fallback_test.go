@@ -233,18 +233,95 @@ func TestOaiResponsesStreamHandlerReturnsPreCommitCapacityFailureForRetry(t *tes
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(tt.body))
+			c.Writer.Header().Set("X-Before-Stream", "keep")
+			resp.Header = http.Header{
+				"X-Codex-Turn-State": []string{"failed-channel-state"},
+			}
 
 			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
 
 			require.Nil(t, usage)
 			require.NotNil(t, apiErr)
 			assert.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+			assert.True(t, types.IsPreCommitStreamCapacityError(apiErr))
 			assert.False(t, c.Writer.Written(), "a retryable first event must not commit the downstream response")
 			assert.Empty(t, recorder.Body.String())
-			assert.True(t, info.PreCommitStreamCapacityFailure)
+			assert.Equal(t, "keep", c.Writer.Header().Get("X-Before-Stream"))
+			assert.Empty(t, c.Writer.Header().Get("X-Codex-Turn-State"))
+			assert.Empty(t, c.Writer.Header().Get("Content-Type"))
+			assert.Empty(t, c.Writer.Header().Get("Transfer-Encoding"))
 			assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
 		})
 	}
+}
+
+func TestOaiResponsesStreamHandlerDoesNotRetryCapacityFailureWithUsageOrOutput(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "usage",
+			body: `data: {"type":"response.failed","response":{"id":"resp_busy","status":"failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."},"usage":{"input_tokens":4,"output_tokens":1,"total_tokens":5}}}` + "\n\n",
+		},
+		{
+			name: "output",
+			body: `data: {"type":"response.failed","response":{"id":"resp_busy","status":"failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."},"output":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"partial"}]}]}}` + "\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(tt.body))
+
+			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+			require.Nil(t, apiErr)
+			require.NotNil(t, usage)
+			assert.True(t, c.Writer.Written())
+			require.Equal(t, []string{"response.failed"}, responsesTerminalEvents(t, recorder.Body.String()))
+			assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+		})
+	}
+}
+
+func TestOaiResponsesStreamHandlerTreatsKeepaliveAsSafeCapacityFallbackBoundary(t *testing.T) {
+	body := `data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}` + "\n\n"
+	c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(body))
+	_, err := c.Writer.Write([]byte(": PING\n\n"))
+	require.NoError(t, err)
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.True(t, types.IsPreCommitStreamCapacityError(apiErr))
+	require.Equal(t, ": PING\n\n", recorder.Body.String())
+	assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+}
+
+func TestOaiResponsesStreamHandlerRetryUsesOnlySuccessfulChannelHeaders(t *testing.T) {
+	failedBody := `data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}` + "\n\n"
+	c, failedResp, info, recorder := setupResponsesTest(t, strings.NewReader(failedBody))
+	failedResp.Header = http.Header{"X-Codex-Turn-State": []string{"failed-channel-state"}}
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, failedResp)
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.True(t, types.IsPreCommitStreamCapacityError(apiErr))
+
+	successBody := `data: {"type":"response.completed","response":{"id":"resp_ok","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n"
+	successResp := &http.Response{
+		Body:   io.NopCloser(strings.NewReader(successBody)),
+		Header: http.Header{"X-Codex-Turn-State": []string{"successful-channel-state"}},
+	}
+	usage, apiErr = OaiResponsesStreamHandler(c, info, successResp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	assert.Equal(t, []string{"successful-channel-state"}, c.Writer.Header().Values("X-Codex-Turn-State"))
+	assert.Equal(t, "text/event-stream", c.Writer.Header().Get("Content-Type"))
+	require.Equal(t, []string{"response.completed"}, responsesTerminalEvents(t, recorder.Body.String()))
 }
 
 func TestOaiResponsesStreamHandlerDoesNotRetryCapacityFailureAfterCommit(t *testing.T) {

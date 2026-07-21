@@ -72,10 +72,26 @@ func TestRelayInfoTracksFirstResponsePerChannelAttempt(t *testing.T) {
 		"request-level first response must remain anchored to the first attempt")
 }
 
-func TestRelayInfoBeginChannelAttemptClearsPreCommitStreamCapacityFailure(t *testing.T) {
-	info := &RelayInfo{PreCommitStreamCapacityFailure: true}
+func TestRelayInfoDiscardCurrentAttemptFirstResponseRestoresRequestTiming(t *testing.T) {
+	start := time.Now().Add(-time.Second)
+	info := &RelayInfo{
+		StartTime:         start,
+		FirstResponseTime: start.Add(-time.Second),
+		isFirstResponse:   true,
+	}
 
-	info.BeginChannelAttempt()
+	firstAttemptStart := info.BeginChannelAttempt()
+	info.SetFirstResponseTime()
+	require.True(t, info.HasSendResponse())
+	require.False(t, info.FirstResponseTimeForAttempt(firstAttemptStart).IsZero())
 
-	require.False(t, info.PreCommitStreamCapacityFailure)
+	info.DiscardCurrentAttemptFirstResponse()
+	require.False(t, info.HasSendResponse())
+	require.Equal(t, start.Add(-time.Second), info.FirstResponseTime)
+	require.True(t, info.FirstResponseTimeForAttempt(firstAttemptStart).IsZero())
+
+	secondAttemptStart := info.BeginChannelAttempt()
+	info.SetFirstResponseTime()
+	require.True(t, info.HasSendResponse())
+	require.False(t, info.FirstResponseTimeForAttempt(secondAttemptStart).IsZero())
 }

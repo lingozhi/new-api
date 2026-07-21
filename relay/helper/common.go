@@ -14,6 +14,8 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const eventStreamHeadersSetKey = "event_stream_headers_set"
+
 func FlushWriter(c *gin.Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -43,19 +45,25 @@ func requestContextDone(c *gin.Context) bool {
 }
 
 func SetEventStreamHeaders(c *gin.Context) {
-	// 检查是否已经设置过头部
-	if _, exists := c.Get("event_stream_headers_set"); exists {
+	if c == nil || c.Writer == nil || c.GetBool(eventStreamHeadersSetKey) {
 		return
 	}
 
-	// 设置标志，表示头部已经设置过
-	c.Set("event_stream_headers_set", true)
+	c.Set(eventStreamHeadersSetKey, true)
 
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.Header().Set("Transfer-Encoding", "chunked")
 	c.Writer.Header().Set("X-Accel-Buffering", "no")
+}
+
+// ResetEventStreamHeaders lets an uncommitted retry initialize SSE headers
+// from the next selected upstream instead of inheriting the failed attempt.
+func ResetEventStreamHeaders(c *gin.Context) {
+	if c != nil {
+		c.Set(eventStreamHeadersSetKey, false)
+	}
 }
 
 func ClaudeData(c *gin.Context, resp dto.ClaudeResponse) error {

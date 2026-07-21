@@ -132,6 +132,9 @@ func channelHealthOutcomeStatus(apiErr *types.NewAPIError, relayInfo *relaycommo
 		if IsUpstreamRelayServiceTransientError(apiErr) {
 			return http.StatusBadGateway, false
 		}
+		if IsImmediateStreamCapacityAPIError(apiErr) {
+			return http.StatusServiceUnavailable, false
+		}
 		statusCode := apiErr.StatusCode
 		if apiErr.UpstreamStatusCode != 0 {
 			statusCode = apiErr.UpstreamStatusCode
