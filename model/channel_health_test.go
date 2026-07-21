@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeHealthClock struct {
@@ -310,6 +311,24 @@ func TestChannelHealthFastSuccessResetsSlowness(t *testing.T) {
 	}
 }
 
+func TestChannelHealthUnknownLatencyPreservesSlowEvidence(t *testing.T) {
+	health, _ := newTestChannelHealth(t)
+	key := ChannelHealthKey{ChannelID: 51, Model: "gpt-5.6-sol", Path: "/v1/responses"}
+	slow := channelHealthSlowLatency() + time.Second
+
+	health.Record(key, ChannelOutcome{StatusCode: http.StatusOK, Latency: slow})
+	health.Record(key, ChannelOutcome{StatusCode: http.StatusOK})
+	health.Record(key, ChannelOutcome{StatusCode: http.StatusOK, Latency: slow})
+
+	require.True(t, health.shouldDemotePriority(key),
+		"a success without measured TTFT must not erase real streaming slowness")
+
+	health.Record(key, ChannelOutcome{StatusCode: http.StatusOK})
+	health.Record(key, ChannelOutcome{StatusCode: http.StatusOK, Latency: slow})
+	require.Equal(t, ChannelHealthOpen, health.State(key),
+		"unknown-latency successes must not prevent three measured slow attempts from opening the circuit")
+}
+
 func TestChannelHealthHalfOpenSlowProbeReopens(t *testing.T) {
 	health, clock := newTestChannelHealth(t)
 	key := ChannelHealthKey{ChannelID: 50, Model: "gpt-5.5", Path: "/v1/responses"}
@@ -327,6 +346,74 @@ func TestChannelHealthHalfOpenSlowProbeReopens(t *testing.T) {
 	if got := health.State(key); got != ChannelHealthOpen {
 		t.Fatalf("state after slow probe = %v, want %v", got, ChannelHealthOpen)
 	}
+}
+
+func TestChannelHealthUnknownLatencyDoesNotCloseSlowHalfOpen(t *testing.T) {
+	health, clock := newTestChannelHealth(t)
+	key := ChannelHealthKey{ChannelID: 52, Model: "gpt-5.6-sol", Path: "/v1/responses"}
+	slow := channelHealthSlowLatency() + time.Second
+	for i := 0; i < channelHealthSlowThreshold; i++ {
+		health.Record(key, ChannelOutcome{StatusCode: http.StatusOK, Latency: slow})
+	}
+	clock.Advance(channelHealthOpenDuration)
+	require.True(t, health.Acquire(key), "expected half-open probe after open interval")
+
+	health.Record(key, ChannelOutcome{StatusCode: http.StatusOK})
+	require.Equal(t, ChannelHealthHalfOpen, health.State(key),
+		"a probe without measured TTFT cannot prove that a slow-open channel recovered")
+}
+
+func TestChannelHealthStatusOnlySuccessClosesFailureHalfOpen(t *testing.T) {
+	health, clock := newTestChannelHealth(t)
+	key := ChannelHealthKey{ChannelID: 53, Model: "gpt-5.6-sol", Path: "/v1/responses"}
+	for i := 0; i < channelHealthFailureThreshold; i++ {
+		health.Record(key, ChannelOutcome{StatusCode: http.StatusServiceUnavailable})
+	}
+	clock.Advance(channelHealthOpenDuration)
+	require.True(t, health.Acquire(key), "expected half-open probe after failure backoff")
+
+	health.Record(key, ChannelOutcome{StatusCode: http.StatusOK})
+	require.Equal(t, ChannelHealthClosed, health.State(key),
+		"status-only success still proves recovery from an availability failure")
+}
+
+func TestChannelHealthStatusOnlySuccessResetsFailureBackoff(t *testing.T) {
+	health, clock := newTestChannelHealth(t)
+	key := ChannelHealthKey{ChannelID: 55, Model: "gpt-image-1", Path: "/v1/images/generations"}
+	for i := 0; i < channelHealthFailureThreshold; i++ {
+		health.Record(key, ChannelOutcome{StatusCode: http.StatusServiceUnavailable})
+	}
+	clock.Advance(channelHealthOpenDuration)
+	require.True(t, health.Acquire(key), "expected half-open probe after failure backoff")
+
+	for i := 0; i < channelHealthBackoffResetStreak; i++ {
+		health.Record(key, ChannelOutcome{StatusCode: http.StatusOK})
+	}
+
+	for i := 0; i < channelHealthFailureThreshold; i++ {
+		health.Record(key, ChannelOutcome{StatusCode: http.StatusServiceUnavailable})
+	}
+	clock.Advance(channelHealthOpenDuration)
+	require.True(t, health.Acquire(key),
+		"sustained status successes must reset availability-failure backoff")
+}
+
+func TestChannelHealthColdCacheSuccessPreservesSlowEvidence(t *testing.T) {
+	health, _ := newTestChannelHealth(t)
+	key := ChannelHealthKey{ChannelID: 54, Model: "gpt-5.6-sol", Path: "/v1/responses"}
+	slow := channelHealthSlowLatency() + time.Second
+
+	health.Record(key, ChannelOutcome{StatusCode: http.StatusOK, Latency: slow})
+	health.Record(key, ChannelOutcome{
+		StatusCode:      http.StatusOK,
+		Latency:         30 * time.Second,
+		LatencyObserved: true,
+		ColdCacheStart:  true,
+	})
+	health.Record(key, ChannelOutcome{StatusCode: http.StatusOK, Latency: slow})
+
+	require.True(t, health.shouldDemotePriority(key),
+		"a cold-cache success is unscored and must not masquerade as fast recovery")
 }
 
 func TestChannelHealthCountsOverloadStatuses(t *testing.T) {
