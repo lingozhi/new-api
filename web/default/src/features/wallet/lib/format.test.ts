@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { calculatePresetPricing } from './format'
+import { calculatePresetPricing, getTopUpDisplayValue } from './format'
 
 describe('calculatePresetPricing', () => {
   it('uses CNY presets as both the displayed and payable amount', () => {
@@ -34,5 +34,10 @@ describe('calculatePresetPricing', () => {
 
     assert.equal(pricing.displayValue, 73)
     assert.equal(pricing.actualPrice, 73)
+  })
+
+  it('does not convert a CNY amount again in payment confirmation', () => {
+    assert.equal(getTopUpDisplayValue(10, 7.3, 'CNY'), 10)
+    assert.equal(getTopUpDisplayValue(10, 7.3, 'USD'), 73)
   })
 })

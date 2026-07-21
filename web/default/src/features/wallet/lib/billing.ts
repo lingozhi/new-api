@@ -17,6 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { StatusBadgeProps } from '@/components/status-badge'
+import {
+  formatCurrencyFromUSD,
+  formatLocalCurrencyAmount,
+} from '@/lib/currency'
 import { formatNumber, formatTimestampToDate } from '@/lib/format'
 
 import type { TopupStatus } from '../types'
@@ -84,6 +88,33 @@ export function formatProviderPaymentAmount(
   const currency = providerCurrency?.trim().toUpperCase()
   if (currency !== 'CNY' && currency !== 'USD') return amount
   return `${currency} ${amount}`
+}
+
+export function formatTopUpRecordAmount(
+  amount: number,
+  quotaAmount?: number,
+  amountCurrency?: string,
+  providerCurrency?: string
+): string {
+  const snapshotCurrency = amountCurrency || providerCurrency
+  if (quotaAmount && quotaAmount > 0 && snapshotCurrency) {
+    return formatProviderPaymentAmount(amount, snapshotCurrency)
+  }
+  return formatCurrencyFromUSD(amount, {
+    digitsLarge: 2,
+    digitsSmall: 2,
+    abbreviate: false,
+  })
+}
+
+export function formatCheckoutPaymentAmount(
+  amount: number,
+  providerCurrency?: string
+): string {
+  if (providerCurrency) {
+    return formatProviderPaymentAmount(amount, providerCurrency)
+  }
+  return formatLocalCurrencyAmount(amount)
 }
 
 /**

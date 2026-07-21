@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -16,6 +17,7 @@ type TopUp struct {
 	UserId              int     `json:"user_id" gorm:"index"`
 	Amount              int64   `json:"amount"`
 	QuotaAmount         int64   `json:"quota_amount"`
+	AmountCurrency      string  `json:"amount_currency" gorm:"type:varchar(8);default:''"`
 	Money               float64 `json:"money"`
 	TradeNo             string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod       string  `json:"payment_method" gorm:"type:varchar(50)"`
@@ -50,6 +52,46 @@ var (
 	ErrTopUpNotFound         = errors.New("topup not found")
 	ErrTopUpStatusInvalid    = errors.New("topup status invalid")
 )
+
+type TopUpSettlement struct {
+	Amount           string
+	Currency         string
+	PaymentRequestID string
+}
+
+func validateTopUpSettlement(topUp *TopUp, settlement TopUpSettlement, requireIdentity bool) error {
+	actualAmount, err := decimal.NewFromString(strings.TrimSpace(settlement.Amount))
+	if err != nil {
+		return errors.New("支付回调金额无效")
+	}
+	expectedAmount := decimal.NewFromFloat(topUp.Money).Round(2)
+	if !actualAmount.Round(2).Equal(expectedAmount) {
+		return fmt.Errorf("支付回调金额不匹配: expected=%s actual=%s", expectedAmount.StringFixed(2), actualAmount.String())
+	}
+	if !requireIdentity {
+		return nil
+	}
+	if settlement.PaymentRequestID != topUp.TradeNo {
+		return errors.New("支付请求标识不匹配")
+	}
+	expectedCurrency := strings.ToUpper(strings.TrimSpace(topUp.ProviderCurrency))
+	actualCurrency := strings.ToUpper(strings.TrimSpace(settlement.Currency))
+	if expectedCurrency == "" {
+		if len(actualCurrency) != 3 {
+			return fmt.Errorf("支付回调币种无效: actual=%q", actualCurrency)
+		}
+		for _, char := range actualCurrency {
+			if char < 'A' || char > 'Z' {
+				return fmt.Errorf("支付回调币种无效: actual=%q", actualCurrency)
+			}
+		}
+		return nil
+	}
+	if actualCurrency != expectedCurrency {
+		return fmt.Errorf("支付回调币种不匹配: expected=%q actual=%q", expectedCurrency, actualCurrency)
+	}
+	return nil
+}
 
 func (topUp *TopUp) Insert() error {
 	var err error
@@ -99,8 +141,8 @@ func getTopUpQuotaToCredit(topUp *TopUp) (int, error) {
 	if topUp == nil {
 		return 0, errors.New("充值订单不存在")
 	}
-	if topUp.QuotaAmount > 0 {
-		if topUp.QuotaAmount > int64(common.MaxQuota) {
+	if topUp.QuotaAmount != 0 {
+		if topUp.QuotaAmount < 0 || topUp.QuotaAmount > int64(common.MaxQuota) {
 			return 0, errors.New("无效的充值额度")
 		}
 		return int(topUp.QuotaAmount), nil
@@ -239,7 +281,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 // RechargeEpay atomically completes an Epay order and records its durable
 // wallet credit claim. The claim is processed after commit and remains in the
 // outbox when Redis or quota headroom is temporarily unavailable.
-func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) error {
+func RechargeEpay(tradeNo string, actualPaymentMethod string, settlement TopUpSettlement, callerIp string) error {
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -264,6 +306,9 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) e
 		}
 		if topUp.Status != common.TopUpStatusPending {
 			return errors.New("充值订单状态错误")
+		}
+		if err := validateTopUpSettlement(topUp, settlement, false); err != nil {
+			return err
 		}
 
 		var quotaErr error
@@ -600,7 +645,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	return nil
 }
 
-func RechargeWaffo(tradeNo string, callerIp string) (err error) {
+func RechargeWaffo(tradeNo string, settlement TopUpSettlement, callerIp string) (err error) {
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -626,6 +671,9 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 		}
 		if topUp.Status != common.TopUpStatusPending {
 			return errors.New("充值订单状态错误")
+		}
+		if err := validateTopUpSettlement(topUp, settlement, true); err != nil {
+			return err
 		}
 
 		var quotaErr error

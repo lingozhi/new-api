@@ -112,6 +112,7 @@ func TestTopUpCompletionPathsUseSingleExternalCreditClaim(t *testing.T) {
 	tests := []struct {
 		name              string
 		provider          string
+		providerCurrency  string
 		amount            int64
 		money             float64
 		expected          int
@@ -139,20 +140,29 @@ func TestTopUpCompletionPathsUseSingleExternalCreditClaim(t *testing.T) {
 			},
 		},
 		{
-			name:     "waffo",
-			provider: PaymentProviderWaffo,
+			name:             "waffo",
+			provider:         PaymentProviderWaffo,
+			providerCurrency: "USD",
+			amount:           1,
+			money:            1,
+			expected:         creditPerUnit,
+			complete: func(tradeNo string) error {
+				return RechargeWaffo(tradeNo, TopUpSettlement{
+					Amount:           "1",
+					Currency:         "USD",
+					PaymentRequestID: tradeNo,
+				}, "127.0.0.1")
+			},
+		},
+		{
+			name:     "epay",
+			provider: PaymentProviderEpay,
 			amount:   1,
 			money:    1,
 			expected: creditPerUnit,
-			complete: func(tradeNo string) error { return RechargeWaffo(tradeNo, "127.0.0.1") },
-		},
-		{
-			name:              "epay",
-			provider:          PaymentProviderEpay,
-			amount:            1,
-			money:             1,
-			expected:          creditPerUnit,
-			complete:          func(tradeNo string) error { return RechargeEpay(tradeNo, "alipay", "127.0.0.1") },
+			complete: func(tradeNo string) error {
+				return RechargeEpay(tradeNo, "alipay", TopUpSettlement{Amount: "1"}, "127.0.0.1")
+			},
 			wantPaymentMethod: "alipay",
 		},
 		{
@@ -179,14 +189,15 @@ func TestTopUpCompletionPathsUseSingleExternalCreditClaim(t *testing.T) {
 			}
 			require.NoError(t, DB.Create(&user).Error)
 			topUp := TopUp{
-				UserId:          user.Id,
-				Amount:          tt.amount,
-				Money:           tt.money,
-				TradeNo:         "external-credit-topup-path-" + tt.name,
-				PaymentMethod:   tt.provider,
-				PaymentProvider: tt.provider,
-				Status:          common.TopUpStatusPending,
-				CreateTime:      common.GetTimestamp(),
+				UserId:           user.Id,
+				Amount:           tt.amount,
+				Money:            tt.money,
+				TradeNo:          "external-credit-topup-path-" + tt.name,
+				PaymentMethod:    tt.provider,
+				PaymentProvider:  tt.provider,
+				ProviderCurrency: tt.providerCurrency,
+				Status:           common.TopUpStatusPending,
+				CreateTime:       common.GetTimestamp(),
 			}
 			require.NoError(t, DB.Create(&topUp).Error)
 			require.NoError(t, tt.complete(topUp.TradeNo))
@@ -271,8 +282,9 @@ func TestRechargeEpayReplayCreditsExactlyOnce(t *testing.T) {
 	}
 	require.NoError(t, DB.Create(&topUp).Error)
 
-	require.NoError(t, RechargeEpay(topUp.TradeNo, "alipay", "127.0.0.1"))
-	require.NoError(t, RechargeEpay(topUp.TradeNo, "alipay", "127.0.0.1"))
+	settlement := TopUpSettlement{Amount: "1"}
+	require.NoError(t, RechargeEpay(topUp.TradeNo, "alipay", settlement, "127.0.0.1"))
+	require.NoError(t, RechargeEpay(topUp.TradeNo, "alipay", settlement, "127.0.0.1"))
 
 	credit := common.QuotaFromFloat(common.QuotaPerUnit)
 	var storedUser User
@@ -349,7 +361,7 @@ func TestRechargeEpayRejectsMismatchedProvider(t *testing.T) {
 	}
 	require.NoError(t, DB.Create(&topUp).Error)
 
-	require.ErrorIs(t, RechargeEpay(topUp.TradeNo, "alipay", "127.0.0.1"), ErrPaymentMethodMismatch)
+	require.ErrorIs(t, RechargeEpay(topUp.TradeNo, "alipay", TopUpSettlement{Amount: "1"}, "127.0.0.1"), ErrPaymentMethodMismatch)
 	storedTopUp := GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, storedTopUp)
 	assert.Equal(t, common.TopUpStatusPending, storedTopUp.Status)

@@ -39,11 +39,17 @@ const PaymentConfirmModal = ({
   // 新增：用于显示折扣明细
   amountNumber,
   discountRate,
+  amountCurrency,
+  paymentCurrency,
 }) => {
   const hasDiscount =
     discountRate && discountRate > 0 && discountRate < 1 && amountNumber > 0;
   const originalAmount = hasDiscount ? amountNumber / discountRate : 0;
   const discountAmount = hasDiscount ? originalAmount - amountNumber : 0;
+  const formatPaymentValue = (value) =>
+    paymentCurrency
+      ? `${paymentCurrency} ${value.toFixed(2)}`
+      : `${value.toFixed(2)} ${t('元')}`;
   return (
     <Modal
       title={
@@ -68,7 +74,9 @@ const PaymentConfirmModal = ({
                 {t('充值数量')}：
               </Text>
               <Text className='text-slate-900 dark:text-slate-100'>
-                {renderQuotaWithAmount(topUpCount)}
+                {amountCurrency === 'CNY'
+                  ? `¥${Number(topUpCount).toFixed(2)}`
+                  : renderQuotaWithAmount(topUpCount)}
               </Text>
             </div>
             <div className='flex justify-between items-center'>
@@ -97,7 +105,7 @@ const PaymentConfirmModal = ({
                     {t('原价')}：
                   </Text>
                   <Text delete className='text-slate-500 dark:text-slate-400'>
-                    {`${originalAmount.toFixed(2)} ${t('元')}`}
+                    {formatPaymentValue(originalAmount)}
                   </Text>
                 </div>
                 <div className='flex justify-between items-center'>
@@ -105,7 +113,7 @@ const PaymentConfirmModal = ({
                     {t('优惠')}：
                   </Text>
                   <Text className='text-emerald-600 dark:text-emerald-400'>
-                    {`- ${discountAmount.toFixed(2)} ${t('元')}`}
+                    {`- ${formatPaymentValue(discountAmount)}`}
                   </Text>
                 </div>
               </>

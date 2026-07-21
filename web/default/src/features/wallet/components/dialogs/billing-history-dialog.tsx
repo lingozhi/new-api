@@ -45,11 +45,11 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
-import { formatCurrencyFromUSD, formatQuotaWithCurrency } from '@/lib/currency'
 
 import { useBillingHistory } from '../../hooks/use-billing-history'
 import {
   formatProviderPaymentAmount,
+  formatTopUpRecordAmount,
   getStatusConfig,
   getPaymentMethodName,
   formatTimestamp,
@@ -254,17 +254,12 @@ export function BillingHistoryDialog({
                             {t('Amount')}
                           </Label>
                           <div className='text-sm font-semibold'>
-                            {record.quota_amount && record.quota_amount > 0
-                              ? formatQuotaWithCurrency(record.quota_amount, {
-                                  digitsLarge: 2,
-                                  digitsSmall: 2,
-                                  abbreviate: false,
-                                })
-                              : formatCurrencyFromUSD(record.amount, {
-                                  digitsLarge: 2,
-                                  digitsSmall: 2,
-                                  abbreviate: false,
-                                })}
+                            {formatTopUpRecordAmount(
+                              record.amount,
+                              record.quota_amount,
+                              record.amount_currency,
+                              record.provider_currency
+                            )}
                           </div>
                         </div>
                         <div className='space-y-1'>

@@ -20,6 +20,14 @@ func isStripeTopUpEnabled() bool {
 		strings.TrimSpace(setting.StripePriceId) != ""
 }
 
+func isStripeTopUpAvailable() bool {
+	return isStripeTopUpEnabled() && !operation_setting.UseCNYTopUpAmounts()
+}
+
+func isStripeSubscriptionAvailable() bool {
+	return isStripeTopUpEnabled()
+}
+
 func isStripeWebhookConfigured() bool {
 	return strings.TrimSpace(setting.StripeWebhookSecret) != ""
 }

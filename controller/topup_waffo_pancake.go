@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -52,13 +53,7 @@ func RequestWaffoPancakeAmount(c *gin.Context) {
 }
 
 func validateWaffoPancakeTopUpAmount(amount int64) error {
-	if amount < int64(setting.WaffoPancakeMinTopUp) {
-		return fmt.Errorf("充值数量不能小于 %d", setting.WaffoPancakeMinTopUp)
-	}
-	if amount > maxOnlineTopUpAmount {
-		return fmt.Errorf("充值数量不能大于 %d", maxOnlineTopUpAmount)
-	}
-	return nil
+	return validateTopUpAmount(amount, int64(setting.WaffoPancakeMinTopUp))
 }
 
 func getWaffoPancakePayMoney(amount int64, group string) float64 {
@@ -76,6 +71,11 @@ func getWaffoPancakePayMoney(amount int64, group string) float64 {
 	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok && ds > 0 {
 		discount = ds
 	}
+	if math.IsNaN(topupGroupRatio) || math.IsInf(topupGroupRatio, 0) ||
+		math.IsNaN(discount) || math.IsInf(discount, 0) ||
+		math.IsNaN(setting.WaffoPancakeUnitPrice) || math.IsInf(setting.WaffoPancakeUnitPrice, 0) {
+		return 0
+	}
 
 	payMoney := dAmount.
 		Mul(decimal.NewFromFloat(setting.WaffoPancakeUnitPrice)).
@@ -92,6 +92,11 @@ func getWaffoPancakePayMoney(amount int64, group string) float64 {
 }
 
 func getWaffoPancakeCheckoutAmount(usdAmount float64) float64 {
+	if math.IsNaN(usdAmount) || math.IsInf(usdAmount, 0) ||
+		math.IsNaN(operation_setting.USDExchangeRate) ||
+		math.IsInf(operation_setting.USDExchangeRate, 0) {
+		return 0
+	}
 	amount := decimal.NewFromFloat(usdAmount)
 	if getWaffoPancakeCheckoutCurrency() != "CNY" {
 		return amount.Round(2).InexactFloat64()
@@ -508,6 +513,7 @@ func RequestWaffoPancakePay(c *gin.Context) {
 		UserId:              id,
 		Amount:              normalizeWaffoPancakeTopUpAmount(req.Amount),
 		QuotaAmount:         int64(quotaAmount),
+		AmountCurrency:      operation_setting.GetTopUpAmountCurrency(),
 		Money:               payMoney,
 		TradeNo:             tradeNo,
 		PaymentMethod:       model.PaymentMethodWaffoPancake,

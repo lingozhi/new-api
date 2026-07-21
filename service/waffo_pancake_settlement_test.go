@@ -331,8 +331,9 @@ func TestResolveWaffoPancakeTradeNoAllowsLegacyOrderWithoutProviderSnapshot(t *t
 	require.ErrorContains(t, err, "environment mismatch")
 
 	event = validWaffoPancakeSettlementEvent(tradeNo, 303)
-	_, err = ResolveWaffoPancakeTradeNo(event)
-	require.ErrorContains(t, err, "currency mismatch")
+	resolved, err = ResolveWaffoPancakeTradeNo(event)
+	require.NoError(t, err)
+	assert.Equal(t, tradeNo, resolved)
 }
 
 func TestResolveWaffoPancakeTradeNoRejectsLegacyOrderWithoutTrustedBinding(t *testing.T) {

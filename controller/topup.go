@@ -3,6 +3,7 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -28,13 +29,19 @@ func GetTopUpInfo(c *gin.Context) {
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
 
 	// 获取支付方式
-	payMethods := operation_setting.PayMethods
+	payMethods := append([]map[string]string(nil), operation_setting.PayMethods...)
 	if !complianceConfirmed {
 		payMethods = []map[string]string{}
 	}
+	if operation_setting.UseCNYTopUpAmounts() {
+		payMethods = lo.Filter(payMethods, func(method map[string]string, _ int) bool {
+			return method["type"] != model.PaymentMethodStripe
+		})
+	}
 
 	// 如果启用了 Stripe 支付，添加到支付方法列表
-	if isStripeTopUpEnabled() {
+	stripeTopUpAvailable := isStripeTopUpAvailable()
+	if stripeTopUpAvailable {
 		// 检查是否已经包含 Stripe
 		hasStripe := false
 		for _, method := range payMethods {
@@ -100,7 +107,8 @@ func GetTopUpInfo(c *gin.Context) {
 
 	data := gin.H{
 		"enable_online_topup":              isEpayTopUpEnabled(),
-		"enable_stripe_topup":              isStripeTopUpEnabled(),
+		"enable_stripe_topup":              stripeTopUpAvailable,
+		"enable_stripe_subscription":       isStripeSubscriptionAvailable(),
 		"enable_creem_topup":               isCreemTopUpEnabled(),
 		"enable_waffo_topup":               enableWaffo,
 		"enable_waffo_pancake_topup":       enableWaffoPancake,
@@ -118,6 +126,7 @@ func GetTopUpInfo(c *gin.Context) {
 		"min_topup":               operation_setting.MinTopUp,
 		"stripe_min_topup":        setting.StripeMinTopUp,
 		"waffo_min_topup":         setting.WaffoMinTopUp,
+		"waffo_currency":          getWaffoCurrency(),
 		"waffo_pancake_min_topup": setting.WaffoPancakeMinTopUp,
 		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
 		"amount_currency":         operation_setting.GetTopUpAmountCurrency(),
@@ -163,17 +172,22 @@ func getPayMoney(amount int64, group string) float64 {
 		topupGroupRatio = 1
 	}
 
-	dTopupGroupRatio := decimal.NewFromFloat(topupGroupRatio)
-	dPrice := decimal.NewFromFloat(operation_setting.Price)
-	if operation_setting.UseCNYTopUpAmounts() {
-		dPrice = decimal.NewFromInt(1)
-	}
 	// apply optional preset discount by the original request amount (if configured), default 1.0
 	discount := 1.0
 	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok {
 		if ds > 0 {
 			discount = ds
 		}
+	}
+	if math.IsNaN(topupGroupRatio) || math.IsInf(topupGroupRatio, 0) ||
+		math.IsNaN(operation_setting.Price) || math.IsInf(operation_setting.Price, 0) ||
+		math.IsNaN(discount) || math.IsInf(discount, 0) {
+		return 0
+	}
+	dTopupGroupRatio := decimal.NewFromFloat(topupGroupRatio)
+	dPrice := decimal.NewFromFloat(operation_setting.Price)
+	if operation_setting.UseCNYTopUpAmounts() {
+		dPrice = decimal.NewFromInt(1)
 	}
 	dDiscount := decimal.NewFromFloat(discount)
 
@@ -186,7 +200,9 @@ func calculateTopUpQuotaAmount(amount int64) (int, error) {
 	if !operation_setting.UseCNYTopUpAmounts() {
 		return 0, nil
 	}
-	if amount <= 0 || operation_setting.USDExchangeRate <= 0 {
+	if amount <= 0 || operation_setting.USDExchangeRate <= 0 ||
+		math.IsNaN(operation_setting.USDExchangeRate) ||
+		math.IsInf(operation_setting.USDExchangeRate, 0) {
 		return 0, errors.New("无效的充值额度配置")
 	}
 
@@ -202,6 +218,30 @@ func calculateTopUpQuotaAmount(amount int64) (int, error) {
 		return 0, errors.New("无效的充值额度")
 	}
 	return quota, nil
+}
+
+func validateTopUpAmount(amount, minAmount int64) error {
+	if amount < minAmount {
+		return fmt.Errorf("充值数量不能小于 %d", minAmount)
+	}
+	exceedsMaximum := amount > maxOnlineTopUpAmount
+	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
+		exceedsMaximum = decimal.NewFromInt(amount).GreaterThan(
+			decimal.NewFromInt(maxOnlineTopUpAmount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
+		)
+	}
+	if exceedsMaximum {
+		return fmt.Errorf("充值数量不能大于 %d", maxOnlineTopUpAmount)
+	}
+	if !operation_setting.UseCNYTopUpAmounts() {
+		return nil
+	}
+	for _, option := range operation_setting.GetPaymentSetting().AmountOptions {
+		if amount == int64(option) {
+			return nil
+		}
+	}
+	return errors.New("请选择已配置的固定档位")
 }
 
 func getMinTopup() int64 {
@@ -221,8 +261,8 @@ func RequestEpay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "参数错误"})
 		return
 	}
-	if req.Amount < getMinTopup() {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", getMinTopup())})
+	if err := validateTopUpAmount(req.Amount, getMinTopup()); err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
 		return
 	}
 
@@ -282,6 +322,7 @@ func RequestEpay(c *gin.Context) {
 		UserId:           id,
 		Amount:           amount,
 		QuotaAmount:      int64(quotaAmount),
+		AmountCurrency:   "",
 		Money:            payMoney,
 		TradeNo:          tradeNo,
 		PaymentMethod:    req.PaymentMethod,
@@ -291,6 +332,7 @@ func RequestEpay(c *gin.Context) {
 		Status:           common.TopUpStatusPending,
 	}
 	if operation_setting.UseCNYTopUpAmounts() {
+		topUp.AmountCurrency = operation_setting.TopUpAmountCurrencyCNY
 		topUp.ProviderCurrency = operation_setting.TopUpAmountCurrencyCNY
 	}
 	err = topUp.Insert()
@@ -406,7 +448,12 @@ func EpayNotify(c *gin.Context) {
 	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
 		LockOrder(verifyInfo.ServiceTradeNo)
 		defer UnlockOrder(verifyInfo.ServiceTradeNo)
-		if err := model.RechargeEpay(verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP()); err != nil {
+		if err := model.RechargeEpay(
+			verifyInfo.ServiceTradeNo,
+			verifyInfo.Type,
+			model.TopUpSettlement{Amount: verifyInfo.Money},
+			c.ClientIP(),
+		); err != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf(
 				"易支付 完成充值失败 trade_no=%s callback_type=%s client_ip=%s error=%q",
 				verifyInfo.ServiceTradeNo,
@@ -436,8 +483,8 @@ func RequestAmount(c *gin.Context) {
 		return
 	}
 
-	if req.Amount < getMinTopup() {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", getMinTopup())})
+	if err := validateTopUpAmount(req.Amount, getMinTopup()); err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
 		return
 	}
 	id := c.GetInt("id")

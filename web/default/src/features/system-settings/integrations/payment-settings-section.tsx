@@ -987,7 +987,7 @@ export function PaymentSettingsSection({
                     name='MinTopUp'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('Minimum top-up (USD)')}</FormLabel>
+                        <FormLabel>{t('Minimum top-up quantity')}</FormLabel>
                         <FormControl>
                           <Input
                             type='number'
@@ -996,9 +996,6 @@ export function PaymentSettingsSection({
                             {...safeNumberFieldProps(field)}
                           />
                         </FormControl>
-                        <FormDescription>
-                          {t('Smallest USD amount users can recharge (Epay)')}
-                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}

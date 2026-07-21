@@ -332,6 +332,12 @@ export function Wallet(props: WalletProps) {
         processing={processing || pancakeProcessing}
         discountRate={getDiscountRate()}
         usdExchangeRate={effectiveUsdExchangeRate}
+        amountCurrency={topupInfo?.amount_currency}
+        paymentCurrency={
+          selectedPaymentMethod?.type === 'waffo'
+            ? topupInfo?.waffo_currency
+            : undefined
+        }
       />
 
       <TransferDialog

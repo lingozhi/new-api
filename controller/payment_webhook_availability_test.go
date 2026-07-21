@@ -44,6 +44,32 @@ func TestStripeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	require.False(t, isStripeWebhookEnabled())
 }
 
+func TestStripeTopUpUnavailableForCNYTiersButWebhookRemainsEnabled(t *testing.T) {
+	confirmPaymentComplianceForTest(t)
+	originalAPISecret := setting.StripeApiSecret
+	originalWebhookSecret := setting.StripeWebhookSecret
+	originalPriceID := setting.StripePriceId
+	originalDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
+	originalAmountCurrency := operation_setting.GetPaymentSetting().AmountCurrency
+	t.Cleanup(func() {
+		setting.StripeApiSecret = originalAPISecret
+		setting.StripeWebhookSecret = originalWebhookSecret
+		setting.StripePriceId = originalPriceID
+		operation_setting.GetGeneralSetting().QuotaDisplayType = originalDisplayType
+		operation_setting.GetPaymentSetting().AmountCurrency = originalAmountCurrency
+	})
+
+	setting.StripeApiSecret = "sk_test_123"
+	setting.StripeWebhookSecret = "whsec_test"
+	setting.StripePriceId = "price_123"
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeCNY
+	operation_setting.GetPaymentSetting().AmountCurrency = operation_setting.TopUpAmountCurrencyCNY
+
+	require.False(t, isStripeTopUpAvailable())
+	require.True(t, isStripeSubscriptionAvailable())
+	require.True(t, isStripeWebhookEnabled())
+}
+
 func TestCreemWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	confirmPaymentComplianceForTest(t)
 	originalAPIKey := setting.CreemApiKey

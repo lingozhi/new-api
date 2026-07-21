@@ -346,13 +346,14 @@ func validateWaffoPancakeSettlement(event *WaffoPancakeWebhookEvent, userID int,
 		return fmt.Errorf("environment mismatch: expected=%q actual=%q", expectedEnvironment, actualMode)
 	}
 	expectedCurrency := strings.ToUpper(strings.TrimSpace(currency))
-	if expectedCurrency == "" {
-		expectedCurrency = "USD"
-		if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeCNY {
-			expectedCurrency = "CNY"
-		}
-	}
 	actualCurrency := strings.ToUpper(strings.TrimSpace(event.Data.Currency))
+	if expectedCurrency == "" {
+		if actualCurrency != operation_setting.TopUpAmountCurrencyUSD &&
+			actualCurrency != operation_setting.TopUpAmountCurrencyCNY {
+			return fmt.Errorf("unsupported legacy currency: %q", actualCurrency)
+		}
+		expectedCurrency = actualCurrency
+	}
 	if actualCurrency != expectedCurrency {
 		return fmt.Errorf("currency mismatch: expected=%q actual=%q", expectedCurrency, actualCurrency)
 	}

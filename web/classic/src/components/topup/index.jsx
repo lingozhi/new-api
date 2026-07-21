@@ -127,6 +127,7 @@ const TopUp = () => {
   const [topupInfo, setTopupInfo] = useState({
     amount_options: [],
     discount: {},
+    amount_currency: 'USD',
     enable_redemption: true,
     payment_compliance_confirmed: true,
   });
@@ -601,6 +602,12 @@ const TopUp = () => {
         setTopupInfo({
           amount_options: data.amount_options || [],
           discount: data.discount || {},
+          amount_currency: data.amount_currency || 'USD',
+          waffo_currency: data.waffo_currency || 'USD',
+          enable_stripe_subscription:
+            data.enable_stripe_subscription ??
+            data.enable_stripe_topup ??
+            false,
         });
 
         // 处理支付方式
@@ -801,6 +808,16 @@ const TopUp = () => {
   }, [statusState?.status]);
 
   const renderAmount = () => {
+    if (
+      typeof payWay === 'string' &&
+      payWay.startsWith('waffo:') &&
+      topupInfo.waffo_currency
+    ) {
+      return `${topupInfo.waffo_currency} ${amount}`;
+    }
+    if (topupInfo.amount_currency === 'CNY') {
+      return `¥${amount}`;
+    }
     return amount + ' ' + t('元');
   };
 
@@ -885,7 +902,8 @@ const TopUp = () => {
 
     // 计算实际支付金额，考虑折扣
     const discount = preset.discount || topupInfo.discount[preset.value] || 1.0;
-    const discountedAmount = preset.value * priceRatio * discount;
+    const unitPrice = topupInfo.amount_currency === 'CNY' ? 1 : priceRatio;
+    const discountedAmount = preset.value * unitPrice * discount;
     setAmount(discountedAmount);
   };
 
@@ -932,6 +950,14 @@ const TopUp = () => {
         payMethods={confirmPayMethods}
         amountNumber={amount}
         discountRate={topupInfo?.discount?.[topUpCount] || 1.0}
+        amountCurrency={topupInfo.amount_currency}
+        paymentCurrency={
+          payWay.startsWith('waffo:')
+            ? topupInfo.waffo_currency
+            : topupInfo.amount_currency === 'CNY'
+              ? 'CNY'
+              : undefined
+        }
       />
 
       {/* 充值账单模态框 */}
