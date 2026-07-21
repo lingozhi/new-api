@@ -25,6 +25,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -473,6 +474,46 @@ func ensureResponsesTerminalOutputField(streamResponse dto.ResponsesStreamRespon
 	return normalized
 }
 
+func responsesFailedUpstreamError(streamResponse dto.ResponsesStreamResponse) *types.OpenAIError {
+	merged := &types.OpenAIError{}
+	var responseErr *types.OpenAIError
+	if streamResponse.Response != nil {
+		responseErr = streamResponse.Response.GetOpenAIError()
+	}
+	for _, upstreamErr := range []*types.OpenAIError{responseErr, dto.GetOpenAIError(streamResponse.Error)} {
+		if upstreamErr == nil {
+			continue
+		}
+		if merged.Type == "" {
+			merged.Type = upstreamErr.Type
+		}
+		if (merged.Code == nil || strings.TrimSpace(fmt.Sprint(merged.Code)) == "") &&
+			upstreamErr.Code != nil && strings.TrimSpace(fmt.Sprint(upstreamErr.Code)) != "" {
+			merged.Code = upstreamErr.Code
+		}
+		if merged.Message == "" {
+			merged.Message = upstreamErr.Message
+		}
+		if merged.Param == "" {
+			merged.Param = upstreamErr.Param
+		}
+	}
+	if merged.Code == nil || strings.TrimSpace(fmt.Sprint(merged.Code)) == "" {
+		merged.Code = streamResponse.Code
+	}
+	if merged.Message == "" {
+		merged.Message = streamResponse.Message
+	}
+	if merged.Param == "" {
+		merged.Param = streamResponse.Param
+	}
+	if merged.Type == "" && merged.Message == "" && merged.Param == "" &&
+		(merged.Code == nil || strings.TrimSpace(fmt.Sprint(merged.Code)) == "") {
+		return nil
+	}
+	return merged
+}
+
 func normalizeResponsesTerminalEvent(c *gin.Context, info *relaycommon.RelayInfo, streamCtx *responsesStreamCtx, streamResponse dto.ResponsesStreamResponse, data string) (dto.ResponsesStreamResponse, string, error) {
 	switch streamResponse.Type {
 	case "response.completed", "response.failed", "response.incomplete":
@@ -504,16 +545,23 @@ func normalizeResponsesTerminalEvent(c *gin.Context, info *relaycommon.RelayInfo
 		response["status"] = "completed"
 	case "response.failed":
 		response["status"] = "failed"
+		upstreamErr := responsesFailedUpstreamError(streamResponse)
 		errorPayload, ok := response["error"].(map[string]any)
 		if !ok {
 			errorPayload = make(map[string]any)
-			if streamResponse.Response != nil {
-				if upstreamErr := streamResponse.Response.GetOpenAIError(); upstreamErr != nil {
-					errorPayload["type"] = upstreamErr.Type
-					errorPayload["code"] = upstreamErr.Code
-					errorPayload["message"] = upstreamErr.Message
-					errorPayload["param"] = upstreamErr.Param
-				}
+		}
+		if upstreamErr != nil {
+			if errorType, _ := errorPayload["type"].(string); errorType == "" && upstreamErr.Type != "" {
+				errorPayload["type"] = upstreamErr.Type
+			}
+			if code, exists := errorPayload["code"]; (!exists || code == nil || strings.TrimSpace(fmt.Sprint(code)) == "") && strings.TrimSpace(fmt.Sprint(upstreamErr.Code)) != "" {
+				errorPayload["code"] = upstreamErr.Code
+			}
+			if message, _ := errorPayload["message"].(string); message == "" && upstreamErr.Message != "" {
+				errorPayload["message"] = upstreamErr.Message
+			}
+			if param, _ := errorPayload["param"].(string); param == "" && upstreamErr.Param != "" {
+				errorPayload["param"] = upstreamErr.Param
 			}
 		}
 		if errorType, _ := errorPayload["type"].(string); errorType == "" {
@@ -541,13 +589,21 @@ func normalizeResponsesTerminalEvent(c *gin.Context, info *relaycommon.RelayInfo
 		response["created_at"] = streamCtx.resolveCreatedAt()
 	}
 	if _, ok := response["output"].([]any); !ok {
-		response["output"] = []any{}
+		if topLevelOutput, ok := payload["output"].([]any); ok {
+			response["output"] = topLevelOutput
+		} else {
+			response["output"] = []any{}
+		}
 	}
 
 	normalizedUsage := usageToResponsesPayload(streamCtx.buildUsage(info))
 	usagePayload, ok := response["usage"].(map[string]any)
 	if !ok {
-		usagePayload = make(map[string]any)
+		if topLevelUsage, ok := payload["usage"].(map[string]any); ok {
+			usagePayload = topLevelUsage
+		} else {
+			usagePayload = make(map[string]any)
+		}
 	}
 	for _, key := range []string{"input_tokens", "output_tokens", "total_tokens"} {
 		if _, ok := usagePayload[key].(float64); !ok {

@@ -152,8 +152,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			return
 		}
 
-		hasBillableFailurePayload := streamResponse.Type == "response.failed" && streamResponse.Response != nil &&
-			(streamResponse.Response.Usage != nil || len(streamResponse.Response.Output) > 0)
+		hasBillableFailurePayload := streamResponse.Type == "response.failed" &&
+			(streamResponse.Usage != nil || len(streamResponse.Output) > 0 ||
+				(streamResponse.Response != nil && (streamResponse.Response.Usage != nil || len(streamResponse.Response.Output) > 0)))
 		var normalizeErr error
 		streamResponse, data, normalizeErr = normalizeResponsesTerminalEvent(c, info, streamCtx, streamResponse, data)
 		if normalizeErr != nil {
@@ -165,11 +166,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		var upstreamErr *types.OpenAIError
 		if streamResponse.Type == "response.failed" {
 			failureErr = fmt.Errorf("upstream responses stream failed")
-			if streamResponse.Response != nil {
-				upstreamErr = streamResponse.Response.GetOpenAIError()
-				if upstreamErr != nil && upstreamErr.Message != "" {
-					failureErr = fmt.Errorf("upstream responses stream failed: %s", upstreamErr.Message)
-				}
+			upstreamErr = responsesFailedUpstreamError(streamResponse)
+			if upstreamErr != nil && upstreamErr.Message != "" {
+				failureErr = fmt.Errorf("upstream responses stream failed: %s", upstreamErr.Message)
 			}
 			if IsResponsesChannelFailure(upstreamErr) && !streamWriter.ProtocolStarted() && !hasBillableFailurePayload && service.IsImmediateStreamCapacityError(failureErr.Error()) {
 				preCommitCapacityErr = newResponsesPreCommitCapacityError(upstreamErr, failureErr)
