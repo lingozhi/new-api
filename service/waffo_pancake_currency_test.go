@@ -141,3 +141,37 @@ func TestCreateWaffoPancakePrimaryProduct_CreatesUSDAndCNYPrices(t *testing.T) {
 	require.Equal(t, "1.00", createPayload.Prices["CNY"].Amount)
 	require.Equal(t, "saas", createPayload.Prices["CNY"].TaxCategory)
 }
+
+func TestCreateWaffoPancakePrimaryProduct_SkipsPublishForProductionVersion(t *testing.T) {
+	originalTransport := http.DefaultClient.Transport
+	t.Cleanup(func() {
+		http.DefaultClient.Transport = originalTransport
+	})
+
+	publishCalls := 0
+	http.DefaultClient.Transport = waffoPancakeRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/v1/actions/onetime-product/create-product":
+			return waffoPancakeTestResponse(`{"data":{"product":{"id":"PROD_AbCdEfGhIjKlMnOpQrStUv","storeId":"STO_AbCdEfGhIjKlMnOpQrStUv","name":"new-api-charge-product","prices":{"USD":{"amount":"1.00","taxCategory":"saas"},"CNY":{"amount":"1.00","taxCategory":"saas"}},"status":"active"}}}`), nil
+		case "/v1/graphql":
+			return waffoPancakeTestResponse(`{"data":{"onetimeProductVersions":[{"isProdVersion":true}]}}`), nil
+		case "/v1/actions/onetime-product/publish-product":
+			publishCalls++
+			return waffoPancakeTestResponse(`{"data":null,"errors":[{"message":"No test version found","layer":"gateway"}]}`), nil
+		default:
+			t.Fatalf("unexpected Waffo Pancake path: %s", req.URL.Path)
+			return nil, nil
+		}
+	})
+
+	productID, err := CreateWaffoPancakePrimaryProduct(
+		context.Background(),
+		"MER_AbCdEfGhIjKlMnOpQrStUv",
+		newWaffoPancakeTestPrivateKey(t),
+		"STO_AbCdEfGhIjKlMnOpQrStUv",
+		"https://api.opwan.ai/wallet",
+	)
+	require.NoError(t, err)
+	require.Equal(t, "PROD_AbCdEfGhIjKlMnOpQrStUv", productID)
+	require.Zero(t, publishCalls)
+}
