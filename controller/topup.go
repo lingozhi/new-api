@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -119,6 +120,7 @@ func GetTopUpInfo(c *gin.Context) {
 		"waffo_min_topup":         setting.WaffoMinTopUp,
 		"waffo_pancake_min_topup": setting.WaffoPancakeMinTopUp,
 		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
+		"amount_currency":         operation_setting.GetTopUpAmountCurrency(),
 		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
 		"topup_link":              common.TopUpLink,
 	}
@@ -150,8 +152,7 @@ func GetEpayClient() *epay.Client {
 
 func getPayMoney(amount int64, group string) float64 {
 	dAmount := decimal.NewFromInt(amount)
-	// 充值金额以“展示类型”为准：
-	// - USD/CNY: 前端传 amount 为金额单位；TOKENS: 前端传 tokens，需要换成 USD 金额
+	// TOKENS 模式传入额度值；其他模式传入配置的充值档位金额。
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
 		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 		dAmount = dAmount.Div(dQuotaPerUnit)
@@ -164,6 +165,9 @@ func getPayMoney(amount int64, group string) float64 {
 
 	dTopupGroupRatio := decimal.NewFromFloat(topupGroupRatio)
 	dPrice := decimal.NewFromFloat(operation_setting.Price)
+	if operation_setting.UseCNYTopUpAmounts() {
+		dPrice = decimal.NewFromInt(1)
+	}
 	// apply optional preset discount by the original request amount (if configured), default 1.0
 	discount := 1.0
 	if ds, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok {
@@ -176,6 +180,28 @@ func getPayMoney(amount int64, group string) float64 {
 	payMoney := dAmount.Mul(dPrice).Mul(dTopupGroupRatio).Mul(dDiscount)
 
 	return payMoney.InexactFloat64()
+}
+
+func calculateTopUpQuotaAmount(amount int64) (int, error) {
+	if !operation_setting.UseCNYTopUpAmounts() {
+		return 0, nil
+	}
+	if amount <= 0 || operation_setting.USDExchangeRate <= 0 {
+		return 0, errors.New("无效的充值额度配置")
+	}
+
+	quota, clamp := common.QuotaFromDecimalChecked(
+		decimal.NewFromInt(amount).
+			Div(decimal.NewFromFloat(operation_setting.USDExchangeRate)).
+			Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
+	)
+	if clamp != nil {
+		return 0, clamp
+	}
+	if quota <= 0 {
+		return 0, errors.New("无效的充值额度")
+	}
+	return quota, nil
 }
 
 func getMinTopup() int64 {
@@ -209,6 +235,11 @@ func RequestEpay(c *gin.Context) {
 	payMoney := getPayMoney(req.Amount, group)
 	if payMoney < 0.01 {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值金额过低"})
+		return
+	}
+	quotaAmount, err := calculateTopUpQuotaAmount(req.Amount)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值配置无效"})
 		return
 	}
 
@@ -248,14 +279,19 @@ func RequestEpay(c *gin.Context) {
 		amount = dAmount.Div(dQuotaPerUnit).IntPart()
 	}
 	topUp := &model.TopUp{
-		UserId:          id,
-		Amount:          amount,
-		Money:           payMoney,
-		TradeNo:         tradeNo,
-		PaymentMethod:   req.PaymentMethod,
-		PaymentProvider: model.PaymentProviderEpay,
-		CreateTime:      time.Now().Unix(),
-		Status:          common.TopUpStatusPending,
+		UserId:           id,
+		Amount:           amount,
+		QuotaAmount:      int64(quotaAmount),
+		Money:            payMoney,
+		TradeNo:          tradeNo,
+		PaymentMethod:    req.PaymentMethod,
+		PaymentProvider:  model.PaymentProviderEpay,
+		ProviderCurrency: "",
+		CreateTime:       time.Now().Unix(),
+		Status:           common.TopUpStatusPending,
+	}
+	if operation_setting.UseCNYTopUpAmounts() {
+		topUp.ProviderCurrency = operation_setting.TopUpAmountCurrencyCNY
 	}
 	err = topUp.Insert()
 	if err != nil {

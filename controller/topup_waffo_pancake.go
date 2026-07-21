@@ -77,12 +77,18 @@ func getWaffoPancakePayMoney(amount int64, group string) float64 {
 		discount = ds
 	}
 
-	usdPayMoney := dAmount.
+	payMoney := dAmount.
 		Mul(decimal.NewFromFloat(setting.WaffoPancakeUnitPrice)).
 		Mul(decimal.NewFromFloat(topupGroupRatio)).
 		Mul(decimal.NewFromFloat(discount))
+	if operation_setting.UseCNYTopUpAmounts() {
+		payMoney = dAmount.
+			Mul(decimal.NewFromFloat(topupGroupRatio)).
+			Mul(decimal.NewFromFloat(discount))
+		return payMoney.Round(2).InexactFloat64()
+	}
 
-	return getWaffoPancakeCheckoutAmount(usdPayMoney.InexactFloat64())
+	return getWaffoPancakeCheckoutAmount(payMoney.InexactFloat64())
 }
 
 func getWaffoPancakeCheckoutAmount(usdAmount float64) float64 {
@@ -467,6 +473,11 @@ func RequestWaffoPancakePay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值金额过低"})
 		return
 	}
+	quotaAmount, err := calculateTopUpQuotaAmount(req.Amount)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值配置无效"})
+		return
+	}
 
 	storeID := strings.TrimSpace(setting.WaffoPancakeStoreID)
 	productID := strings.TrimSpace(setting.WaffoPancakeProductID)
@@ -496,6 +507,7 @@ func RequestWaffoPancakePay(c *gin.Context) {
 	topUp := &model.TopUp{
 		UserId:              id,
 		Amount:              normalizeWaffoPancakeTopUpAmount(req.Amount),
+		QuotaAmount:         int64(quotaAmount),
 		Money:               payMoney,
 		TradeNo:             tradeNo,
 		PaymentMethod:       model.PaymentMethodWaffoPancake,

@@ -132,6 +132,8 @@ export interface TopupInfo {
   stripe_min_topup: number
   /** Preset amount options */
   amount_options: number[]
+  /** Currency used by preset amount options */
+  amount_currency?: 'USD' | 'CNY'
   /** Discount rates by amount */
   discount: Record<number, number>
   /** Optional topup link for purchasing codes */
@@ -259,6 +261,8 @@ export interface TopupRecord {
   user_id: number
   /** Topup amount (quota) */
   amount: number
+  /** Exact internal quota credited for this order */
+  quota_amount?: number
   /** Payment amount (actual money paid) */
   money: number
   /** Provider currency snapshot for new payment records */

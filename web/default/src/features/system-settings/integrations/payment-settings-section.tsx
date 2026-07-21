@@ -43,6 +43,13 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
@@ -133,6 +140,7 @@ const paymentSchema = z.object({
       })
     }
   }),
+  AmountCurrency: z.enum(['USD', 'CNY']),
   AmountDiscount: z.string().superRefine((value, ctx) => {
     const error = getJsonError(
       value,
@@ -437,6 +445,7 @@ export function PaymentSettingsSection({
       CustomCallbackAddress: removeTrailingSlash(values.CustomCallbackAddress),
       PayMethods: values.PayMethods.trim(),
       AmountOptions: values.AmountOptions.trim(),
+      AmountCurrency: values.AmountCurrency,
       AmountDiscount: values.AmountDiscount.trim(),
       StripeApiSecret: values.StripeApiSecret.trim(),
       StripeWebhookSecret: values.StripeWebhookSecret.trim(),
@@ -482,6 +491,7 @@ export function PaymentSettingsSection({
       ),
       PayMethods: initialRef.current.PayMethods.trim(),
       AmountOptions: initialRef.current.AmountOptions.trim(),
+      AmountCurrency: initialRef.current.AmountCurrency,
       AmountDiscount: initialRef.current.AmountDiscount.trim(),
       StripeApiSecret: initialRef.current.StripeApiSecret.trim(),
       StripeWebhookSecret: initialRef.current.StripeWebhookSecret.trim(),
@@ -562,6 +572,13 @@ export function PaymentSettingsSection({
       updates.push({
         key: 'payment_setting.amount_options',
         value: sanitized.AmountOptions,
+      })
+    }
+
+    if (sanitized.AmountCurrency !== initial.AmountCurrency) {
+      updates.push({
+        key: 'payment_setting.amount_currency',
+        value: sanitized.AmountCurrency,
       })
     }
 
@@ -1040,6 +1057,34 @@ export function PaymentSettingsSection({
                         {t(
                           'Configured as PayMethods JSON. The type value decides which payment flow is used: stripe for Stripe, waffo_pancake for Waffo Pancake, and other values are sent to Epay as the type parameter.'
                         )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name='AmountCurrency'
+                  render={({ field }) => (
+                    <FormItem className='max-w-xs'>
+                      <FormLabel>{t('Currency')}</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value='USD'>{t('USD')}</SelectItem>
+                          <SelectItem value='CNY'>{t('CNY')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        {t('Preset recharge amounts displayed to users')}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

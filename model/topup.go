@@ -15,6 +15,7 @@ type TopUp struct {
 	Id                  int     `json:"id"`
 	UserId              int     `json:"user_id" gorm:"index"`
 	Amount              int64   `json:"amount"`
+	QuotaAmount         int64   `json:"quota_amount"`
 	Money               float64 `json:"money"`
 	TradeNo             string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod       string  `json:"payment_method" gorm:"type:varchar(50)"`
@@ -92,6 +93,29 @@ func FindTopUpByTradeNo(tradeNo string) (*TopUp, error) {
 		return nil, err
 	}
 	return &topUp, nil
+}
+
+func getTopUpQuotaToCredit(topUp *TopUp) (int, error) {
+	if topUp == nil {
+		return 0, errors.New("充值订单不存在")
+	}
+	if topUp.QuotaAmount > 0 {
+		if topUp.QuotaAmount > int64(common.MaxQuota) {
+			return 0, errors.New("无效的充值额度")
+		}
+		return int(topUp.QuotaAmount), nil
+	}
+
+	quota, clamp := common.QuotaFromDecimalChecked(
+		decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
+	)
+	if clamp != nil {
+		return 0, clamp
+	}
+	if quota <= 0 {
+		return 0, errors.New("无效的充值额度")
+	}
+	return quota, nil
 }
 
 func enqueueTopUpCreditTx(tx *gorm.DB, topUp *TopUp, quota int) (*BillingAdjustmentOutbox, error) {
@@ -242,13 +266,10 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) e
 			return errors.New("充值订单状态错误")
 		}
 
-		var clamp *common.QuotaClamp
-		quotaToAdd, clamp = common.QuotaFromDecimalChecked(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
-		if clamp != nil {
-			return clamp
-		}
-		if quotaToAdd <= 0 {
-			return errors.New("无效的充值额度")
+		var quotaErr error
+		quotaToAdd, quotaErr = getTopUpQuotaToCredit(topUp)
+		if quotaErr != nil {
+			return quotaErr
 		}
 
 		if actualPaymentMethod != "" {
@@ -466,20 +487,25 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return errors.New("订单状态不是待支付，无法补单")
 		}
 
-		// 计算应充值额度：
-		// - Stripe 订单：Money 代表经分组倍率换算后的美元数量，直接 * QuotaPerUnit
-		// - 其他订单（如易支付）：Amount 为美元数量，* QuotaPerUnit
-		if topUp.PaymentProvider == PaymentProviderStripe {
+		// New orders snapshot quota at creation. Legacy orders retain their
+		// provider-specific calculation for backward compatibility.
+		if topUp.QuotaAmount > 0 {
+			var quotaErr error
+			quotaToAdd, quotaErr = getTopUpQuotaToCredit(topUp)
+			if quotaErr != nil {
+				return quotaErr
+			}
+		} else if topUp.PaymentProvider == PaymentProviderStripe {
 			var quotaErr error
 			quotaToAdd, quotaErr = common.QuotaFromFloatStrict(topUp.Money * common.QuotaPerUnit)
 			if quotaErr != nil {
 				return quotaErr
 			}
 		} else {
-			var clamp *common.QuotaClamp
-			quotaToAdd, clamp = common.QuotaFromDecimalChecked(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
-			if clamp != nil {
-				return clamp
+			var quotaErr error
+			quotaToAdd, quotaErr = getTopUpQuotaToCredit(topUp)
+			if quotaErr != nil {
+				return quotaErr
 			}
 		}
 		if quotaToAdd <= 0 {
@@ -602,13 +628,10 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return errors.New("充值订单状态错误")
 		}
 
-		var clamp *common.QuotaClamp
-		quotaToAdd, clamp = common.QuotaFromDecimalChecked(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
-		if clamp != nil {
-			return clamp
-		}
-		if quotaToAdd <= 0 {
-			return errors.New("无效的充值额度")
+		var quotaErr error
+		quotaToAdd, quotaErr = getTopUpQuotaToCredit(topUp)
+		if quotaErr != nil {
+			return quotaErr
 		}
 
 		topUp.CompleteTime = common.GetTimestamp()
@@ -663,13 +686,10 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return errors.New("充值订单状态错误")
 		}
 
-		var clamp *common.QuotaClamp
-		quotaToAdd, clamp = common.QuotaFromDecimalChecked(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
-		if clamp != nil {
-			return clamp
-		}
-		if quotaToAdd <= 0 {
-			return errors.New("无效的充值额度")
+		var quotaErr error
+		quotaToAdd, quotaErr = getTopUpQuotaToCredit(topUp)
+		if quotaErr != nil {
+			return quotaErr
 		}
 
 		topUp.CompleteTime = common.GetTimestamp()

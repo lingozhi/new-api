@@ -211,7 +211,8 @@ export function RechargeFormCard({
                         preset.value,
                         priceRatio,
                         discount,
-                        usdExchangeRate
+                        usdExchangeRate,
+                        topupInfo?.amount_currency
                       )
                       return (
                         <Button

@@ -111,7 +111,7 @@ func TestRechargeWaffoPancakeUsesSnapshottedQuota(t *testing.T) {
 	topUp := &TopUp{
 		UserId:           102,
 		Amount:           10,
-		QuotaAmount:      684931,
+		QuotaAmount:      684932,
 		Money:            10,
 		TradeNo:          "waffo-pancake-cny-snapshot",
 		PaymentMethod:    PaymentMethodWaffoPancake,
@@ -123,7 +123,7 @@ func TestRechargeWaffoPancakeUsesSnapshottedQuota(t *testing.T) {
 	require.NoError(t, topUp.Insert())
 
 	require.NoError(t, RechargeWaffoPancake(topUp.TradeNo))
-	assert.Equal(t, 684931, getUserQuotaForPaymentGuardTest(t, 102))
+	assert.Equal(t, 684932, getUserQuotaForPaymentGuardTest(t, 102))
 }
 
 func TestUpdatePendingTopUpStatus_RejectsMismatchedPaymentProvider(t *testing.T) {

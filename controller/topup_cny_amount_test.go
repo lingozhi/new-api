@@ -52,5 +52,5 @@ func TestCNYTopUpAmountSnapshotsWalletQuota(t *testing.T) {
 	quota, err := calculateTopUpQuotaAmount(10)
 
 	require.NoError(t, err)
-	assert.Equal(t, 684931, quota)
+	assert.Equal(t, 684932, quota)
 }
