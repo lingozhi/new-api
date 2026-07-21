@@ -129,6 +129,9 @@ func isChannelAttributableError(apiErr *types.NewAPIError) bool {
 // silently returns nothing is treated as failing rather than healthy.
 func channelHealthOutcomeStatus(apiErr *types.NewAPIError, relayInfo *relaycommon.RelayInfo) (statusCode int, localError bool) {
 	if apiErr != nil {
+		if IsUpstreamRelayServiceTransientError(apiErr) {
+			return http.StatusBadGateway, false
+		}
 		statusCode := apiErr.StatusCode
 		if apiErr.UpstreamStatusCode != 0 {
 			statusCode = apiErr.UpstreamStatusCode

@@ -350,17 +350,14 @@ func (r *channelHealthRegistry) Record(key ChannelHealthKey, outcome ChannelOutc
 			entry.openWithBackoff(now, true)
 			return
 		}
-		// A success without a scored latency can prove availability, but it
-		// cannot prove recovery from a latency-open circuit. Keep that circuit
-		// half-open until a measured, non-cold TTFT arrives.
-		if latencyScored || !entry.openedBySlow {
-			entry.state = ChannelHealthClosed
-			entry.failures = nil
-			entry.slowSamples = nil
-			entry.recentOutcomes = nil
-			entry.openUntil = time.Time{}
-			entry.probeLeaseUntil = time.Time{}
-		}
+		// Any successful probe restores availability. An unscored probe still
+		// leaves latency demotion and recovery samples untouched below, so it does
+		// not masquerade as proof that a slow channel became fast.
+		entry.state = ChannelHealthClosed
+		entry.failures = nil
+		entry.recentOutcomes = nil
+		entry.openUntil = time.Time{}
+		entry.probeLeaseUntil = time.Time{}
 	}
 
 	entry.pushRecentOutcome(false)
