@@ -71,3 +71,11 @@ func TestRelayInfoTracksFirstResponsePerChannelAttempt(t *testing.T) {
 	require.Equal(t, firstRequestResponse, info.FirstResponseTime,
 		"request-level first response must remain anchored to the first attempt")
 }
+
+func TestRelayInfoBeginChannelAttemptClearsPreCommitStreamCapacityFailure(t *testing.T) {
+	info := &RelayInfo{PreCommitStreamCapacityFailure: true}
+
+	info.BeginChannelAttempt()
+
+	require.False(t, info.PreCommitStreamCapacityFailure)
+}

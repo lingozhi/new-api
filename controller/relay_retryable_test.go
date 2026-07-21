@@ -437,6 +437,41 @@ func TestUpstreamCapacityFallbackStopsAfterAttemptStreamData(t *testing.T) {
 	assert.False(t, shouldUseUpstreamCapacityFallback(newTestContext(), info, apiErr))
 }
 
+func TestUpstreamCapacityFallbackRetriesUncommittedStreamCapacityFailure(t *testing.T) {
+	apiErr := types.NewOpenAIError(
+		errors.New("We're currently experiencing high demand, which may cause temporary errors."),
+		types.ErrorCode("server_error"),
+		http.StatusServiceUnavailable,
+	)
+	info := &relaycommon.RelayInfo{
+		IsStream:                       true,
+		RelayMode:                      relayconstant.RelayModeResponses,
+		PreCommitStreamCapacityFailure: true,
+		StreamStatus:                   relaycommon.NewStreamStatus(),
+	}
+	info.StreamStatus.RecordDataReceived()
+	c := newTestContext()
+
+	assert.True(t, isFastUpstreamCapacityError(apiErr))
+	assert.False(t, relayResponseCommitted(c, info), "upstream data is not a downstream commit when the handler withheld it")
+	assert.True(t, shouldUseUpstreamCapacityFallback(c, info, apiErr))
+	assert.True(t, scheduleUpstreamCapacityFallback(c, info, &service.RetryParam{
+		Ctx:        c,
+		TokenGroup: "auto",
+		Retry:      common.GetPointer(0),
+	}, apiErr, 3*time.Second, 0, 0, time.Time{}, time.Now()), "a delayed explicit stream capacity error should still get one bounded fallback")
+
+	affinity := newTestContext()
+	affinity.Set("channel_affinity_skip_retry_on_failure", true)
+	assert.True(t, shouldRetry(affinity, apiErr, 1), "status mapping must not strand a capacity failure on an affinity channel")
+	affinityInfo := &relaycommon.RelayInfo{}
+	markAffinityColdStartForRetry(affinity, affinityInfo, apiErr)
+	assert.True(t, affinityInfo.AffinityColdStart)
+
+	c.Writer.WriteHeaderNow()
+	assert.True(t, relayResponseCommitted(c, info), "an actual downstream write must remain non-retryable")
+}
+
 func TestScheduleUpstreamCapacityFallbackIsBoundedAndRestartsAutoSelection(t *testing.T) {
 	c := newTestContext()
 	apiErr := types.NewErrorWithStatusCode(

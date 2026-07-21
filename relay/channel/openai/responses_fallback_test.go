@@ -241,6 +241,7 @@ func TestOaiResponsesStreamHandlerReturnsPreCommitCapacityFailureForRetry(t *tes
 			assert.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
 			assert.False(t, c.Writer.Written(), "a retryable first event must not commit the downstream response")
 			assert.Empty(t, recorder.Body.String())
+			assert.True(t, info.PreCommitStreamCapacityFailure)
 			assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
 		})
 	}

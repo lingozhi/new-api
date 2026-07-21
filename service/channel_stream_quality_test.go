@@ -1,12 +1,15 @@
 package service
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -91,6 +94,16 @@ func TestObserveStreamChannelQualityImmediatelyIsolatesHighDemandFailure(t *test
 	assert.Greater(t, remaining, 14*time.Minute)
 	assert.Less(t, remaining, 16*time.Minute)
 	assert.False(t, model.IsChannelCoolingFallbackAllowed(18), "high-demand cooldown must not be bypassed as fallback")
+}
+
+func TestIsImmediateStreamCapacityAPIErrorSurvivesStatusMapping(t *testing.T) {
+	err := types.NewOpenAIError(
+		errors.New("We're currently experiencing high demand, which may cause temporary errors."),
+		types.ErrorCode("server_error"),
+		http.StatusBadRequest,
+	)
+
+	assert.True(t, IsImmediateStreamCapacityAPIError(err))
 }
 
 func TestObserveStreamChannelQualityKeepsGenericFailureThreshold(t *testing.T) {
