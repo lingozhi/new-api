@@ -18,9 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+
+import { createInstance } from 'i18next'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { createInstance } from 'i18next'
 import { I18nextProvider } from 'react-i18next'
 
 import { BillingPromotionNotice } from './billing-promotion-notice'
