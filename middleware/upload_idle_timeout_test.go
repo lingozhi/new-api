@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,6 +56,31 @@ func newIdleTimeoutBody(src *deadlineReader, timeout time.Duration) *idleTimeout
 		rc:         http.NewResponseController(&deadlineWriter{d: src}),
 		timeout:    timeout,
 	}
+}
+
+func TestResponsesUploadIdleTimeoutFailsFastWithoutWeakeningOtherRoutes(t *testing.T) {
+	originalTimeout := constant.UploadIdleTimeoutSeconds
+	t.Cleanup(func() {
+		constant.UploadIdleTimeoutSeconds = originalTimeout
+	})
+
+	constant.UploadIdleTimeoutSeconds = 60
+	require.Equal(t, 10*time.Second, uploadIdleTimeoutForPath("/v1/responses"))
+	require.Equal(t, 10*time.Second, uploadIdleTimeoutForPath("/v1/responses/compact"))
+	require.Equal(t, time.Minute, uploadIdleTimeoutForPath("/v1/images/edits"))
+}
+
+func TestResponsesUploadIdleTimeoutRespectsStricterOrDisabledConfiguration(t *testing.T) {
+	originalTimeout := constant.UploadIdleTimeoutSeconds
+	t.Cleanup(func() {
+		constant.UploadIdleTimeoutSeconds = originalTimeout
+	})
+
+	constant.UploadIdleTimeoutSeconds = 5
+	require.Equal(t, 5*time.Second, uploadIdleTimeoutForPath("/v1/responses"))
+
+	constant.UploadIdleTimeoutSeconds = 0
+	require.Zero(t, uploadIdleTimeoutForPath("/v1/responses"))
 }
 
 // TestIdleTimeoutDoesNotCutAProgressingUpload is the property that makes this
