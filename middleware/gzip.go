@@ -20,12 +20,23 @@ import (
 // the client sent it, before the decompression branches below strip the header.
 const middlewareOriginalContentEncodingKey = "original_content_encoding"
 
-// uploadIdleTimeout is how long a request body may go without delivering a
-// single byte before we give up on it. Generous by default (see
-// UPLOAD_IDLE_TIMEOUT_SECONDS): a client holding the payload never pauses this
-// long, so it only catches genuine stalls. 0 waits indefinitely.
-func uploadIdleTimeout() time.Duration {
-	return time.Duration(constant.UploadIdleTimeoutSeconds) * time.Second
+// Responses payloads are JSON and normally arrive in a single short burst.
+// Waiting the general-purpose minute after a Codex upload stops only delays a
+// retry, while large file endpoints still need the more generous window.
+const responsesUploadIdleTimeoutCap = 10 * time.Second
+
+// uploadIdleTimeoutForPath is how long a request body may go without delivering
+// a single byte before we give up on it. 0 keeps the configured opt-out. A
+// stricter operator value also wins over the Responses-specific cap.
+func uploadIdleTimeoutForPath(path string) time.Duration {
+	timeout := time.Duration(constant.UploadIdleTimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		return timeout
+	}
+	if (path == "/v1/responses" || path == "/v1/responses/compact") && timeout > responsesUploadIdleTimeoutCap {
+		return responsesUploadIdleTimeoutCap
+	}
+	return timeout
 }
 
 // middlewareWireBytesKey holds the *countingBody wrapping the raw request body.
@@ -135,7 +146,7 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 		// actually have to arrive — and sits under the counter so wire_bytes
 		// still reports what did.
 		body := c.Request.Body
-		if d := uploadIdleTimeout(); d > 0 {
+		if d := uploadIdleTimeoutForPath(c.Request.URL.Path); d > 0 {
 			body = &idleTimeoutBody{
 				ReadCloser: body,
 				rc:         http.NewResponseController(c.Writer),
