@@ -72,6 +72,14 @@ export function getDiscountLabel(discount: number): string {
   return `${off}% OFF`
 }
 
+export function getTopUpDisplayValue(
+  amount: number,
+  usdExchangeRate: number,
+  amountCurrency: 'USD' | 'CNY' = 'USD'
+): number {
+  return amount * (amountCurrency === 'CNY' ? 1 : usdExchangeRate)
+}
+
 /**
  * Calculate pricing details for a preset amount
  */
@@ -79,13 +87,19 @@ export function calculatePresetPricing(
   presetValue: number,
   priceRatio: number,
   discount: number,
-  usdExchangeRate: number = 1
+  usdExchangeRate: number = 1,
+  amountCurrency: 'USD' | 'CNY' = 'USD'
 ) {
-  const originalPrice = presetValue * priceRatio
+  const isCNYAmount = amountCurrency === 'CNY'
+  const originalPrice = presetValue * (isCNYAmount ? 1 : priceRatio)
   const actualPrice = originalPrice * discount
   const savedAmount = originalPrice - actualPrice
   const hasDiscount = discount < 1.0
-  const displayValue = presetValue * usdExchangeRate
+  const displayValue = getTopUpDisplayValue(
+    presetValue,
+    usdExchangeRate,
+    amountCurrency
+  )
 
   return {
     displayValue,

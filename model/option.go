@@ -117,6 +117,7 @@ func InitOptionMap() {
 	common.OptionMap["WaffoPancakeMerchantID"] = setting.WaffoPancakeMerchantID
 	common.OptionMap["WaffoPancakePrivateKey"] = setting.WaffoPancakePrivateKey
 	common.OptionMap["WaffoPancakeReturnURL"] = setting.WaffoPancakeReturnURL
+	common.OptionMap["WaffoPancakeEnvironment"] = setting.WaffoPancakeEnvironment
 	common.OptionMap["WaffoPancakeUnitPrice"] = strconv.FormatFloat(setting.WaffoPancakeUnitPrice, 'f', -1, 64)
 	common.OptionMap["WaffoPancakeMinTopUp"] = strconv.Itoa(setting.WaffoPancakeMinTopUp)
 	common.OptionMap["WaffoPancakeStoreID"] = setting.WaffoPancakeStoreID
@@ -569,6 +570,11 @@ func updateOptionMapLocked(key string, value string) (err error) {
 		setting.WaffoPancakePrivateKey = value
 	case "WaffoPancakeReturnURL":
 		setting.WaffoPancakeReturnURL = value
+	case "WaffoPancakeEnvironment":
+		if value != "" && !setting.IsValidWaffoPancakeEnvironment(value) {
+			return fmt.Errorf("invalid Waffo Pancake environment: %q", value)
+		}
+		setting.WaffoPancakeEnvironment = value
 	case "WaffoPancakeStoreID":
 		setting.WaffoPancakeStoreID = value
 	case "WaffoPancakeProductID":

@@ -215,6 +215,397 @@ func TestOaiResponsesStreamHandlerNormalizesTopLevelErrorAsFailedTerminal(t *tes
 	assert.Equal(t, relaycommon.StreamEndReasonTerminalClientError, snapshot.EndReason)
 }
 
+func TestOaiResponsesStreamHandlerReturnsPreCommitCapacityFailureForRetry(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "top-level error",
+			body: `data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}` + "\n\n",
+		},
+		{
+			name: "failed terminal",
+			body: `data: {"type":"response.failed","response":{"id":"resp_busy","status":"failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}}}` + "\n\n",
+		},
+		{
+			name: "failed terminal top-level message",
+			body: `data: {"type":"response.failed","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}` + "\n\n",
+		},
+		{
+			name: "failed terminal top-level error",
+			body: `data: {"type":"response.failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}}` + "\n\n",
+		},
+		{
+			name: "failed terminal split response error and top-level message",
+			body: `data: {"type":"response.failed","message":"We're currently experiencing high demand, which may cause temporary errors.","response":{"error":{"code":"server_error"}}}` + "\n\n",
+		},
+		{
+			name: "failed terminal split top-level error and message",
+			body: `data: {"type":"response.failed","message":"We're currently experiencing high demand, which may cause temporary errors.","error":{"type":"server_error"}}` + "\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(tt.body))
+			c.Writer.Header().Set("X-Before-Stream", "keep")
+			resp.Header = http.Header{
+				"X-Codex-Turn-State": []string{"failed-channel-state"},
+			}
+
+			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+			require.Nil(t, usage)
+			require.NotNil(t, apiErr)
+			assert.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+			assert.True(t, types.IsPreCommitStreamCapacityError(apiErr))
+			assert.False(t, c.Writer.Written(), "a retryable first event must not commit the downstream response")
+			assert.Empty(t, recorder.Body.String())
+			assert.Equal(t, "keep", c.Writer.Header().Get("X-Before-Stream"))
+			assert.Empty(t, c.Writer.Header().Get("X-Codex-Turn-State"))
+			assert.Empty(t, c.Writer.Header().Get("Content-Type"))
+			assert.Empty(t, c.Writer.Header().Get("Transfer-Encoding"))
+			assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+		})
+	}
+}
+
+func TestOaiResponsesStreamHandlerDoesNotRetryCapacityFailureWithUsageOrOutput(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "usage",
+			body: `data: {"type":"response.failed","response":{"id":"resp_busy","status":"failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."},"usage":{"input_tokens":4,"output_tokens":1,"total_tokens":5}}}` + "\n\n",
+		},
+		{
+			name: "output",
+			body: `data: {"type":"response.failed","response":{"id":"resp_busy","status":"failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."},"output":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"partial"}]}]}}` + "\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(tt.body))
+
+			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+			require.Nil(t, apiErr)
+			require.NotNil(t, usage)
+			assert.True(t, c.Writer.Written())
+			require.Equal(t, []string{"response.failed"}, responsesTerminalEvents(t, recorder.Body.String()))
+			assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+		})
+	}
+}
+
+func TestOaiResponsesStreamHandlerPromotesTopLevelFailurePayloadBeforeForwarding(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		wantTotal     int
+		wantOutputLen int
+	}{
+		{
+			name:      "top-level usage",
+			body:      `data: {"type":"response.failed","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors.","usage":{"input_tokens":4,"output_tokens":1,"total_tokens":5}}` + "\n\n",
+			wantTotal: 5,
+		},
+		{
+			name:          "top-level output",
+			body:          `data: {"type":"response.failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."},"output":[{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"partial"}]}]}` + "\n\n",
+			wantOutputLen: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(tt.body))
+
+			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+			require.Nil(t, apiErr, "billable failure payloads must never be replayed")
+			require.NotNil(t, usage)
+			require.Equal(t, []string{"response.failed"}, responsesTerminalEvents(t, recorder.Body.String()))
+			var normalized dto.ResponsesStreamResponse
+			require.NoError(t, common.UnmarshalJsonStr(responsesEventData(t, recorder.Body.String(), "response.failed"), &normalized))
+			require.NotNil(t, normalized.Response)
+			upstreamErr := normalized.Response.GetOpenAIError()
+			require.NotNil(t, upstreamErr)
+			assert.Equal(t, "We're currently experiencing high demand, which may cause temporary errors.", upstreamErr.Message)
+			if tt.wantTotal > 0 {
+				require.NotNil(t, normalized.Response.Usage)
+				assert.Equal(t, tt.wantTotal, normalized.Response.Usage.TotalTokens)
+			}
+			assert.Len(t, normalized.Response.Output, tt.wantOutputLen)
+			assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+		})
+	}
+}
+
+func TestOaiResponsesStreamHandlerTreatsKeepaliveAsSafeCapacityFallbackBoundary(t *testing.T) {
+	body := `data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}` + "\n\n"
+	c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(body))
+	_, err := c.Writer.Write([]byte(": PING\n\n"))
+	require.NoError(t, err)
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.True(t, types.IsPreCommitStreamCapacityError(apiErr))
+	require.Equal(t, ": PING\n\n", recorder.Body.String())
+	assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+}
+
+func TestOaiResponsesStreamHandlerRetryUsesOnlySuccessfulChannelHeaders(t *testing.T) {
+	failedBody := `data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}` + "\n\n"
+	c, failedResp, info, recorder := setupResponsesTest(t, strings.NewReader(failedBody))
+	failedResp.Header = http.Header{"X-Codex-Turn-State": []string{"failed-channel-state"}}
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, failedResp)
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.True(t, types.IsPreCommitStreamCapacityError(apiErr))
+
+	successBody := `data: {"type":"response.completed","response":{"id":"resp_ok","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}` + "\n\n"
+	successResp := &http.Response{
+		Body:   io.NopCloser(strings.NewReader(successBody)),
+		Header: http.Header{"X-Codex-Turn-State": []string{"successful-channel-state"}},
+	}
+	usage, apiErr = OaiResponsesStreamHandler(c, info, successResp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	assert.Equal(t, []string{"successful-channel-state"}, c.Writer.Header().Values("X-Codex-Turn-State"))
+	assert.Equal(t, "text/event-stream", c.Writer.Header().Get("Content-Type"))
+	require.Equal(t, []string{"response.completed"}, responsesTerminalEvents(t, recorder.Body.String()))
+}
+
+func TestResponsesStreamWriterBuffersMetadataPreludeUntilProtocolOutput(t *testing.T) {
+	c, _, _, recorder := setupResponsesTest(t, strings.NewReader(""))
+	streamWriter := NewRetryableResponsesStreamWriter(c)
+
+	require.NoError(t, streamWriter.WriteData("response.created", `{"type":"response.created","response":{"id":"resp_buffered","status":"in_progress"}}`))
+	require.NoError(t, streamWriter.WriteData("response.in_progress", `{"type":"response.in_progress","response":{"id":"resp_buffered","status":"in_progress"}}`))
+	require.False(t, streamWriter.ProtocolStarted())
+	require.False(t, c.Writer.Written())
+	require.Empty(t, recorder.Body.String())
+
+	require.NoError(t, streamWriter.WriteData("response.output_text.delta", `{"type":"response.output_text.delta","delta":"hello"}`))
+	require.True(t, streamWriter.ProtocolStarted())
+	require.True(t, c.Writer.Written())
+	requireOrderedSubstrings(t, recorder.Body.String(),
+		`event: response.created`,
+		`event: response.in_progress`,
+		`event: response.output_text.delta`,
+	)
+}
+
+func TestResponsesStreamWriterDoesNotBufferBillableInProgress(t *testing.T) {
+	tests := []struct {
+		name string
+		data string
+	}{
+		{
+			name: "nested usage",
+			data: `{"type":"response.in_progress","response":{"id":"resp_usage","status":"in_progress","usage":{"input_tokens":1,"output_tokens":0,"total_tokens":1}}}`,
+		},
+		{
+			name: "nested output",
+			data: `{"type":"response.in_progress","response":{"id":"resp_output","status":"in_progress","output":[{"type":"message","id":"msg_1"}]}}`,
+		},
+		{
+			name: "top-level usage",
+			data: `{"type":"response.in_progress","usage":{"input_tokens":1,"output_tokens":0,"total_tokens":1},"response":{"id":"resp_usage","status":"in_progress"}}`,
+		},
+		{
+			name: "top-level output",
+			data: `{"type":"response.in_progress","output":[{"type":"message","id":"msg_1"}],"response":{"id":"resp_output","status":"in_progress"}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _, _, recorder := setupResponsesTest(t, strings.NewReader(""))
+			streamWriter := NewRetryableResponsesStreamWriter(c)
+
+			require.NoError(t, streamWriter.WriteData("response.in_progress", tt.data))
+			require.True(t, streamWriter.ProtocolStarted())
+			require.True(t, c.Writer.Written())
+			require.Contains(t, recorder.Body.String(), `event: response.in_progress`)
+		})
+	}
+}
+
+func TestResponsesStreamWriterBoundsMetadataPreludeBuffer(t *testing.T) {
+	c, _, _, recorder := setupResponsesTest(t, strings.NewReader(""))
+	streamWriter := NewRetryableResponsesStreamWriter(c)
+	data := `{"type":"response.in_progress","response":{"id":"resp_buffered","status":"in_progress"}}`
+
+	for range maxBufferedResponsesMetadataPreludeEvents {
+		require.NoError(t, streamWriter.WriteData("response.in_progress", data))
+	}
+	require.True(t, streamWriter.HasBufferedMetadataPrelude())
+	require.False(t, streamWriter.ProtocolStarted())
+	require.Empty(t, recorder.Body.String())
+
+	require.NoError(t, streamWriter.WriteData("response.in_progress", data))
+	require.False(t, streamWriter.HasBufferedMetadataPrelude())
+	require.True(t, streamWriter.ProtocolStarted())
+	require.Equal(t, maxBufferedResponsesMetadataPreludeEvents+1, strings.Count(recorder.Body.String(), `event: response.in_progress`))
+}
+
+func TestResponsesStreamWriterBoundsMetadataPreludeBytes(t *testing.T) {
+	c, _, _, recorder := setupResponsesTest(t, strings.NewReader(""))
+	streamWriter := NewRetryableResponsesStreamWriter(c)
+	largeInstructions := strings.Repeat("x", 1<<20)
+	data := fmt.Sprintf(`{"type":"response.created","response":{"id":"resp_large","status":"in_progress","instructions":%q}}`, largeInstructions)
+
+	require.NoError(t, streamWriter.WriteData("response.created", data))
+	require.False(t, streamWriter.HasBufferedMetadataPrelude())
+	require.True(t, streamWriter.ProtocolStarted())
+	require.Contains(t, recorder.Body.String(), `event: response.created`)
+}
+
+func TestResponsesStreamWriterBoundsCumulativeMetadataPreludeBytes(t *testing.T) {
+	c, _, _, recorder := setupResponsesTest(t, strings.NewReader(""))
+	streamWriter := NewRetryableResponsesStreamWriter(c)
+	instructions := strings.Repeat("x", 160<<10)
+	data := fmt.Sprintf(`{"type":"response.in_progress","response":{"id":"resp_large","status":"in_progress","instructions":%q}}`, instructions)
+
+	require.NoError(t, streamWriter.WriteData("response.in_progress", data))
+	require.True(t, streamWriter.HasBufferedMetadataPrelude())
+	require.False(t, streamWriter.ProtocolStarted())
+
+	require.NoError(t, streamWriter.WriteData("response.in_progress", data))
+	require.False(t, streamWriter.HasBufferedMetadataPrelude())
+	require.True(t, streamWriter.ProtocolStarted())
+	require.Equal(t, 2, strings.Count(recorder.Body.String(), `event: response.in_progress`))
+}
+
+func TestOaiResponsesStreamHandlerRetriesCapacityFailureAfterMetadataOnlyPrelude(t *testing.T) {
+	terminals := []struct {
+		name string
+		data string
+	}{
+		{
+			name: "error event",
+			data: `data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}`,
+		},
+		{
+			name: "failed response",
+			data: `data: {"type":"response.failed","response":{"id":"resp_busy","status":"failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}}}`,
+		},
+	}
+
+	for _, terminal := range terminals {
+		t.Run(terminal.name, func(t *testing.T) {
+			body := strings.Join([]string{
+				`data: {"type":"response.created","response":{"id":"resp_busy","status":"in_progress"}}`,
+				`data: {"type":"response.in_progress","response":{"id":"resp_busy","status":"in_progress"}}`,
+				terminal.data,
+				``,
+			}, "\n\n")
+			c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(body))
+
+			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+			require.Nil(t, usage)
+			require.NotNil(t, apiErr)
+			require.True(t, types.IsPreCommitStreamCapacityError(apiErr))
+			require.False(t, c.Writer.Written())
+			require.Empty(t, recorder.Body.String())
+			assert.False(t, info.HasSendResponse())
+			assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+		})
+	}
+}
+
+func TestOaiResponsesStreamHandlerDoesNotRetryCapacityFailureAfterOutput(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_busy","status":"in_progress"}}`,
+		`data: {"type":"response.output_text.delta","delta":"partial"}`,
+		`data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}`,
+		``,
+	}, "\n\n")
+	c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(body))
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.True(t, c.Writer.Written())
+	require.Contains(t, recorder.Body.String(), `"type":"response.output_text.delta"`)
+	require.Equal(t, []string{"response.failed"}, responsesTerminalEvents(t, recorder.Body.String()))
+	assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+}
+
+func TestOaiResponsesStreamHandlerDoesNotRetryCapacityFailureAfterUsagePrelude(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_busy","status":"in_progress"}}`,
+		`data: {"type":"response.in_progress","response":{"id":"resp_busy","status":"in_progress","usage":{"input_tokens":3,"output_tokens":0,"total_tokens":3}}}`,
+		`data: {"type":"response.failed","response":{"id":"resp_busy","status":"failed","error":{"type":"server_error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors."}}}`,
+		``,
+	}, "\n\n")
+	c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(body))
+
+	usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.True(t, c.Writer.Written())
+	require.Contains(t, recorder.Body.String(), `event: response.in_progress`)
+	require.Equal(t, []string{"response.failed"}, responsesTerminalEvents(t, recorder.Body.String()))
+	assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+}
+
+func TestOaiResponsesStreamHandlerDoesNotRetryCapacityErrorEventWithBillablePayload(t *testing.T) {
+	tests := []struct {
+		name  string
+		error string
+	}{
+		{
+			name:  "top-level usage",
+			error: `data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors.","usage":{"input_tokens":3,"output_tokens":0,"total_tokens":3}}`,
+		},
+		{
+			name:  "top-level output",
+			error: `data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors.","output":[{"type":"message","id":"msg_1"}]}`,
+		},
+		{
+			name:  "nested usage",
+			error: `data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors.","response":{"usage":{"input_tokens":3,"output_tokens":0,"total_tokens":3}}}`,
+		},
+		{
+			name:  "nested output",
+			error: `data: {"type":"error","code":"server_error","message":"We're currently experiencing high demand, which may cause temporary errors.","response":{"output":[{"type":"message","id":"msg_1"}]}}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.Join([]string{
+				`data: {"type":"response.created","response":{"id":"resp_busy","status":"in_progress"}}`,
+				tt.error,
+				``,
+			}, "\n\n")
+			c, resp, info, recorder := setupResponsesTest(t, strings.NewReader(body))
+
+			usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
+
+			require.Nil(t, apiErr)
+			require.NotNil(t, usage)
+			require.True(t, c.Writer.Written())
+			require.Contains(t, recorder.Body.String(), `event: response.created`)
+			require.Equal(t, []string{"response.failed"}, responsesTerminalEvents(t, recorder.Body.String()))
+			assert.Equal(t, relaycommon.StreamEndReasonUpstreamFailed, info.StreamStatus.Snapshot().EndReason)
+		})
+	}
+}
+
 func TestOaiResponsesStreamHandlerCommitsTerminalOnlyAfterSuccessfulWrite(t *testing.T) {
 	body := strings.Join([]string{
 		`data: {"type":"response.output_text.delta","delta":"hello"}`,

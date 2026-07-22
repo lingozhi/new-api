@@ -440,6 +440,9 @@ const (
 type ResponsesStreamResponse struct {
 	Type     string                   `json:"type"`
 	Response *OpenAIResponsesResponse `json:"response,omitempty"`
+	Error    any                      `json:"error,omitempty"`
+	Usage    *Usage                   `json:"usage,omitempty"`
+	Output   []ResponsesOutput        `json:"output,omitempty"`
 	Delta    string                   `json:"delta,omitempty"`
 	Item     *ResponsesOutput         `json:"item,omitempty"`
 	Code     string                   `json:"code,omitempty"`

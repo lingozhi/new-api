@@ -259,7 +259,7 @@ func Distribute() func(c *gin.Context) {
 }
 
 // StatusClientClosedRequest 是 nginx 事实标准的 499：客户端在服务端应答前就走了。
-// 用它而不是 400，是为了让「客户端掉线」在日志和监控里跟真正的坏请求分开。
+// 服务端检测到的上传空闲超时使用可自动重试的 503；只有已经无法接收响应的真实断线才用 499。
 const StatusClientClosedRequest = 499
 
 // maxLoggedUserAgentLen 限制写进日志的 UA 长度，避免单条日志被超长 UA 撑爆。
@@ -313,6 +313,19 @@ func abortWithClientDisconnect(c *gin.Context, err error, bodyReadStart time.Tim
 		encoding, c.Request.Header.Get("Expect"),
 		c.Request.Proto, c.Request.URL.Path, ua,
 	))
+	if errors.Is(err, common.ErrUploadIdleTimeout) {
+		c.Header("Connection", "close")
+		c.Header("Retry-After", "1")
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"error": gin.H{
+				"message": common.MessageWithRequestId(i18n.T(c, i18n.MsgDistributorUploadTimedOut), c.GetString(common.RequestIdKey)),
+				"type":    "new_api_error",
+				"code":    string(types.ErrorCodeReadRequestBodyFailed),
+			},
+		})
+		c.Abort()
+		return
+	}
 	c.Status(StatusClientClosedRequest)
 	c.Abort()
 }

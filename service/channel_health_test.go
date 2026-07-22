@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -23,6 +25,12 @@ func TestChannelHealthOutcomeStatusScoresEmptyUpstreamAsFailure(t *testing.T) {
 	upstreamErr := types.NewErrorWithStatusCode(errors.New("do request failed"), types.ErrorCodeDoRequestFailed, http.StatusBadGateway)
 	mappedUpstreamErr := types.NewErrorWithStatusCode(errors.New("upstream overloaded"), types.ErrorCodeBadResponseStatusCode, http.StatusBadRequest)
 	mappedUpstreamErr.UpstreamStatusCode = http.StatusServiceUnavailable
+	streamCapacityErr := types.NewOpenAIError(
+		errors.New("We're currently experiencing high demand, which may cause temporary errors."),
+		types.ErrorCode("server_error"),
+		http.StatusBadRequest,
+		types.ErrOptionWithPreCommitStreamCapacity(),
+	)
 	localErr := types.NewErrorWithStatusCode(errors.New("convert request failed"), types.ErrorCodeConvertRequestFailed, http.StatusInternalServerError)
 	failedStream := relaycommon.NewStreamStatus()
 	failedStream.SetEndReason(relaycommon.StreamEndReasonUpstreamFailed, errors.New("upstream response.failed"))
@@ -47,6 +55,7 @@ func TestChannelHealthOutcomeStatusScoresEmptyUpstreamAsFailure(t *testing.T) {
 		{name: "client terminal failure wins over empty usage", apiErr: nil, relayInfo: &relaycommon.RelayInfo{StreamStatus: clientTerminalStream, UpstreamEmptyResponse: true}, wantStatus: http.StatusBadRequest, wantLocalErr: false},
 		{name: "upstream error wins over empty flag", apiErr: upstreamErr, relayInfo: &relaycommon.RelayInfo{UpstreamEmptyResponse: true}, wantStatus: http.StatusBadGateway, wantLocalErr: false},
 		{name: "immutable upstream status wins over client mapping", apiErr: mappedUpstreamErr, relayInfo: &relaycommon.RelayInfo{}, wantStatus: http.StatusServiceUnavailable, wantLocalErr: false},
+		{name: "marked stream capacity survives client mapping", apiErr: streamCapacityErr, relayInfo: &relaycommon.RelayInfo{}, wantStatus: http.StatusServiceUnavailable, wantLocalErr: false},
 		{name: "gateway-local error", apiErr: localErr, relayInfo: &relaycommon.RelayInfo{}, wantStatus: http.StatusInternalServerError, wantLocalErr: true},
 	}
 
@@ -123,6 +132,7 @@ func TestRecordChannelHealthOutcomeUsesCurrentAttemptFirstDataAfterRetry(t *test
 	const modelName = "test-retry-attempt-first-data"
 	const requestPath = "/v1/responses"
 
+	healthKey := channelHealthKey(channelID, modelName, requestPath)
 	for i := 0; i < 3; i++ {
 		attemptStart := time.Now().Add(-20 * time.Second)
 		status := &relaycommon.StreamStatus{
@@ -135,14 +145,48 @@ func TestRecordChannelHealthOutcomeUsesCurrentAttemptFirstDataAfterRetry(t *test
 		info := &relaycommon.RelayInfo{
 			StartTime:         attemptStart.Add(-30 * time.Second),
 			FirstResponseTime: attemptStart.Add(-10 * time.Second),
+			IsStream:          true,
 			StreamStatus:      status,
+		}
+
+		RecordChannelHealthOutcome(channelID, modelName, requestPath, info, attemptStart, nil, false)
+		assert.False(t, model.ShouldDemoteChannelPriority(healthKey),
+			"a 1s fallback attempt must never inherit enough prior-request latency to be demoted")
+	}
+
+	assert.True(t, IsChannelHealthAvailable(channelID, modelName, requestPath),
+		"a fallback channel with 1s current-attempt TTFT must not be scored with its 20s total stream duration")
+	assert.InDelta(t, 0.5, model.GetChannelHealthScore(healthKey), 0.01,
+		"the health score must reflect the current attempt's 1s TTFT")
+}
+
+func TestRecordChannelHealthOutcomeDoesNotScoreNonStreamingCompletionLatency(t *testing.T) {
+	oldEnabled := common.AdaptiveChannelHealthEnabled
+	common.AdaptiveChannelHealthEnabled = true
+	t.Cleanup(func() { common.AdaptiveChannelHealthEnabled = oldEnabled })
+
+	const channelID = 9001438
+	const modelName = "test-non-stream-completion-latency"
+	const requestPath = "/v1/chat/completions"
+	healthKey := channelHealthKey(channelID, modelName, requestPath)
+
+	for i := 0; i < 3; i++ {
+		attemptStart := time.Now().Add(-20 * time.Second)
+		info := &relaycommon.RelayInfo{
+			StartTime:         attemptStart,
+			FirstResponseTime: attemptStart.Add(15 * time.Second),
+			RelayMode:         relayconstant.RelayModeChatCompletions,
 		}
 
 		RecordChannelHealthOutcome(channelID, modelName, requestPath, info, attemptStart, nil, false)
 	}
 
 	assert.True(t, IsChannelHealthAvailable(channelID, modelName, requestPath),
-		"a fallback channel with 1s current-attempt TTFT must not be scored with its 20s total stream duration")
+		"non-streaming completion time is not TTFT and must not open the slow circuit")
+	assert.False(t, model.ShouldDemoteChannelPriority(healthKey),
+		"non-streaming completion time must not lower the shared channel priority")
+	assert.Equal(t, 1.0, model.GetChannelHealthScore(healthKey),
+		"non-streaming successes without TTFT must leave the latency score neutral")
 }
 
 func TestRecordChannelHealthOutcomeDoesNotUseStreamDurationWhenCurrentAttemptHasNoData(t *testing.T) {
@@ -212,6 +256,7 @@ func TestRecordChannelHealthOutcomeCountsGenuinelySlowCurrentAttemptAfterRetry(t
 		info := &relaycommon.RelayInfo{
 			StartTime:         attemptStart.Add(-30 * time.Second),
 			FirstResponseTime: attemptStart.Add(-10 * time.Second),
+			IsStream:          true,
 			StreamStatus: &relaycommon.StreamStatus{
 				StartedAt:   attemptStart.Add(500 * time.Millisecond),
 				FirstDataAt: attemptStart.Add(10 * time.Second),
@@ -337,6 +382,146 @@ func TestChannelHealthPathNormalizesBoundedRouteFamilies(t *testing.T) {
 	}
 }
 
+func TestIsTextGenerationHealthRequest(t *testing.T) {
+	tests := []struct {
+		name        string
+		relayMode   int
+		requestPath string
+		want        bool
+	}{
+		{name: "chat completions", relayMode: relayconstant.RelayModeChatCompletions, requestPath: "/v1/chat/completions", want: true},
+		{name: "legacy completions", relayMode: relayconstant.RelayModeCompletions, requestPath: "/v1/completions", want: true},
+		{name: "responses", relayMode: relayconstant.RelayModeResponses, requestPath: "/v1/responses", want: true},
+		{name: "claude messages path fallback", requestPath: "/v1/messages", want: true},
+		{name: "gemini generation", relayMode: relayconstant.RelayModeGemini, requestPath: "/v1beta/models/gemini-2.5-pro:generateContent", want: true},
+		{name: "gemini streaming generation", relayMode: relayconstant.RelayModeGemini, requestPath: "/v1beta/models/gemini-2.5-pro:streamGenerateContent", want: true},
+		{name: "gemini embedding", relayMode: relayconstant.RelayModeGemini, requestPath: "/v1beta/models/text-embedding-004:embedContent", want: false},
+		{name: "responses compact", relayMode: relayconstant.RelayModeResponsesCompact, requestPath: "/v1/responses/compact", want: false},
+		{name: "embedding", relayMode: relayconstant.RelayModeEmbeddings, requestPath: "/v1/embeddings", want: false},
+		{name: "rerank", relayMode: relayconstant.RelayModeRerank, requestPath: "/v1/rerank", want: false},
+		{name: "audio", relayMode: relayconstant.RelayModeAudioSpeech, requestPath: "/v1/audio/speech", want: false},
+		{name: "task", relayMode: relayconstant.RelayModeVideoSubmit, requestPath: "/v1/videos", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{RelayMode: tt.relayMode}
+			assert.Equal(t, tt.want, IsTextGenerationHealthRequest(info, tt.requestPath))
+		})
+	}
+}
+
+func TestRecordChannelHealthOutcomeKeepsNonStreamingOperationalLatency(t *testing.T) {
+	oldEnabled := common.AdaptiveChannelHealthEnabled
+	common.AdaptiveChannelHealthEnabled = true
+	t.Cleanup(func() { common.AdaptiveChannelHealthEnabled = oldEnabled })
+
+	const channelID = 9001439
+	const modelName = "test-non-stream-embedding-latency"
+	const requestPath = "/v1/embeddings"
+
+	for i := 0; i < 3; i++ {
+		attemptStart := time.Now().Add(-10 * time.Second)
+		info := &relaycommon.RelayInfo{RelayMode: relayconstant.RelayModeEmbeddings}
+		RecordChannelHealthOutcome(channelID, modelName, requestPath, info, attemptStart, nil, false)
+	}
+
+	assert.False(t, IsChannelHealthAvailable(channelID, modelName, requestPath),
+		"non-streaming operational routes must retain completion-latency health scoring")
+}
+
+func TestRecordChannelHealthOutcomeDoesNotScoreNonStreamingGeminiCompletionLatency(t *testing.T) {
+	oldEnabled := common.AdaptiveChannelHealthEnabled
+	common.AdaptiveChannelHealthEnabled = true
+	t.Cleanup(func() { common.AdaptiveChannelHealthEnabled = oldEnabled })
+
+	const channelID = 9001441
+	const modelName = "test-non-stream-gemini-latency"
+	const requestPath = "/v1beta/models/gemini-2.5-pro:generateContent"
+
+	for i := 0; i < 3; i++ {
+		attemptStart := time.Now().Add(-10 * time.Second)
+		info := &relaycommon.RelayInfo{RelayMode: relayconstant.RelayModeGemini}
+		RecordChannelHealthOutcome(channelID, modelName, requestPath, info, attemptStart, nil, false)
+	}
+
+	assert.True(t, IsChannelHealthAvailable(channelID, modelName, requestPath),
+		"Gemini generateContent may share its health key with alt=sse traffic, so completion time must not be scored as TTFT")
+}
+
+func TestRecordChannelHealthOutcomeDoesNotUseGeminiStreamDurationWithoutFirstData(t *testing.T) {
+	oldEnabled := common.AdaptiveChannelHealthEnabled
+	common.AdaptiveChannelHealthEnabled = true
+	t.Cleanup(func() { common.AdaptiveChannelHealthEnabled = oldEnabled })
+
+	const channelID = 9001442
+	const modelName = "test-gemini-stream-without-first-data"
+	const requestPath = "/v1beta/models/gemini-2.5-pro:streamGenerateContent"
+
+	for i := 0; i < 3; i++ {
+		attemptStart := time.Now().Add(-20 * time.Second)
+		info := &relaycommon.RelayInfo{
+			IsStream:  true,
+			RelayMode: relayconstant.RelayModeGemini,
+			StreamStatus: &relaycommon.StreamStatus{
+				StartedAt: attemptStart,
+				EndedAt:   attemptStart.Add(19 * time.Second),
+				EndReason: relaycommon.StreamEndReasonDone,
+			},
+		}
+		RecordChannelHealthOutcome(channelID, modelName, requestPath, info, attemptStart, nil, false)
+	}
+
+	assert.True(t, IsChannelHealthAvailable(channelID, modelName, requestPath),
+		"Gemini stream duration without attributable first data must not be treated as TTFT")
+}
+
+func TestRecordChannelHealthOutcomeUnknownTextLatencyPreservesStreamingSlowness(t *testing.T) {
+	oldEnabled := common.AdaptiveChannelHealthEnabled
+	common.AdaptiveChannelHealthEnabled = true
+	t.Cleanup(func() { common.AdaptiveChannelHealthEnabled = oldEnabled })
+
+	const channelID = 9001440
+	const modelName = "test-mixed-stream-latency"
+	const requestPath = "/v1/responses"
+	healthKey := channelHealthKey(channelID, modelName, requestPath)
+
+	recordSlowStream := func() {
+		attemptStart := time.Now().Add(-10 * time.Second)
+		info := &relaycommon.RelayInfo{
+			IsStream: true,
+			StreamStatus: &relaycommon.StreamStatus{
+				StartedAt:   attemptStart,
+				FirstDataAt: attemptStart.Add(10 * time.Second),
+				LastDataAt:  attemptStart.Add(10 * time.Second),
+				EndedAt:     attemptStart.Add(10 * time.Second),
+				EndReason:   relaycommon.StreamEndReasonDone,
+			},
+		}
+		RecordChannelHealthOutcome(channelID, modelName, requestPath, info, attemptStart, nil, false)
+	}
+	recordUnknownNonStream := func() {
+		attemptStart := time.Now().Add(-20 * time.Second)
+		info := &relaycommon.RelayInfo{
+			StartTime:         attemptStart,
+			FirstResponseTime: attemptStart.Add(15 * time.Second),
+			RelayMode:         relayconstant.RelayModeResponses,
+		}
+		RecordChannelHealthOutcome(channelID, modelName, requestPath, info, attemptStart, nil, false)
+	}
+
+	recordSlowStream()
+	recordUnknownNonStream()
+	recordSlowStream()
+	assert.True(t, model.ShouldDemoteChannelPriority(healthKey),
+		"unknown non-streaming TTFT must not erase measured slow-stream evidence")
+
+	recordUnknownNonStream()
+	recordSlowStream()
+	assert.False(t, IsChannelHealthAvailable(channelID, modelName, requestPath),
+		"three measured slow streams must still open the circuit when non-stream traffic is interleaved")
+}
+
 func TestRecordChannelHealthOutcomeDoesNotScoreImageCompletionLatency(t *testing.T) {
 	oldEnabled := common.AdaptiveChannelHealthEnabled
 	common.AdaptiveChannelHealthEnabled = true
@@ -399,6 +584,29 @@ func TestRecordChannelHealthOutcomeStillCountsImageFailures(t *testing.T) {
 	}
 
 	assert.False(t, IsChannelHealthAvailable(channelID, modelName, requestPath))
+}
+
+func TestRecordChannelHealthOutcomeCountsRelayServiceTransient400(t *testing.T) {
+	oldEnabled := common.AdaptiveChannelHealthEnabled
+	common.AdaptiveChannelHealthEnabled = true
+	t.Cleanup(func() { common.AdaptiveChannelHealthEnabled = oldEnabled })
+
+	const channelID = 9001443
+	const modelName = "test-relay-service-transient-400"
+	const requestPath = "/v1/responses"
+	err := types.NewErrorWithStatusCode(
+		errors.New("Upstream request failed, please try again, 请重试 (Relay Service)"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+	err.UpstreamStatusCode = http.StatusBadRequest
+
+	for i := 0; i < 3; i++ {
+		RecordChannelHealthOutcome(channelID, modelName, requestPath, nil, time.Now(), err, false)
+	}
+
+	assert.False(t, IsChannelHealthAvailable(channelID, modelName, requestPath),
+		"the confirmed upstream relay outage must count as a channel failure despite its HTTP 400 wrapper")
 }
 
 // TestRecordChannelHealthOutcomeIgnoresGatewayLocalErrors verifies that

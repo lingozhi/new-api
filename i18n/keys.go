@@ -322,6 +322,7 @@ const (
 	MsgDistributorUnsupportedImageVariant = "distributor.unsupported_image_variant"
 	MsgDistributorInvalidMidjourney       = "distributor.invalid_midjourney_request"
 	MsgDistributorInvalidParseModel       = "distributor.invalid_request_parse_model"
+	MsgDistributorUploadTimedOut          = "distributor.upload_timed_out"
 )
 
 // Custom OAuth provider related messages

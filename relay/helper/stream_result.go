@@ -52,6 +52,16 @@ func (r *StreamResult) UpstreamFailed(err error) {
 	r.stopped = true
 }
 
+// PreCommitUpstreamFailed stops on a terminal upstream failure that was
+// deliberately withheld from the client so the controller may retry safely.
+func (r *StreamResult) PreCommitUpstreamFailed(err error) {
+	if err != nil {
+		r.status.RecordError(err.Error())
+	}
+	r.status.OverrideEndReasonIfNoProtocolTerminal(relaycommon.StreamEndReasonUpstreamFailed, err, "upstream_precommit")
+	r.stopped = true
+}
+
 // TerminalClientError stops after a protocol-level failure caused by request
 // or content semantics. It remains visible in diagnostics without penalizing
 // the channel as an infrastructure failure.

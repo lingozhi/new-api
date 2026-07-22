@@ -124,6 +124,8 @@ export interface TopupInfo {
   enable_online_topup: boolean
   /** Whether Stripe topup is enabled */
   enable_stripe_topup: boolean
+  /** Whether Stripe subscription checkout is enabled */
+  enable_stripe_subscription?: boolean
   /** Available payment methods */
   pay_methods: PaymentMethod[]
   /** Minimum topup amount for online topup */
@@ -132,6 +134,8 @@ export interface TopupInfo {
   stripe_min_topup: number
   /** Preset amount options */
   amount_options: number[]
+  /** Currency used by preset amount options */
+  amount_currency?: 'USD' | 'CNY'
   /** Discount rates by amount */
   discount: Record<number, number>
   /** Optional topup link for purchasing codes */
@@ -146,6 +150,8 @@ export interface TopupInfo {
   waffo_pay_methods?: WaffoPayMethod[]
   /** Minimum topup amount for Waffo */
   waffo_min_topup?: number
+  /** Currency charged by the legacy Waffo gateway */
+  waffo_currency?: string
   /** Whether Waffo Pancake topup is enabled */
   enable_waffo_pancake_topup?: boolean
   /** Minimum topup amount for Waffo Pancake */
@@ -259,8 +265,14 @@ export interface TopupRecord {
   user_id: number
   /** Topup amount (quota) */
   amount: number
+  /** Exact internal quota credited for this order */
+  quota_amount?: number
+  /** Currency used by the selected top-up tier */
+  amount_currency?: 'USD' | 'CNY'
   /** Payment amount (actual money paid) */
   money: number
+  /** Provider currency snapshot for new payment records */
+  provider_currency?: string
   /** Trade/order number */
   trade_no: string
   /** Payment method type */

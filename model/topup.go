@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -12,16 +13,21 @@ import (
 )
 
 type TopUp struct {
-	Id              int     `json:"id"`
-	UserId          int     `json:"user_id" gorm:"index"`
-	Amount          int64   `json:"amount"`
-	Money           float64 `json:"money"`
-	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime      int64   `json:"create_time"`
-	CompleteTime    int64   `json:"complete_time"`
-	Status          string  `json:"status"`
+	Id                  int     `json:"id"`
+	UserId              int     `json:"user_id" gorm:"index"`
+	Amount              int64   `json:"amount"`
+	QuotaAmount         int64   `json:"quota_amount"`
+	AmountCurrency      string  `json:"amount_currency" gorm:"type:varchar(8);default:''"`
+	Money               float64 `json:"money"`
+	TradeNo             string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod       string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider     string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	ProviderStoreId     string  `json:"provider_store_id" gorm:"type:varchar(128);default:''"`
+	ProviderEnvironment string  `json:"provider_environment" gorm:"type:varchar(8);default:''"`
+	ProviderCurrency    string  `json:"provider_currency" gorm:"type:varchar(8);default:''"`
+	CreateTime          int64   `json:"create_time"`
+	CompleteTime        int64   `json:"complete_time"`
+	Status              string  `json:"status"`
 }
 
 const (
@@ -47,6 +53,46 @@ var (
 	ErrTopUpStatusInvalid    = errors.New("topup status invalid")
 )
 
+type TopUpSettlement struct {
+	Amount           string
+	Currency         string
+	PaymentRequestID string
+}
+
+func validateTopUpSettlement(topUp *TopUp, settlement TopUpSettlement, requireIdentity bool) error {
+	actualAmount, err := decimal.NewFromString(strings.TrimSpace(settlement.Amount))
+	if err != nil {
+		return errors.New("支付回调金额无效")
+	}
+	expectedAmount := decimal.NewFromFloat(topUp.Money).Round(2)
+	if !actualAmount.Round(2).Equal(expectedAmount) {
+		return fmt.Errorf("支付回调金额不匹配: expected=%s actual=%s", expectedAmount.StringFixed(2), actualAmount.String())
+	}
+	if !requireIdentity {
+		return nil
+	}
+	if settlement.PaymentRequestID != topUp.TradeNo {
+		return errors.New("支付请求标识不匹配")
+	}
+	expectedCurrency := strings.ToUpper(strings.TrimSpace(topUp.ProviderCurrency))
+	actualCurrency := strings.ToUpper(strings.TrimSpace(settlement.Currency))
+	if expectedCurrency == "" {
+		if len(actualCurrency) != 3 {
+			return fmt.Errorf("支付回调币种无效: actual=%q", actualCurrency)
+		}
+		for _, char := range actualCurrency {
+			if char < 'A' || char > 'Z' {
+				return fmt.Errorf("支付回调币种无效: actual=%q", actualCurrency)
+			}
+		}
+		return nil
+	}
+	if actualCurrency != expectedCurrency {
+		return fmt.Errorf("支付回调币种不匹配: expected=%q actual=%q", expectedCurrency, actualCurrency)
+	}
+	return nil
+}
+
 func (topUp *TopUp) Insert() error {
 	var err error
 	err = DB.Create(topUp).Error
@@ -70,13 +116,48 @@ func GetTopUpById(id int) *TopUp {
 }
 
 func GetTopUpByTradeNo(tradeNo string) *TopUp {
-	var topUp *TopUp
-	var err error
-	err = DB.Where("trade_no = ?", tradeNo).First(&topUp).Error
+	topUp, err := FindTopUpByTradeNo(tradeNo)
 	if err != nil {
 		return nil
 	}
 	return topUp
+}
+
+func FindTopUpByTradeNo(tradeNo string) (*TopUp, error) {
+	if tradeNo == "" {
+		return nil, ErrTopUpNotFound
+	}
+	var topUp TopUp
+	if err := DB.Where("trade_no = ?", tradeNo).First(&topUp).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrTopUpNotFound
+		}
+		return nil, err
+	}
+	return &topUp, nil
+}
+
+func getTopUpQuotaToCredit(topUp *TopUp) (int, error) {
+	if topUp == nil {
+		return 0, errors.New("充值订单不存在")
+	}
+	if topUp.QuotaAmount != 0 {
+		if topUp.QuotaAmount < 0 || topUp.QuotaAmount > int64(common.MaxQuota) {
+			return 0, errors.New("无效的充值额度")
+		}
+		return int(topUp.QuotaAmount), nil
+	}
+
+	quota, clamp := common.QuotaFromDecimalChecked(
+		decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
+	)
+	if clamp != nil {
+		return 0, clamp
+	}
+	if quota <= 0 {
+		return 0, errors.New("无效的充值额度")
+	}
+	return quota, nil
 }
 
 func enqueueTopUpCreditTx(tx *gorm.DB, topUp *TopUp, quota int) (*BillingAdjustmentOutbox, error) {
@@ -118,7 +199,10 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 	return DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
-			return ErrTopUpNotFound
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrTopUpNotFound
+			}
+			return err
 		}
 		if expectedPaymentProvider != "" && topUp.PaymentProvider != expectedPaymentProvider {
 			return ErrPaymentMethodMismatch
@@ -197,7 +281,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 // RechargeEpay atomically completes an Epay order and records its durable
 // wallet credit claim. The claim is processed after commit and remains in the
 // outbox when Redis or quota headroom is temporarily unavailable.
-func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) error {
+func RechargeEpay(tradeNo string, actualPaymentMethod string, settlement TopUpSettlement, callerIp string) error {
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -223,14 +307,14 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) e
 		if topUp.Status != common.TopUpStatusPending {
 			return errors.New("充值订单状态错误")
 		}
-
-		var clamp *common.QuotaClamp
-		quotaToAdd, clamp = common.QuotaFromDecimalChecked(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
-		if clamp != nil {
-			return clamp
+		if err := validateTopUpSettlement(topUp, settlement, false); err != nil {
+			return err
 		}
-		if quotaToAdd <= 0 {
-			return errors.New("无效的充值额度")
+
+		var quotaErr error
+		quotaToAdd, quotaErr = getTopUpQuotaToCredit(topUp)
+		if quotaErr != nil {
+			return quotaErr
 		}
 
 		if actualPaymentMethod != "" {
@@ -448,20 +532,25 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return errors.New("订单状态不是待支付，无法补单")
 		}
 
-		// 计算应充值额度：
-		// - Stripe 订单：Money 代表经分组倍率换算后的美元数量，直接 * QuotaPerUnit
-		// - 其他订单（如易支付）：Amount 为美元数量，* QuotaPerUnit
-		if topUp.PaymentProvider == PaymentProviderStripe {
+		// New orders snapshot quota at creation. Legacy orders retain their
+		// provider-specific calculation for backward compatibility.
+		if topUp.QuotaAmount > 0 {
+			var quotaErr error
+			quotaToAdd, quotaErr = getTopUpQuotaToCredit(topUp)
+			if quotaErr != nil {
+				return quotaErr
+			}
+		} else if topUp.PaymentProvider == PaymentProviderStripe {
 			var quotaErr error
 			quotaToAdd, quotaErr = common.QuotaFromFloatStrict(topUp.Money * common.QuotaPerUnit)
 			if quotaErr != nil {
 				return quotaErr
 			}
 		} else {
-			var clamp *common.QuotaClamp
-			quotaToAdd, clamp = common.QuotaFromDecimalChecked(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
-			if clamp != nil {
-				return clamp
+			var quotaErr error
+			quotaToAdd, quotaErr = getTopUpQuotaToCredit(topUp)
+			if quotaErr != nil {
+				return quotaErr
 			}
 		}
 		if quotaToAdd <= 0 {
@@ -556,7 +645,7 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	return nil
 }
 
-func RechargeWaffo(tradeNo string, callerIp string) (err error) {
+func RechargeWaffo(tradeNo string, settlement TopUpSettlement, callerIp string) (err error) {
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -583,14 +672,14 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 		if topUp.Status != common.TopUpStatusPending {
 			return errors.New("充值订单状态错误")
 		}
-
-		var clamp *common.QuotaClamp
-		quotaToAdd, clamp = common.QuotaFromDecimalChecked(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
-		if clamp != nil {
-			return clamp
+		if err := validateTopUpSettlement(topUp, settlement, true); err != nil {
+			return err
 		}
-		if quotaToAdd <= 0 {
-			return errors.New("无效的充值额度")
+
+		var quotaErr error
+		quotaToAdd, quotaErr = getTopUpQuotaToCredit(topUp)
+		if quotaErr != nil {
+			return quotaErr
 		}
 
 		topUp.CompleteTime = common.GetTimestamp()
@@ -645,13 +734,10 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return errors.New("充值订单状态错误")
 		}
 
-		var clamp *common.QuotaClamp
-		quotaToAdd, clamp = common.QuotaFromDecimalChecked(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
-		if clamp != nil {
-			return clamp
-		}
-		if quotaToAdd <= 0 {
-			return errors.New("无效的充值额度")
+		var quotaErr error
+		quotaToAdd, quotaErr = getTopUpQuotaToCredit(topUp)
+		if quotaErr != nil {
+			return quotaErr
 		}
 
 		topUp.CompleteTime = common.GetTimestamp()

@@ -22,7 +22,10 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
-import { DataTableRowActionMenu, StaticDataTable } from '@/components/data-table'
+import {
+  DataTableRowActionMenu,
+  StaticDataTable,
+} from '@/components/data-table'
 import {
   sideDrawerContentClassName,
   sideDrawerFormClassName,
@@ -52,7 +55,9 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
+import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatQuota } from '@/lib/format'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import {
   getAdminPlans,
@@ -109,6 +114,7 @@ function SubscriptionStatusBadge(props: {
 
 export function UserSubscriptionsDialog(props: Props) {
   const { t } = useTranslation()
+  const currency = useSystemConfigStore((state) => state.config.currency)
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
   const [plans, setPlans] = useState<PlanRecord[]>([])
@@ -248,8 +254,13 @@ export function UserSubscriptionsDialog(props: Props) {
                   value: String(p.plan.id),
                   label: (
                     <>
-                      {p.plan.title}($
-                      {Number(p.plan.price_amount || 0).toFixed(2)})
+                      {p.plan.title} (
+                      {formatBillingCurrencyFromUSD(
+                        Number(p.plan.price_amount || 0),
+                        { abbreviate: false },
+                        currency
+                      )}
+                      )
                     </>
                   ),
                 }))}
@@ -263,8 +274,13 @@ export function UserSubscriptionsDialog(props: Props) {
                   <SelectGroup>
                     {plans.map((p) => (
                       <SelectItem key={p.plan.id} value={String(p.plan.id)}>
-                        {p.plan.title} ($
-                        {Number(p.plan.price_amount || 0).toFixed(2)})
+                        {p.plan.title} (
+                        {formatBillingCurrencyFromUSD(
+                          Number(p.plan.price_amount || 0),
+                          { abbreviate: false },
+                          currency
+                        )}
+                        )
                       </SelectItem>
                     ))}
                   </SelectGroup>

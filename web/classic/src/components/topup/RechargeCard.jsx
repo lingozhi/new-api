@@ -441,7 +441,9 @@ const RechargeCard = ({
                         preset.discount ||
                         topupInfo?.discount?.[preset.value] ||
                         1.0;
-                      const originalPrice = preset.value * priceRatio;
+                      const usesCnyTier = topupInfo?.amount_currency === 'CNY';
+                      const originalPrice =
+                        preset.value * (usesCnyTier ? 1 : priceRatio);
                       const discountedPrice = originalPrice * discount;
                       const hasDiscount = discount < 1.0;
                       const actualPay = discountedPrice;
@@ -462,7 +464,9 @@ const RechargeCard = ({
                       let displayActualPay = actualPay;
                       let displaySave = save;
 
-                      if (type === 'USD') {
+                      if (usesCnyTier) {
+                        displayValue = preset.value;
+                      } else if (type === 'USD') {
                         // 数量保持USD，价格从CNY转USD
                         displayActualPay = actualPay / usdRate;
                         displaySave = save / usdRate;
@@ -683,7 +687,9 @@ const RechargeCard = ({
                 plans={subscriptionPlans}
                 payMethods={payMethods}
                 enableOnlineTopUp={enableOnlineTopUp}
-                enableStripeTopUp={enableStripeTopUp}
+                enableStripeTopUp={
+                  topupInfo?.enable_stripe_subscription ?? enableStripeTopUp
+                }
                 enableCreemTopUp={enableCreemTopUp}
                 billingPreference={billingPreference}
                 onChangeBillingPreference={onChangeBillingPreference}

@@ -349,6 +349,9 @@ func InitResources() error {
 	if err != nil {
 		return err
 	}
+	if err := model.RestorePersistentChannelCooldowns(); err != nil {
+		common.SysError("failed to restore persistent channel cooldowns: " + err.Error())
+	}
 
 	perfmetrics.Init()
 

@@ -96,7 +96,10 @@ type RelayInfo struct {
 	StartTime                time.Time
 	FirstResponseTime        time.Time
 	isFirstResponse          bool
+	attemptStartedAt         time.Time
 	attemptFirstResponseTime time.Time
+	attemptPreviousFirstTime time.Time
+	attemptPreviousIsFirst   bool
 	//SendLastReasoningResponse bool
 	IsStream                 bool
 	IsGeminiBatchEmbedding   bool
@@ -700,6 +703,9 @@ func (info *RelayInfo) BeginChannelAttempt() time.Time {
 	if info == nil {
 		return startedAt
 	}
+	info.attemptStartedAt = startedAt
+	info.attemptPreviousFirstTime = info.FirstResponseTime
+	info.attemptPreviousIsFirst = info.isFirstResponse
 	info.attemptFirstResponseTime = time.Time{}
 	info.StreamStatus = nil
 	return startedAt
@@ -719,25 +725,52 @@ func (info *RelayInfo) SetFirstResponseTime() {
 	}
 }
 
+// DiscardCurrentAttemptFirstResponse rolls back request-level TTFT when the
+// first upstream SSE event was withheld and no bytes reached the client.
+func (info *RelayInfo) DiscardCurrentAttemptFirstResponse() {
+	if info == nil || info.attemptFirstResponseTime.IsZero() {
+		return
+	}
+	if info.FirstResponseTime.Equal(info.attemptFirstResponseTime) {
+		info.FirstResponseTime = info.attemptPreviousFirstTime
+		info.isFirstResponse = info.attemptPreviousIsFirst
+	}
+	info.attemptFirstResponseTime = time.Time{}
+}
+
 // FirstResponseTimeForAttempt returns a first-response timestamp only when it
 // can be attributed to the channel attempt that started at attemptStart.
 func (info *RelayInfo) FirstResponseTimeForAttempt(attemptStart time.Time) time.Time {
 	if info == nil || attemptStart.IsZero() {
 		return time.Time{}
 	}
-	if info.attemptFirstResponseTime.After(attemptStart) {
+	if !info.attemptFirstResponseTime.IsZero() && !info.attemptFirstResponseTime.Before(attemptStart) {
 		return info.attemptFirstResponseTime
 	}
 	if info.StreamStatus != nil {
 		firstDataAt := info.StreamStatus.Snapshot().FirstDataAt
-		if firstDataAt.After(attemptStart) {
+		if !firstDataAt.IsZero() && !firstDataAt.Before(attemptStart) {
 			return firstDataAt
 		}
 	}
-	if info.HasSendResponse() && info.FirstResponseTime.After(attemptStart) {
+	if info.HasSendResponse() && !info.FirstResponseTime.IsZero() && !info.FirstResponseTime.Before(attemptStart) {
 		return info.FirstResponseTime
 	}
 	return time.Time{}
+}
+
+// CurrentAttemptFirstResponseLatency reports the final selected channel's
+// attempt-local FRT. Request-level FirstResponseTime intentionally remains
+// anchored to the user's total wait across retries.
+func (info *RelayInfo) CurrentAttemptFirstResponseLatency() (time.Duration, bool) {
+	if info == nil || info.attemptStartedAt.IsZero() {
+		return 0, false
+	}
+	firstResponseAt := info.FirstResponseTimeForAttempt(info.attemptStartedAt)
+	if firstResponseAt.IsZero() {
+		return 0, false
+	}
+	return firstResponseAt.Sub(info.attemptStartedAt), true
 }
 
 func (info *RelayInfo) HasSendResponse() bool {

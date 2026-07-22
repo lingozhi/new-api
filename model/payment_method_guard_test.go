@@ -5,8 +5,10 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func insertUserForPaymentGuardTest(t *testing.T, id int, quota int) {
@@ -102,6 +104,28 @@ func TestRechargeWaffoPancake_RejectsMismatchedPaymentMethod(t *testing.T) {
 	assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 101))
 }
 
+func TestRechargeWaffoPancakeUsesSnapshottedQuota(t *testing.T) {
+	truncateTables(t)
+
+	insertUserForPaymentGuardTest(t, 102, 0)
+	topUp := &TopUp{
+		UserId:           102,
+		Amount:           10,
+		QuotaAmount:      684932,
+		Money:            10,
+		TradeNo:          "waffo-pancake-cny-snapshot",
+		PaymentMethod:    PaymentMethodWaffoPancake,
+		PaymentProvider:  PaymentProviderWaffoPancake,
+		ProviderCurrency: "CNY",
+		Status:           common.TopUpStatusPending,
+		CreateTime:       time.Now().Unix(),
+	}
+	require.NoError(t, topUp.Insert())
+
+	require.NoError(t, RechargeWaffoPancake(topUp.TradeNo))
+	assert.Equal(t, 684932, getUserQuotaForPaymentGuardTest(t, 102))
+}
+
 func TestUpdatePendingTopUpStatus_RejectsMismatchedPaymentProvider(t *testing.T) {
 	testCases := []struct {
 		name                    string
@@ -139,6 +163,32 @@ func TestUpdatePendingTopUpStatus_RejectsMismatchedPaymentProvider(t *testing.T)
 	}
 }
 
+func TestUpdatePendingTopUpStatusPreservesDatabaseErrors(t *testing.T) {
+	originalDB := DB
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	DB = db
+	t.Cleanup(func() { DB = originalDB })
+	require.NoError(t, db.AutoMigrate(&TopUp{}))
+	require.NoError(t, db.Create(&TopUp{
+		UserId:          151,
+		Amount:          1,
+		Money:           1,
+		TradeNo:         "waffo-db-error",
+		PaymentMethod:   PaymentMethodWaffoPancake,
+		PaymentProvider: PaymentProviderWaffoPancake,
+		Status:          common.TopUpStatusPending,
+	}).Error)
+
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+	err = UpdatePendingTopUpStatus("waffo-db-error", PaymentProviderWaffoPancake, common.TopUpStatusFailed)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, ErrTopUpNotFound)
+	require.ErrorContains(t, err, "closed")
+}
+
 func TestCompleteSubscriptionOrder_RejectsMismatchedPaymentProvider(t *testing.T) {
 	truncateTables(t)
 
@@ -156,6 +206,56 @@ func TestCompleteSubscriptionOrder_RejectsMismatchedPaymentProvider(t *testing.T
 
 	topUp := GetTopUpByTradeNo("sub-guard-order")
 	assert.Nil(t, topUp)
+}
+
+func TestUpdatePendingSubscriptionOrderStatusGuardsProviderAndStatus(t *testing.T) {
+	truncateTables(t)
+	insertUserForPaymentGuardTest(t, 205, 0)
+	plan := insertSubscriptionPlanForPaymentGuardTest(t, 305)
+	insertSubscriptionOrderForPaymentGuardTest(t, "sub-status-guard", 205, plan.Id, PaymentProviderWaffoPancake)
+
+	err := UpdatePendingSubscriptionOrderStatus("sub-status-guard", PaymentProviderStripe, common.TopUpStatusFailed)
+	require.ErrorIs(t, err, ErrPaymentMethodMismatch)
+	order := GetSubscriptionOrderByTradeNo("sub-status-guard")
+	require.NotNil(t, order)
+	assert.Equal(t, common.TopUpStatusPending, order.Status)
+
+	require.NoError(t, UpdatePendingSubscriptionOrderStatus("sub-status-guard", PaymentProviderWaffoPancake, common.TopUpStatusFailed))
+	order = GetSubscriptionOrderByTradeNo("sub-status-guard")
+	require.NotNil(t, order)
+	assert.Equal(t, common.TopUpStatusFailed, order.Status)
+
+	err = UpdatePendingSubscriptionOrderStatus("sub-status-guard", PaymentProviderWaffoPancake, common.TopUpStatusExpired)
+	require.ErrorIs(t, err, ErrSubscriptionOrderStatusInvalid)
+	order = GetSubscriptionOrderByTradeNo("sub-status-guard")
+	require.NotNil(t, order)
+	assert.Equal(t, common.TopUpStatusFailed, order.Status)
+}
+
+func TestUpsertSubscriptionTopUp_CopiesProviderSnapshot(t *testing.T) {
+	truncateTables(t)
+
+	order := &SubscriptionOrder{
+		UserId:              212,
+		PlanId:              311,
+		Money:               73,
+		TradeNo:             "waffo-pancake-subscription-snapshot",
+		PaymentMethod:       PaymentMethodWaffoPancake,
+		PaymentProvider:     PaymentProviderWaffoPancake,
+		ProviderStoreId:     "STO_snapshot",
+		ProviderEnvironment: "prod",
+		ProviderCurrency:    "CNY",
+		Status:              common.TopUpStatusPending,
+		CreateTime:          time.Now().Unix(),
+	}
+	require.NoError(t, upsertSubscriptionTopUpTx(DB, order))
+
+	topUp := GetTopUpByTradeNo(order.TradeNo)
+	require.NotNil(t, topUp)
+	assert.Equal(t, PaymentProviderWaffoPancake, topUp.PaymentProvider)
+	assert.Equal(t, "STO_snapshot", topUp.ProviderStoreId)
+	assert.Equal(t, "prod", topUp.ProviderEnvironment)
+	assert.Equal(t, "CNY", topUp.ProviderCurrency)
 }
 
 func TestExpireSubscriptionOrder_RejectsMismatchedPaymentProvider(t *testing.T) {

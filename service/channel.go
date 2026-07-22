@@ -52,6 +52,9 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 	if IsUpstreamRateLimitError(err) {
 		return false
 	}
+	if IsImmediateStreamCapacityAPIError(err) {
+		return false
+	}
 	if types.IsChannelError(err) {
 		return true
 	}

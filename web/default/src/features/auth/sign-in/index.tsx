@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { useStatus } from '@/hooks/use-status'
 
 import { AuthLayout } from '../auth-layout'
+import { BillingPromotionNotice } from '../components/billing-promotion-notice'
 import { TermsFooter } from '../components/terms-footer'
 import { UserAuthForm } from './components/user-auth-form'
 
@@ -51,6 +52,8 @@ export function SignIn() {
               </p>
             )}
         </div>
+
+        <BillingPromotionNotice />
 
         <UserAuthForm redirectTo={redirect} />
 

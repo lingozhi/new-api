@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/assert"
@@ -36,6 +37,11 @@ func TestCooldownUpstreamHostForErrorOnlyIsolatesTransportFailures(t *testing.T)
 		{
 			name: "upstream unavailable",
 			err:  upstreamStatusErrorForTest(http.StatusServiceUnavailable, "service unavailable"),
+			want: true,
+		},
+		{
+			name: "relay service transient bad request",
+			err:  upstreamStatusErrorForTest(http.StatusBadRequest, "Upstream request failed, please try again, 请重试 (Relay Service)"),
 			want: true,
 		},
 		{
@@ -200,6 +206,33 @@ func TestIsUpstreamRateLimitErrorRequiresUpstreamProvenance(t *testing.T) {
 	assert.False(t, IsUpstreamRateLimitError(local429))
 }
 
+func TestIsUpstreamRelayServiceTransientErrorIsNarrow(t *testing.T) {
+	exact := upstreamStatusErrorForTest(
+		http.StatusBadRequest,
+		"Upstream request failed, please try again, 请重试 (Relay Service)",
+	)
+	assert.True(t, IsUpstreamRelayServiceTransientError(exact))
+
+	wrapped := upstreamStatusErrorForTest(
+		http.StatusBadRequest,
+		"bad response status code 400, message: Upstream request failed, please try again (Relay Service)",
+	)
+	assert.True(t, IsUpstreamRelayServiceTransientError(wrapped))
+
+	localCopy := types.NewErrorWithStatusCode(
+		errors.New("Upstream request failed, please try again (Relay Service)"),
+		types.ErrorCodeBadResponseStatusCode,
+		http.StatusBadRequest,
+	)
+	assert.False(t, IsUpstreamRelayServiceTransientError(localCopy), "text alone cannot establish upstream provenance")
+
+	generic400 := upstreamStatusErrorForTest(http.StatusBadRequest, "invalid request parameter")
+	assert.False(t, IsUpstreamRelayServiceTransientError(generic400))
+
+	wrongStatus := upstreamStatusErrorForTest(http.StatusServiceUnavailable, "Upstream request failed, please try again (Relay Service)")
+	assert.False(t, IsUpstreamRelayServiceTransientError(wrongStatus), "existing 5xx policy handles actual 503 responses")
+}
+
 func TestCooldownChannelForRetryUsesFullDurationForCapabilityGap(t *testing.T) {
 	model.ClearChannelCooldownsForTest()
 	chErr := types.NewChannelError(9003, 1, "test", false, "", true)
@@ -245,6 +278,19 @@ func TestShouldCooldownChannelForBalanceError(t *testing.T) {
 	}
 }
 
+func TestCooldownChannelForBalanceErrorBlocksCoolingFallback(t *testing.T) {
+	model.ClearChannelCooldownsForTest()
+	t.Cleanup(model.ClearChannelCooldownsForTest)
+
+	const channelID = 9005
+	err := types.NewErrorWithStatusCode(errors.New("Insufficient account balance"), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
+
+	CooldownChannel(*types.NewChannelError(channelID, 1, "balance-exhausted", false, "", false), err)
+
+	assert.True(t, model.IsChannelCoolingDown(channelID))
+	assert.False(t, model.IsChannelCoolingFallbackAllowed(channelID), "a known-empty upstream account must not be retried as last-resort capacity")
+}
+
 func TestShouldCooldownChannelForChineseBalanceError(t *testing.T) {
 	err := types.NewErrorWithStatusCode(errors.New("账户余额不足"), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
 
@@ -275,4 +321,55 @@ func TestShouldCooldownChannelIgnoresUnrelatedError(t *testing.T) {
 	if ShouldCooldownChannel(err) {
 		t.Fatalf("expected unrelated bad request to skip channel cooldown")
 	}
+}
+
+func TestCooldownChannelForRetryStrictlyIsolatesDisabledUpstreamGroup(t *testing.T) {
+	model.ClearChannelCooldownsForTest()
+	oldRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		model.ClearChannelCooldownsForTest()
+		common.RedisEnabled = oldRedisEnabled
+	})
+
+	err := upstreamStatusErrorForTest(http.StatusForbidden, "API Key 所属分组已停用")
+	CooldownChannelForRetry(*types.NewChannelError(9011, 1, "disabled-group", false, "", true), err)
+
+	reason, expires, cooling := model.GetChannelCooldown(9011)
+	require.True(t, cooling)
+	assert.Contains(t, reason, "account_unavailable")
+	assert.False(t, model.IsChannelCoolingFallbackAllowed(9011))
+	assert.WithinDuration(t, time.Now().Add(ChannelCooldownDuration), time.Unix(expires, 0), time.Second)
+}
+
+func TestCooldownChannelForRetryStrictlyIsolatesUpstreamAccessDenial(t *testing.T) {
+	model.ClearChannelCooldownsForTest()
+	oldRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		model.ClearChannelCooldownsForTest()
+		common.RedisEnabled = oldRedisEnabled
+	})
+
+	err := upstreamStatusErrorForTest(http.StatusBadGateway, "Upstream access forbidden, please contact administrator")
+	CooldownChannelForRetry(*types.NewChannelError(9012, 1, "access-denied", false, "", true), err)
+
+	reason, _, cooling := model.GetChannelCooldown(9012)
+	require.True(t, cooling)
+	assert.Contains(t, reason, "account_unavailable")
+	assert.False(t, model.IsChannelCoolingFallbackAllowed(9012))
+}
+
+func TestCooldownChannelForRetryKeepsTemporaryUnavailableAsShortFallback(t *testing.T) {
+	model.ClearChannelCooldownsForTest()
+	t.Cleanup(model.ClearChannelCooldownsForTest)
+
+	err := upstreamStatusErrorForTest(http.StatusBadGateway, "Upstream service temporarily unavailable")
+	CooldownChannelForRetry(*types.NewChannelError(9013, 1, "temporary", false, "", true), err)
+
+	reason, expires, cooling := model.GetChannelCooldown(9013)
+	require.True(t, cooling)
+	assert.Contains(t, reason, "retryable_transient")
+	assert.True(t, model.IsChannelCoolingFallbackAllowed(9013))
+	assert.WithinDuration(t, time.Now().Add(ShortChannelCooldownDuration), time.Unix(expires, 0), time.Second)
 }

@@ -25,6 +25,7 @@ const (
 	ginKeyChannelAffinityMeta           = "channel_affinity_meta"
 	ginKeyChannelAffinityLogInfo        = "channel_affinity_log_info"
 	ginKeyChannelAffinitySkipRetry      = "channel_affinity_skip_retry_on_failure"
+	ginKeyChannelAffinityUsed           = "channel_affinity_used"
 	ginKeyChannelAffinitySuppressRecord = "channel_affinity_suppress_record"
 
 	channelAffinityCacheNamespace           = "new-api:channel_affinity:v1"
@@ -644,6 +645,12 @@ func ShouldSkipRetryAfterChannelAffinityFailure(c *gin.Context) bool {
 	return ok && b
 }
 
+// WasChannelAffinityUsed reports whether this request was actually routed to a
+// cached sticky channel. It is independent of the rule's retry policy.
+func WasChannelAffinityUsed(c *gin.Context) bool {
+	return c != nil && c.GetBool(ginKeyChannelAffinityUsed)
+}
+
 func ClearCurrentChannelAffinityCache(c *gin.Context) bool {
 	if c == nil {
 		return false
@@ -680,6 +687,7 @@ func MarkChannelAffinityUsed(c *gin.Context, selectedGroup string, channelID int
 	if c == nil || channelID <= 0 {
 		return
 	}
+	c.Set(ginKeyChannelAffinityUsed, true)
 	meta, ok := getChannelAffinityMeta(c)
 	if !ok {
 		return
@@ -745,9 +753,17 @@ func RecordChannelAffinity(c *gin.Context, channelID int) {
 	}
 }
 
-func suppressChannelAffinityRecord(c *gin.Context) {
+func SuppressChannelAffinityRecord(c *gin.Context) {
 	if c != nil {
 		c.Set(ginKeyChannelAffinitySuppressRecord, true)
+	}
+}
+
+// ResumeChannelAffinityRecordAfterFallback lets a successful replacement
+// channel take ownership of the affinity after a failed attempt suppressed it.
+func ResumeChannelAffinityRecordAfterFallback(c *gin.Context) {
+	if c != nil {
+		c.Set(ginKeyChannelAffinitySuppressRecord, false)
 	}
 }
 

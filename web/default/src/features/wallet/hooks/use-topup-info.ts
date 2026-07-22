@@ -19,11 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useState, useEffect, useCallback } from 'react'
 
 import { getTopupInfo } from '../api'
-import {
-  generatePresetAmounts,
-  mergePresetAmounts,
-  getMinTopupAmount,
-} from '../lib'
+import { getMinTopupAmount, resolvePresetAmounts } from '../lib'
 import type {
   TopupInfo,
   PresetAmount,
@@ -196,17 +192,13 @@ export function useTopupInfo() {
 
       setTopupInfo(processedData)
 
-      if (processedData.amount_options.length > 0) {
-        const customPresets = mergePresetAmounts(
+      setPresetAmounts(
+        resolvePresetAmounts(
           processedData.amount_options,
-          processedData.discount || {}
+          processedData.discount || {},
+          getMinTopupAmount(processedData)
         )
-        setPresetAmounts(customPresets)
-      } else {
-        const minTopup = getMinTopupAmount(processedData)
-        const defaultPresets = generatePresetAmounts(minTopup)
-        setPresetAmounts(defaultPresets)
-      }
+      )
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('Failed to fetch topup info:', err)

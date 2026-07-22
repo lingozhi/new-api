@@ -43,6 +43,13 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
@@ -68,12 +75,17 @@ import {
   normalizeJsonForComparison,
   removeTrailingSlash,
 } from './utils'
-import { saveWaffoPancakeConfig } from './waffo-pancake-api'
+import { type CatalogStore, saveWaffoPancakeConfig } from './waffo-pancake-api'
 import {
   WaffoPancakeSettingsSection,
-  type WaffoPancakeBinding,
   type WaffoPancakeSettingsValues,
 } from './waffo-pancake-settings-section'
+import {
+  type WaffoPancakeBinding,
+  type WaffoPancakeVerificationPhase,
+  canSaveWaffoPancakeConfig,
+  isVerifiedWaffoPancakeEnvironment,
+} from './waffo-pancake-verification'
 import {
   type PayMethod,
   WaffoSettingsSection,
@@ -128,6 +140,7 @@ const paymentSchema = z.object({
       })
     }
   }),
+  AmountCurrency: z.enum(['USD', 'CNY']),
   AmountDiscount: z.string().superRefine((value, ctx) => {
     const error = getJsonError(
       value,
@@ -176,6 +189,7 @@ const paymentSchema = z.object({
   WaffoPancakeMerchantID: z.string(),
   WaffoPancakePrivateKey: z.string(),
   WaffoPancakeReturnURL: z.string(),
+  WaffoPancakeEnvironment: z.enum(['', 'test', 'prod']),
 })
 
 type PaymentFormValues = z.infer<typeof paymentSchema>
@@ -259,6 +273,11 @@ export function PaymentSettingsSection({
       storeID: waffoPancakeProvisionedStoreID ?? '',
       productID: waffoPancakeProvisionedProductID ?? '',
     })
+  const [waffoPancakeCatalog, setWaffoPancakeCatalog] = React.useState<
+    CatalogStore[]
+  >([])
+  const [waffoPancakeVerificationPhase, setWaffoPancakeVerificationPhase] =
+    React.useState<WaffoPancakeVerificationPhase>('unverified')
 
   React.useEffect(() => {
     setWaffoPayMethods(parseWaffoPayMethods(waffoDefaultValues.WaffoPayMethods))
@@ -426,6 +445,7 @@ export function PaymentSettingsSection({
       CustomCallbackAddress: removeTrailingSlash(values.CustomCallbackAddress),
       PayMethods: values.PayMethods.trim(),
       AmountOptions: values.AmountOptions.trim(),
+      AmountCurrency: values.AmountCurrency,
       AmountDiscount: values.AmountDiscount.trim(),
       StripeApiSecret: values.StripeApiSecret.trim(),
       StripeWebhookSecret: values.StripeWebhookSecret.trim(),
@@ -457,6 +477,7 @@ export function PaymentSettingsSection({
       WaffoPancakeReturnURL: removeTrailingSlash(
         values.WaffoPancakeReturnURL.trim()
       ),
+      WaffoPancakeEnvironment: values.WaffoPancakeEnvironment,
     }
 
     const initial = {
@@ -470,6 +491,7 @@ export function PaymentSettingsSection({
       ),
       PayMethods: initialRef.current.PayMethods.trim(),
       AmountOptions: initialRef.current.AmountOptions.trim(),
+      AmountCurrency: initialRef.current.AmountCurrency,
       AmountDiscount: initialRef.current.AmountDiscount.trim(),
       StripeApiSecret: initialRef.current.StripeApiSecret.trim(),
       StripeWebhookSecret: initialRef.current.StripeWebhookSecret.trim(),
@@ -504,6 +526,7 @@ export function PaymentSettingsSection({
       WaffoPancakeReturnURL: removeTrailingSlash(
         initialRef.current.WaffoPancakeReturnURL.trim()
       ),
+      WaffoPancakeEnvironment: initialRef.current.WaffoPancakeEnvironment,
     }
 
     const updates: Array<{ key: string; value: string | number | boolean }> = []
@@ -549,6 +572,13 @@ export function PaymentSettingsSection({
       updates.push({
         key: 'payment_setting.amount_options',
         value: sanitized.AmountOptions,
+      })
+    }
+
+    if (sanitized.AmountCurrency !== initial.AmountCurrency) {
+      updates.push({
+        key: 'payment_setting.amount_currency',
+        value: sanitized.AmountCurrency,
       })
     }
 
@@ -705,6 +735,7 @@ export function PaymentSettingsSection({
       sanitized.WaffoPancakeMerchantID !== initial.WaffoPancakeMerchantID ||
       sanitized.WaffoPancakePrivateKey.length > 0 ||
       sanitized.WaffoPancakeReturnURL !== initial.WaffoPancakeReturnURL ||
+      sanitized.WaffoPancakeEnvironment !== initial.WaffoPancakeEnvironment ||
       waffoPancakeSelection.storeID !== waffoPancakeSavedBinding.storeID ||
       waffoPancakeSelection.productID !== waffoPancakeSavedBinding.productID
 
@@ -713,11 +744,36 @@ export function PaymentSettingsSection({
       return
     }
 
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
+    if (!hasWaffoPancakeChanges) {
+      for (const update of updates) {
+        await updateOption.mutateAsync(update)
+      }
+      return
     }
 
-    if (!hasWaffoPancakeChanges) {
+    const verifiedEnvironment = isVerifiedWaffoPancakeEnvironment(
+      sanitized.WaffoPancakeEnvironment
+    )
+      ? sanitized.WaffoPancakeEnvironment
+      : null
+    if (waffoPancakeVerificationPhase !== 'verified' || !verifiedEnvironment) {
+      toast.error(
+        t(
+          'Credentials verification failed — double-check Merchant ID and API private key.'
+        )
+      )
+      return
+    }
+
+    if (
+      !canSaveWaffoPancakeConfig({
+        phase: waffoPancakeVerificationPhase,
+        environment: verifiedEnvironment,
+        binding: waffoPancakeSelection,
+        catalog: waffoPancakeCatalog,
+      })
+    ) {
+      toast.error(t('Pick or create both a store and a product before saving.'))
       return
     }
 
@@ -726,9 +782,8 @@ export function PaymentSettingsSection({
       return
     }
 
-    if (!waffoPancakeSelection.storeID || !waffoPancakeSelection.productID) {
-      toast.error(t('Pick or create both a store and a product before saving.'))
-      return
+    for (const update of updates) {
+      await updateOption.mutateAsync(update)
     }
 
     try {
@@ -738,6 +793,7 @@ export function PaymentSettingsSection({
         returnURL: sanitized.WaffoPancakeReturnURL,
         storeID: waffoPancakeSelection.storeID,
         productID: waffoPancakeSelection.productID,
+        environment: verifiedEnvironment,
       })
 
       if (
@@ -794,6 +850,7 @@ export function PaymentSettingsSection({
     WaffoPancakeMerchantID: currentFormValues.WaffoPancakeMerchantID,
     WaffoPancakePrivateKey: currentFormValues.WaffoPancakePrivateKey,
     WaffoPancakeReturnURL: currentFormValues.WaffoPancakeReturnURL,
+    WaffoPancakeEnvironment: currentFormValues.WaffoPancakeEnvironment,
   }
 
   return (
@@ -930,7 +987,7 @@ export function PaymentSettingsSection({
                     name='MinTopUp'
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>{t('Minimum top-up (USD)')}</FormLabel>
+                        <FormLabel>{t('Minimum top-up quantity')}</FormLabel>
                         <FormControl>
                           <Input
                             type='number'
@@ -939,9 +996,6 @@ export function PaymentSettingsSection({
                             {...safeNumberFieldProps(field)}
                           />
                         </FormControl>
-                        <FormDescription>
-                          {t('Smallest USD amount users can recharge (Epay)')}
-                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -1000,6 +1054,34 @@ export function PaymentSettingsSection({
                         {t(
                           'Configured as PayMethods JSON. The type value decides which payment flow is used: stripe for Stripe, waffo_pancake for Waffo Pancake, and other values are sent to Epay as the type parameter.'
                         )}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name='AmountCurrency'
+                  render={({ field }) => (
+                    <FormItem className='max-w-xs'>
+                      <FormLabel>{t('Currency')}</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value='USD'>{t('USD')}</SelectItem>
+                          <SelectItem value='CNY'>{t('CNY')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        {t('Preset recharge amounts displayed to users')}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -1596,9 +1678,13 @@ export function PaymentSettingsSection({
                 defaultValues={waffoPancakeDefaultValues}
                 values={waffoPancakeValues}
                 onValueChange={setWaffoPancakeValue}
+                catalog={waffoPancakeCatalog}
+                onCatalogChange={setWaffoPancakeCatalog}
                 selectedBinding={waffoPancakeSelection}
                 savedBinding={waffoPancakeSavedBinding}
                 onSelectedBindingChange={setWaffoPancakeSelection}
+                verificationPhase={waffoPancakeVerificationPhase}
+                onVerificationPhaseChange={setWaffoPancakeVerificationPhase}
               />
             </TabsContent>
 
