@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -28,6 +29,7 @@ func TestUploadIdleTimeoutReturnsStandardRetryableResponse(t *testing.T) {
 	)
 
 	assert.Equal(t, http.StatusRequestTimeout, c.Writer.Status())
+	assert.Equal(t, "close", recorder.Header().Get("Connection"))
 	assert.Equal(t, "1", recorder.Header().Get("Retry-After"))
 	var response struct {
 		Error struct {
@@ -52,4 +54,49 @@ func TestActualClientDisconnectRemains499(t *testing.T) {
 	assert.Equal(t, StatusClientClosedRequest, c.Writer.Status())
 	assert.Empty(t, recorder.Body.String())
 	assert.Empty(t, recorder.Header().Get("Retry-After"))
+}
+
+func TestUploadIdleTimeoutResponseReachesHTTPClient(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	router := gin.New()
+	router.POST("/v1/responses", func(c *gin.Context) {
+		c.Request.Body = &idleTimeoutBody{
+			ReadCloser: c.Request.Body,
+			rc:         http.NewResponseController(c.Writer),
+			timeout:    50 * time.Millisecond,
+		}
+		startedAt := time.Now()
+		_, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			abortWithClientDisconnect(c, err, startedAt)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+
+	bodyReader, bodyWriter := io.Pipe()
+	request, err := http.NewRequest(http.MethodPost, server.URL+"/v1/responses", bodyReader)
+	require.NoError(t, err)
+	request.ContentLength = 1 << 20
+	releaseUpload := make(chan struct{})
+	writeDone := make(chan struct{})
+	go func() {
+		defer close(writeDone)
+		_, _ = bodyWriter.Write([]byte(`{"model":"gpt-5.6-sol"`))
+		<-releaseUpload
+		_ = bodyWriter.Close()
+	}()
+
+	response, err := server.Client().Do(request)
+	close(releaseUpload)
+	<-writeDone
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = response.Body.Close() })
+	assert.Equal(t, http.StatusRequestTimeout, response.StatusCode)
+	assert.Equal(t, "1", response.Header.Get("Retry-After"))
+	responseBody, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Contains(t, string(responseBody), "read_request_body_failed")
 }
