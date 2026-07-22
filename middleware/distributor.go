@@ -234,6 +234,15 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if channel == nil {
+						if imageRequirement != nil {
+							abortWithOpenAiMessage(
+								c,
+								http.StatusBadRequest,
+								i18n.T(c, i18n.MsgDistributorUnsupportedImageVariant, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}),
+								types.ErrorCodeInvalidRequest,
+							)
+							return
+						}
 						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
 						return
 					}
