@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUploadIdleTimeoutReturnsStandardRetryableResponse(t *testing.T) {
+func TestUploadIdleTimeoutReturnsCodexRetryableResponse(t *testing.T) {
 	require.NoError(t, i18n.Init())
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
@@ -28,7 +28,7 @@ func TestUploadIdleTimeoutReturnsStandardRetryableResponse(t *testing.T) {
 		time.Now().Add(-time.Minute),
 	)
 
-	assert.Equal(t, http.StatusRequestTimeout, c.Writer.Status())
+	assert.Equal(t, http.StatusServiceUnavailable, c.Writer.Status())
 	assert.Equal(t, "close", recorder.Header().Get("Connection"))
 	assert.Equal(t, "1", recorder.Header().Get("Retry-After"))
 	var response struct {
@@ -94,7 +94,7 @@ func TestUploadIdleTimeoutResponseReachesHTTPClient(t *testing.T) {
 	<-writeDone
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = response.Body.Close() })
-	assert.Equal(t, http.StatusRequestTimeout, response.StatusCode)
+	assert.Equal(t, http.StatusServiceUnavailable, response.StatusCode)
 	assert.Equal(t, "1", response.Header.Get("Retry-After"))
 	responseBody, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
