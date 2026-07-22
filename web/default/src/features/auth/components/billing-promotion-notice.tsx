@@ -31,6 +31,7 @@ export function BillingPromotionNotice(props: BillingPromotionNoticeProps) {
 
   return (
     <Alert
+      role='note'
       className={cn('border-emerald-500/30 bg-emerald-500/5', props.className)}
     >
       <BadgePercent className='text-emerald-600 dark:text-emerald-400' />
