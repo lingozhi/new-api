@@ -16,15 +16,42 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+// @ts-expect-error The project does not load Bun's ambient test types.
+import { describe, it, mock } from 'bun:test'
 import assert from 'node:assert/strict'
-import { describe, it } from 'node:test'
 
 import { createInstance } from 'i18next'
-import { createElement } from 'react'
+import { createElement, type PropsWithChildren } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { I18nextProvider } from 'react-i18next'
 
-import { PaymentConfirmDialogDetails } from './payment-confirm-dialog'
+let confirmPayment: (() => void) | undefined
+let confirmCalls = 0
+
+function Wrapper({ children }: PropsWithChildren) {
+  return createElement('div', null, children)
+}
+
+function Action({
+  children,
+  onClick,
+}: PropsWithChildren<{ onClick?: () => void }>) {
+  confirmPayment = onClick
+  return createElement('button', { type: 'button' }, children)
+}
+
+mock.module('@/components/ui/alert-dialog', () => ({
+  AlertDialog: Wrapper,
+  AlertDialogAction: Action,
+  AlertDialogCancel: Wrapper,
+  AlertDialogContent: Wrapper,
+  AlertDialogDescription: Wrapper,
+  AlertDialogFooter: Wrapper,
+  AlertDialogHeader: Wrapper,
+  AlertDialogTitle: Wrapper,
+}))
+
+const { PaymentConfirmDialog } = await import('./payment-confirm-dialog')
 
 function renderPaymentDialog(): string {
   const i18n = createInstance()
@@ -48,14 +75,22 @@ function renderPaymentDialog(): string {
     createElement(
       I18nextProvider,
       { i18n },
-      createElement(PaymentConfirmDialogDetails, {
+      createElement(PaymentConfirmDialog, {
+        open: true,
+        onOpenChange: () => {},
+        onConfirm: () => confirmCalls++,
         topupAmount: 100,
+        paymentAmount: 97.47,
         paymentMethod: {
           name: 'Waffo Pancake',
           type: 'waffo_pancake',
         },
+        calculating: false,
+        discountRate: 1,
         usdExchangeRate: 1,
         amountCurrency: 'CNY',
+        paymentCurrency: 'CNY',
+        processing: false,
       })
     )
   )
@@ -63,11 +98,16 @@ function renderPaymentDialog(): string {
 
 describe('PaymentConfirmDialog', () => {
   it('keeps the selected amount and method without repeating the provider estimate', () => {
+    confirmCalls = 0
     const markup = renderPaymentDialog()
 
     assert.match(markup, /Topup Amount/)
     assert.match(markup, /Waffo Pancake/)
     assert.doesNotMatch(markup, /You Pay/)
     assert.doesNotMatch(markup, /97\.47/)
+    assert.match(markup, /Confirm Payment/)
+
+    confirmPayment?.()
+    assert.equal(confirmCalls, 1)
   })
 })

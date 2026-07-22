@@ -29,7 +29,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Skeleton } from '@/components/ui/skeleton'
 import { formatLocalCurrencyAmount } from '@/lib/currency'
 
 import { DEFAULT_DISCOUNT_RATE } from '../../constants'
@@ -102,29 +101,6 @@ export function PaymentConfirmDialog({
                 }
               )}
             </span>
-          </div>
-
-          <div className='flex items-center justify-between'>
-            <span className='text-muted-foreground text-sm'>
-              {t('You Pay')}
-            </span>
-            {calculating ? (
-              <Skeleton className='h-6 w-24' />
-            ) : (
-              <div className='flex items-baseline gap-2'>
-                <span className='text-2xl font-semibold'>
-                  {formatCheckoutPaymentAmount(paymentAmount, paymentCurrency)}
-                </span>
-                {hasDiscount && (
-                  <span className='text-muted-foreground text-sm line-through'>
-                    {formatCheckoutPaymentAmount(
-                      originalAmount,
-                      paymentCurrency
-                    )}
-                  </span>
-                )}
-              </div>
-            )}
           </div>
 
           {hasDiscount && !calculating && (
