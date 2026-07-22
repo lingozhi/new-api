@@ -27,7 +27,7 @@ import { I18nextProvider } from 'react-i18next'
 import { BillingPromotionNotice } from './billing-promotion-notice'
 
 const promotionCopy =
-  'Promotion offer: CNY and USD credits are billed 1:1, and your selected top-up amount is credited in full. Sign in to get started.'
+  'Simple, transparent billing: CNY and USD credits are calculated 1:1. Sign in to view pricing and get started.'
 
 describe('BillingPromotionNotice', () => {
   it('markets the 1:1 billing offer without changing payment details', () => {
@@ -53,8 +53,8 @@ describe('BillingPromotionNotice', () => {
 
     assert.match(markup, /role="note"/)
     assert.doesNotMatch(markup, /role="alert"/)
-    assert.match(markup, /CNY and USD credits are billed 1:1/)
-    assert.match(markup, /selected top-up amount is credited in full/)
-    assert.match(markup, /Sign in to get started/)
+    assert.match(markup, /Simple, transparent billing/)
+    assert.match(markup, /CNY and USD credits are calculated 1:1/)
+    assert.match(markup, /Sign in to view pricing and get started/)
   })
 })
