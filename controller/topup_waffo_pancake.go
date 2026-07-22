@@ -82,9 +82,6 @@ func getWaffoPancakePayMoney(amount int64, group string) float64 {
 		Mul(decimal.NewFromFloat(topupGroupRatio)).
 		Mul(decimal.NewFromFloat(discount))
 	if operation_setting.UseCNYTopUpAmounts() {
-		payMoney = dAmount.
-			Mul(decimal.NewFromFloat(topupGroupRatio)).
-			Mul(decimal.NewFromFloat(discount))
 		return payMoney.Round(2).InexactFloat64()
 	}
 
