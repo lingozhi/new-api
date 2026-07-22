@@ -51,7 +51,8 @@ describe('BillingPromotionNotice', () => {
       )
     )
 
-    assert.match(markup, /role="alert"/)
+    assert.match(markup, /role="note"/)
+    assert.doesNotMatch(markup, /role="alert"/)
     assert.match(markup, /CNY and USD credits are billed 1:1/)
     assert.match(markup, /selected top-up amount is credited in full/)
     assert.match(markup, /Sign in to get started/)
