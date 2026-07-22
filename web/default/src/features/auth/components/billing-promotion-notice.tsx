@@ -37,7 +37,7 @@ export function BillingPromotionNotice(props: BillingPromotionNoticeProps) {
       <BadgePercent className='text-emerald-600 dark:text-emerald-400' />
       <AlertDescription className='text-xs leading-5 sm:text-sm'>
         {t(
-          'Promotion offer: CNY and USD credits are billed 1:1, and your selected top-up amount is credited in full. Sign in to get started.'
+          'Simple, transparent billing: CNY and USD credits are calculated 1:1. Sign in to view pricing and get started.'
         )}
       </AlertDescription>
     </Alert>
