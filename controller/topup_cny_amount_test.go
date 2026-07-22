@@ -62,6 +62,13 @@ func TestCNYTopUpAmountsChargeSelectedAmount(t *testing.T) {
 	assert.Zero(t, getWaffoPayMoney(10, "default"))
 }
 
+func TestCNYWaffoPancakeTopUpAppliesPromotionalUnitPrice(t *testing.T) {
+	configureCNYTopUpAmountTest(t)
+	setting.WaffoPancakeUnitPrice = 500.0 / 513.0
+
+	assert.InDelta(t, 487.33, getWaffoPancakePayMoney(500, "default"), 0.0001)
+}
+
 func TestCNYTopUpAmountsRequireConfiguredPreset(t *testing.T) {
 	configureCNYTopUpAmountTest(t)
 
