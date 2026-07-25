@@ -697,12 +697,15 @@ func TestCapacityFallbackAffinityResumeRequiresSuccessfulTerminal(t *testing.T) 
 }
 
 func TestChannelSelectionExhaustionIsDistinctFromSelectorFailure(t *testing.T) {
-	exhausted := types.NewError(&channelSelectionExhaustedError{message: "no untried channel"}, types.ErrorCodeGetChannelFailed)
+	exhausted := newChannelSelectionExhaustedAPIError("gpt福利分组", "gpt-5.6-sol")
 	selectorFailure := types.NewError(errors.New("database unavailable"), types.ErrorCodeGetChannelFailed)
 
 	assert.True(t, isChannelSelectionExhausted(exhausted))
-	assert.Equal(t, "no untried channel", exhausted.Error())
+	assert.Equal(t, http.StatusServiceUnavailable, exhausted.StatusCode)
+	assert.Contains(t, exhausted.Error(), "gpt福利分组")
+	assert.Contains(t, exhausted.Error(), "gpt-5.6-sol")
 	assert.False(t, isChannelSelectionExhausted(selectorFailure))
+	assert.Equal(t, http.StatusInternalServerError, selectorFailure.StatusCode)
 }
 
 func TestCapacityFallbackHeaderDeadlinePreservesSecondAttempt(t *testing.T) {
