@@ -801,6 +801,17 @@ func isChannelSelectionExhausted(err error) bool {
 	return errors.As(err, &exhaustedErr)
 }
 
+func newChannelSelectionExhaustedAPIError(group, modelName string) *types.NewAPIError {
+	return types.NewErrorWithStatusCode(
+		&channelSelectionExhaustedError{
+			message: fmt.Sprintf("分组 %s 下模型 %s 的可用渠道不存在（retry）", group, modelName),
+		},
+		types.ErrorCodeGetChannelFailed,
+		http.StatusServiceUnavailable,
+		types.ErrOptionWithSkipRetry(),
+	)
+}
+
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
 	if info.ChannelMeta == nil {
 		autoBan := c.GetBool("auto_ban")
@@ -823,9 +834,7 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %s", selectGroup, info.OriginModelName, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 	if channel == nil {
-		return nil, types.NewError(&channelSelectionExhaustedError{
-			message: fmt.Sprintf("分组 %s 下模型 %s 的可用渠道不存在（retry）", selectGroup, info.OriginModelName),
-		}, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		return nil, newChannelSelectionExhaustedAPIError(selectGroup, info.OriginModelName)
 	}
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
