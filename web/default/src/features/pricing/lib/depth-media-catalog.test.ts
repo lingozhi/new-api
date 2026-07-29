@@ -116,6 +116,8 @@ describe('DepthMedia model plaza catalog', () => {
       assert.match(sample, /FAILURE/)
       assert.match(sample, /sleep|setTimeout/)
       assert.match(sample, /raise_for_status|response\.ok|result\.ok/)
+      assert.match(sample, /deadline/i)
+      assert.match(sample, /timed out/i)
     }
   })
 
