@@ -24,7 +24,7 @@ import {
   buildDepthMediaJobSample,
   consolidateDepthMediaModels,
 } from './depth-media-catalog'
-import { getFixedPriceUnit } from './model-helpers'
+import { getFixedPriceUnit, supportsPerformanceMetrics } from './model-helpers'
 import { calculateMediaVariantPrice } from './price'
 
 const sourceModels: PricingModel[] = [
@@ -101,6 +101,29 @@ describe('DepthMedia model plaza catalog', () => {
   test('applies group and recharge multipliers to parameter prices', () => {
     assert.equal(calculateMediaVariantPrice(0.03, 1.5, false, 1, 1), 0.045)
     assert.equal(calculateMediaVariantPrice(0.03, 1.5, true, 4, 8), 0.0225)
+  })
+
+  test('keeps polling in SDK samples until the task reaches a terminal state', () => {
+    for (const language of ['python', 'typescript', 'javascript'] as const) {
+      const sample = buildDepthMediaJobSample(language, {
+        baseUrl: 'https://api.opwan.ai',
+        apiKeyEnv: 'OPWAN_API_KEY',
+        modelName: 'background-remove',
+        endpointPath: '/v1/jobs',
+      })
+
+      assert.match(sample, /SUCCESS/)
+      assert.match(sample, /FAILURE/)
+      assert.match(sample, /sleep|setTimeout/)
+      assert.match(sample, /raise_for_status|response\.ok|result\.ok/)
+    }
+  })
+
+  test('does not advertise synthetic performance metrics for media aliases', () => {
+    const models = consolidateDepthMediaModels(sourceModels)
+
+    assert.equal(supportsPerformanceMetrics(models[0]), false)
+    assert.equal(supportsPerformanceMetrics(sourceModels[0]), true)
   })
 
   test('generates the unified jobs contract instead of chat completions', () => {
