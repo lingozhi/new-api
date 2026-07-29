@@ -99,21 +99,49 @@ describe('task log diagnostics', () => {
       data: {
         api_key: 'sk-secret',
         authorization: 'Bearer secret',
+        'x-api-key': 'sk-header-secret',
         nested: {
           access_token: 'secret-token',
+          client_secret: 'client-secret',
           safe_value: 'visible',
         },
+      },
+      properties: {
+        input: JSON.stringify({
+          prompt: 'visible',
+          apiKey: 'sk-input-secret',
+        }),
       },
     })
 
     assert.deepEqual(diagnostics.response, {
       api_key: '[REDACTED]',
       authorization: '[REDACTED]',
+      'x-api-key': '[REDACTED]',
       nested: {
         access_token: '[REDACTED]',
+        client_secret: '[REDACTED]',
         safe_value: 'visible',
       },
     })
+    assert.deepEqual(diagnostics.request.input, {
+      prompt: 'visible',
+      apiKey: '[REDACTED]',
+    })
+  })
+
+  test('does not report a legacy success result URL as an error', () => {
+    const resultUrl = 'https://cdn.example.com/video.mp4'
+    const diagnostics = buildTaskLogDiagnostics({
+      ...failedDepthMediaTask,
+      status: 'SUCCESS',
+      fail_reason: resultUrl,
+      result_url: resultUrl,
+      data: { result_url: resultUrl, status: 'succeeded' },
+    })
+
+    assert.equal(diagnostics.resultUrl, resultUrl)
+    assert.deepEqual(diagnostics.error, {})
   })
 
   test('keeps malformed legacy data readable without throwing', () => {
