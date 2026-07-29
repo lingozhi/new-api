@@ -151,10 +151,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	switch info.Action {
-	case ActionDepth:
-		return a.baseURL + "/v1/depth/jobs", nil
-	case ActionMedia:
-		return a.baseURL + "/v1/media/jobs", nil
+	case ActionDepth, ActionMedia:
+		return a.baseURL + "/v1/jobs", nil
 	default:
 		return "", fmt.Errorf("unsupported depth media action: %s", info.Action)
 	}
@@ -176,7 +174,10 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if !ok {
 		return nil, fmt.Errorf("invalid task request")
 	}
-	payload := requestPayload{SourceURL: request.Image}
+	payload := requestPayload{
+		SourceURL: request.Image,
+		Operation: ActionDepth,
+	}
 	if info.Action == ActionMedia {
 		if err := request.UnmarshalMetadata(&payload); err != nil {
 			return nil, err
@@ -259,13 +260,14 @@ func (a *TaskAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy 
 	if !ok {
 		return nil, fmt.Errorf("invalid action")
 	}
-	path := "/v1/media/jobs/"
-	if action == ActionDepth {
-		path = "/v1/depth/jobs/"
-	} else if action != ActionMedia {
+	if action != ActionDepth && action != ActionMedia {
 		return nil, fmt.Errorf("unsupported depth media action: %s", action)
 	}
-	request, err := http.NewRequest(http.MethodGet, strings.TrimRight(baseURL, "/")+path+url.PathEscape(taskID), nil)
+	request, err := http.NewRequest(
+		http.MethodGet,
+		strings.TrimRight(baseURL, "/")+"/v1/jobs/"+url.PathEscape(taskID),
+		nil,
+	)
 	if err != nil {
 		return nil, err
 	}

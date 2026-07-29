@@ -35,7 +35,11 @@ func DepthMediaRequestConvert() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		isDepth := strings.Contains(c.FullPath(), "/depth/jobs") || strings.Contains(c.Request.URL.Path, "/depth/jobs")
+		isDepthRoute := strings.Contains(c.FullPath(), "/depth/jobs") ||
+			strings.Contains(c.Request.URL.Path, "/depth/jobs")
+		isUnifiedRoute := c.FullPath() == "/v1/jobs" || c.Request.URL.Path == "/v1/jobs"
+		isDepth := isDepthRoute ||
+			(isUnifiedRoute && strings.EqualFold(strings.TrimSpace(request.Operation), "depth"))
 		modelName := strings.TrimSpace(request.Model)
 		if isDepth {
 			if modelName != "" && modelName != taskdepthmedia.ModelDepthVideo {
