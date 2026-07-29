@@ -41,6 +41,11 @@ func DepthMediaRequestConvert() gin.HandlerFunc {
 		isDepth := isDepthRoute ||
 			(isUnifiedRoute && strings.EqualFold(strings.TrimSpace(request.Operation), "depth"))
 		modelName := strings.TrimSpace(request.Model)
+		if modelName == taskdepthmedia.PublicModelDepthVideo && !isDepth {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "depth-video requires operation depth"})
+			c.Abort()
+			return
+		}
 		if isDepth {
 			if modelName != "" &&
 				modelName != taskdepthmedia.ModelDepthVideo &&

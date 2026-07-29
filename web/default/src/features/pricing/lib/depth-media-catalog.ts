@@ -41,17 +41,17 @@ const DEPTH_MODEL = 'depth-anything-v2-small-video'
 const BACKGROUND_PROFILES = [
   {
     source: 'background-remove-fast',
-    label: '快速去背景',
+    label: 'Fast background removal',
     quality: 'fast',
   },
   {
     source: 'background-remove-quality',
-    label: '高质量去背景',
+    label: 'High-quality background removal',
     quality: 'quality',
   },
   {
     source: 'background-remove-matting',
-    label: '精细抠图',
+    label: 'Precision matting',
     quality: 'matting',
   },
 ] as const
@@ -59,25 +59,25 @@ const BACKGROUND_PROFILES = [
 const UPSCALE_PROFILES = [
   {
     source: 'image-upscale-fast-2x',
-    label: '快速 2 倍',
+    label: 'Fast 2x',
     quality: 'fast',
     scale: 2,
   },
   {
     source: 'image-upscale-fast-4x',
-    label: '快速 4 倍',
+    label: 'Fast 4x',
     quality: 'fast',
     scale: 4,
   },
   {
     source: 'image-upscale-fidelity-4x',
-    label: '高保真 4 倍',
+    label: 'Fidelity 4x',
     quality: 'fidelity',
     scale: 4,
   },
   {
     source: 'image-upscale-sharp-4x',
-    label: '锐化 4 倍',
+    label: 'Sharp 4x',
     quality: 'sharp',
     scale: 4,
   },
@@ -166,7 +166,8 @@ function consolidatedModel(
 }
 
 export function consolidateDepthMediaModels(
-  models: PricingModel[]
+  models: PricingModel[],
+  translate: (key: string) => string = (key) => key
 ): PricingModel[] {
   const indexed = new Map(models.map((model) => [model.model_name, model]))
   const depth = indexed.get(DEPTH_MODEL)
@@ -185,14 +186,16 @@ export function consolidateDepthMediaModels(
       consolidatedModel(
         [depth],
         'depth-video',
-        '把视频转换为灰度深度图，最长 10 分钟。',
-        '视频,深度图',
+        translate(
+          'Convert video into a grayscale depth map, up to 10 minutes.'
+        ),
+        translate('Video,Depth map'),
         mediaProfile(
           'depth',
           [],
           [
             {
-              label: '深度视频',
+              label: translate('Depth video'),
               parameters: { operation: 'depth' },
               price: depth.model_price ?? 0,
               unit: 'second',
@@ -207,8 +210,10 @@ export function consolidateDepthMediaModels(
       consolidatedModel(
         background.map((entry) => entry.model),
         'background-remove',
-        '去除图片背景，支持快速、高质量和精细抠图。',
-        '图片,去背景,抠图',
+        translate(
+          'Remove image backgrounds with fast, high-quality, or precision matting.'
+        ),
+        translate('Image,Background removal,Matting'),
         mediaProfile(
           'remove_background',
           [
@@ -229,7 +234,7 @@ export function consolidateDepthMediaModels(
             },
           ],
           background.map((entry) => ({
-            label: entry.profile.label,
+            label: translate(entry.profile.label),
             parameters: {
               operation: 'remove_background',
               quality: entry.profile.quality,
@@ -246,8 +251,8 @@ export function consolidateDepthMediaModels(
       consolidatedModel(
         upscale.map((entry) => entry.model),
         'image-upscale',
-        '图片高清放大，支持快速、高保真和锐化模式。',
-        '图片,高清放大',
+        translate('Upscale images with fast, fidelity, or sharp profiles.'),
+        translate('Image,Upscale'),
         mediaProfile(
           'upscale',
           [
@@ -280,7 +285,7 @@ export function consolidateDepthMediaModels(
             },
           ],
           upscale.map((entry) => ({
-            label: entry.profile.label,
+            label: translate(entry.profile.label),
             parameters: {
               operation: 'upscale',
               quality: entry.profile.quality,

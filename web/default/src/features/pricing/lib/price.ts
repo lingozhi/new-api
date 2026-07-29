@@ -138,6 +138,21 @@ function applyRechargeRate(
   return (price * priceRate) / usdExchangeRate
 }
 
+export function calculateMediaVariantPrice(
+  price: number,
+  groupRatio: number,
+  showWithRecharge: boolean,
+  priceRate: number,
+  usdExchangeRate: number
+): number {
+  return applyRechargeRate(
+    price * groupRatio,
+    showWithRecharge,
+    priceRate,
+    usdExchangeRate
+  )
+}
+
 /**
  * Format token-based price for display
  */
