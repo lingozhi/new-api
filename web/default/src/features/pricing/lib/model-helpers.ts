@@ -113,3 +113,7 @@ export function getFixedPriceUnit(model: PricingModel): 'request' | 'seconds' {
     ? 'seconds'
     : 'request'
 }
+
+export function supportsPerformanceMetrics(model: PricingModel): boolean {
+  return model.api_profile?.kind !== 'media'
+}
