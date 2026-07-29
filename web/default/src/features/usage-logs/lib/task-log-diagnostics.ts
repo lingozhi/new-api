@@ -33,9 +33,6 @@ const REQUEST_PARAMETER_KEYS = [
   'output_format',
 ] as const
 
-const SENSITIVE_KEY_PATTERN =
-  /^(?:api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|token|secret|password|credential|private[_-]?key)$/i
-
 export interface TaskLogDiagnostics {
   request: Record<string, unknown>
   modelMapping: Record<string, string>
@@ -69,6 +66,19 @@ function optionalString(value: unknown): string | undefined {
   return normalized === '' ? undefined : normalized
 }
 
+function isSensitiveKey(key: string): boolean {
+  const normalized = key.toLowerCase().replaceAll(/[^a-z0-9]/g, '')
+  return (
+    normalized === 'authorization' ||
+    normalized.endsWith('apikey') ||
+    normalized.endsWith('token') ||
+    normalized.endsWith('secret') ||
+    normalized.endsWith('password') ||
+    normalized.endsWith('credential') ||
+    normalized.endsWith('privatekey')
+  )
+}
+
 function redactSensitiveValues(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => redactSensitiveValues(item))
@@ -78,9 +88,7 @@ function redactSensitiveValues(value: unknown): unknown {
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [
       key,
-      SENSITIVE_KEY_PATTERN.test(key)
-        ? REDACTED_VALUE
-        : redactSensitiveValues(item),
+      isSensitiveKey(key) ? REDACTED_VALUE : redactSensitiveValues(item),
     ])
   )
 }
@@ -130,7 +138,7 @@ export function buildTaskLogDiagnostics(log: TaskLog): TaskLogDiagnostics {
   }
   const input = propertiesRecord.input
   if (input != null && input !== '') {
-    request.input = parseStructuredValue(input)
+    request.input = redactSensitiveValues(parseStructuredValue(input))
   }
 
   const requestedModel = optionalString(propertiesRecord.origin_model_name)
@@ -148,7 +156,14 @@ export function buildTaskLogDiagnostics(log: TaskLog): TaskLogDiagnostics {
   const failReason = optionalString(log.fail_reason)
   if (errorCode) error.code = errorCode
   if (errorMessage) error.message = errorMessage
-  if (failReason) error.fail_reason = failReason
+  const normalizedStatus = log.status.toUpperCase()
+  if (
+    failReason &&
+    normalizedStatus !== 'SUCCESS' &&
+    normalizedStatus !== 'SUCCEEDED'
+  ) {
+    error.fail_reason = failReason
+  }
 
   return {
     request,
