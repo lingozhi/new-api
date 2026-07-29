@@ -76,6 +76,7 @@ import {
   getAvailableGroups,
   getConfiguredGroupRatio,
   isTokenBasedModel,
+  supportsPerformanceMetrics,
 } from '../lib/model-helpers'
 import {
   calculateMediaVariantPrice,
@@ -1354,14 +1355,23 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
     props.model.billing_mode === 'tiered_expr' &&
     Boolean(props.model.billing_expr)
   const isMediaProfile = props.model.api_profile?.kind === 'media'
+  const showPerformance = supportsPerformanceMetrics(props.model)
+  const tabValues = showPerformance
+    ? TAB_VALUES
+    : (['overview', 'api'] as const)
 
   return (
     <div className='@container/details space-y-4'>
       <ModelHeader model={props.model} />
 
       <Tabs defaultValue='overview' className='gap-4'>
-        <TabsList className='bg-muted/60 grid w-full grid-cols-3 gap-1 rounded-lg p-1 group-data-horizontal/tabs:h-auto'>
-          {TAB_VALUES.map((value) => {
+        <TabsList
+          className={cn(
+            'bg-muted/60 grid w-full gap-1 rounded-lg p-1 group-data-horizontal/tabs:h-auto',
+            showPerformance ? 'grid-cols-3' : 'grid-cols-2'
+          )}
+        >
+          {tabValues.map((value) => {
             const Icon = TAB_META[value].icon
             return (
               <TabsTrigger
@@ -1377,7 +1387,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
         </TabsList>
 
         <TabsContent value='overview' className='space-y-6 outline-none'>
-          <OverviewSummaryGrid model={props.model} />
+          {showPerformance && <OverviewSummaryGrid model={props.model} />}
 
           <section className='bg-card/60 space-y-5 rounded-xl border p-4 shadow-sm'>
             <SectionTitle>{t('Pricing')}</SectionTitle>
@@ -1426,9 +1436,11 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
           <ModelBackendDetailsSection model={props.model} />
         </TabsContent>
 
-        <TabsContent value='performance' className='outline-none'>
-          <ModelDetailsPerformance model={props.model} />
-        </TabsContent>
+        {showPerformance && (
+          <TabsContent value='performance' className='outline-none'>
+            <ModelDetailsPerformance model={props.model} />
+          </TabsContent>
+        )}
 
         <TabsContent value='api' className='outline-none'>
           <ModelDetailsApi

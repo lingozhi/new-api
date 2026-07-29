@@ -606,7 +606,7 @@ function CodeSamplesSection(props: {
       </p>
 
       {props.model.api_profile && props.model.api_profile.webhook && (
-        <WebhookContractNotice />
+        <WebhookContractNotice profileKind={props.model.api_profile.kind} />
       )}
     </section>
   )
@@ -623,7 +623,9 @@ function ImageSampleRuntimeHint(props: { lang: Lang }) {
   )
 }
 
-function WebhookContractNotice() {
+function WebhookContractNotice(props: {
+  profileKind: ModelApiProfile['kind']
+}) {
   const { t } = useTranslation()
 
   return (
@@ -638,9 +640,13 @@ function WebhookContractNotice() {
 
       <ul className='text-muted-foreground grid gap-x-6 gap-y-1.5 text-xs leading-relaxed sm:grid-cols-2'>
         <li>
-          {t(
-            'webhook_url and webhook_secret are optional fields inside input. The callback must be a publicly reachable HTTPS URL.'
-          )}
+          {props.profileKind === 'media'
+            ? t(
+                'webhook_url and webhook_secret are optional top-level request fields. The callback must be a publicly reachable HTTPS URL.'
+              )
+            : t(
+                'webhook_url and webhook_secret are optional fields inside input. The callback must be a publicly reachable HTTPS URL.'
+              )}
         </li>
         <li>
           {t(
@@ -676,7 +682,9 @@ function SupportedParametersSection(props: { model: PricingModel }) {
   const { t } = useTranslation()
   const params = useMemo(() => {
     if (props.model.api_profile) {
-      return props.model.api_profile.parameters.map(profileParameterForDisplay)
+      return props.model.api_profile.parameters.map((parameter) =>
+        profileParameterForDisplay(parameter, props.model.api_profile?.kind)
+      )
     }
     return buildSupportedParameters(props.model)
   }, [props.model])
@@ -748,7 +756,8 @@ function SupportedParametersSection(props: { model: PricingModel }) {
 }
 
 function profileParameterForDisplay(
-  parameter: ApiProfileParameter
+  parameter: ApiProfileParameter,
+  profileKind?: ModelApiProfile['kind']
 ): SupportedParameter {
   let range: string | undefined
   if (parameter.min !== undefined && parameter.max !== undefined) {
@@ -769,19 +778,32 @@ function profileParameterForDisplay(
     enumValues: parameter.enum_values,
     range,
     descriptionKey:
+      (profileKind === 'media'
+        ? MEDIA_PARAMETER_DESCRIPTION_KEYS[parameter.name]
+        : undefined) ||
       IMAGE_PARAMETER_DESCRIPTION_KEYS[parameter.name] ||
       parameter.description ||
       parameter.name,
   }
 }
 
+const MEDIA_PARAMETER_DESCRIPTION_KEYS: Record<string, string> = {
+  quality: 'Media processing quality profile',
+  webhook_url: 'URL receiving asynchronous task completion notifications',
+  webhook_secret: 'Secret used to sign asynchronous task webhook deliveries',
+}
+
 const IMAGE_PARAMETER_DESCRIPTION_KEYS: Record<string, string> = {
+  source_url: 'Publicly reachable source image or video URL',
+  operation: 'Media processing operation',
   prompt: 'Text description of the desired image',
   image_input: 'Reference image URLs for image editing',
   aspect_ratio: 'Output aspect ratio supported by the selected model',
   resolution: 'Output resolution supported by the selected model',
   size: 'Output image size',
   quality: 'Generation quality preset',
+  scale: 'Upscale multiplier',
+  format: 'Generated image file format',
   n: 'Number of images to generate',
   output_format: 'Generated image file format',
   output_compression: 'Output compression level from 0 to 100',
