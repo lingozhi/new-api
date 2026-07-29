@@ -55,6 +55,7 @@ import {
   formatUptimePct,
   getSuccessRateTextClass,
 } from '@/features/performance-metrics/lib/format'
+import { formatCurrencyFromUSD } from '@/lib/currency'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 
@@ -101,6 +102,58 @@ function SectionTitle(props: { children: React.ReactNode }) {
     <h2 className='text-muted-foreground mb-3 text-xs font-semibold tracking-wider uppercase'>
       {props.children}
     </h2>
+  )
+}
+
+function MediaVariantPricingSection(props: {
+  model: PricingModel
+  priceRate: number
+  usdExchangeRate: number
+  showRechargePrice: boolean
+}) {
+  const { t } = useTranslation()
+  const variants = props.model.api_profile?.pricing_variants || []
+  if (variants.length === 0) return null
+
+  return (
+    <div className='space-y-2'>
+      <p className='text-muted-foreground text-xs font-medium'>
+        {t('Parameter pricing')}
+      </p>
+      <div className='overflow-hidden rounded-lg border'>
+        {variants.map((variant) => {
+          const displayPrice = props.showRechargePrice
+            ? (variant.price * props.priceRate) / props.usdExchangeRate
+            : variant.price
+          const parameters = Object.entries(variant.parameters)
+            .map(([key, value]) => `${key}=${value}`)
+            .join(' · ')
+          return (
+            <div
+              key={`${variant.label}-${parameters}`}
+              className='border-border/60 flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2.5 last:border-b-0'
+            >
+              <div className='min-w-0'>
+                <p className='text-sm font-medium'>{variant.label}</p>
+                <code className='text-muted-foreground block text-xs break-all'>
+                  {parameters}
+                </code>
+              </div>
+              <span className='shrink-0 font-mono text-sm font-semibold'>
+                {formatCurrencyFromUSD(displayPrice, {
+                  digitsLarge: 4,
+                  digitsSmall: 6,
+                  abbreviate: false,
+                })}
+                <span className='text-muted-foreground ml-1 text-xs font-normal'>
+                  /{variant.unit === 'second' ? t('seconds') : t('request')}
+                </span>
+              </span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -1310,6 +1363,12 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
               showRechargePrice={showRechargePrice}
             />
             <ImageResolutionPricingSection
+              model={props.model}
+              priceRate={props.priceRate}
+              usdExchangeRate={props.usdExchangeRate}
+              showRechargePrice={showRechargePrice}
+            />
+            <MediaVariantPricingSection
               model={props.model}
               priceRate={props.priceRate}
               usdExchangeRate={props.usdExchangeRate}

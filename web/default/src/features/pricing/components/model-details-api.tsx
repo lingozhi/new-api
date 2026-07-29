@@ -42,6 +42,7 @@ import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useStatus } from '@/hooks/use-status'
 
+import { buildDepthMediaJobSample } from '../lib/depth-media-catalog'
 import {
   buildAsyncImageSample,
   IMAGE_SAMPLE_LANGUAGES,
@@ -439,6 +440,14 @@ function buildSample(
       profile: ctx.apiProfile ?? fallbackImageProfile(ctx.endpointPath),
     })
   }
+  if (endpointType === 'depth-media') {
+    return buildDepthMediaJobSample(lang, {
+      baseUrl: ctx.baseUrl,
+      apiKeyEnv: ctx.apiKeyEnv,
+      modelName: ctx.modelName,
+      endpointPath: ctx.endpointPath,
+    })
+  }
   return buildChatSample(lang, ctx)
 }
 
@@ -467,10 +476,13 @@ function CodeSamplesSection(props: {
   }, [status])
 
   const endpoints = useMemo(() => {
-    if (props.model.api_profile?.kind === 'image') {
+    if (props.model.api_profile) {
       return [
         {
-          type: 'image-generation',
+          type:
+            props.model.api_profile.kind === 'image'
+              ? 'image-generation'
+              : 'depth-media',
           path: props.model.api_profile.endpoint,
           method: 'POST',
         },
@@ -521,7 +533,7 @@ function CodeSamplesSection(props: {
     <section>
       <SectionTitle icon={ScrollText}>{t('Code samples')}</SectionTitle>
 
-      {props.model.api_profile?.kind === 'image' && (
+      {props.model.api_profile && (
         <div className='mb-3 flex flex-wrap gap-1.5'>
           <Badge variant='secondary'>202 {t('Async task')}</Badge>
           <Badge variant='outline'>{t('Polling')}</Badge>
@@ -535,8 +547,12 @@ function CodeSamplesSection(props: {
       )}
 
       <div className='flex flex-wrap items-center gap-2'>
-        {props.model.api_profile?.kind === 'image' ? (
-          <Badge variant='outline'>{t('Unified image generation')}</Badge>
+        {props.model.api_profile ? (
+          <Badge variant='outline'>
+            {props.model.api_profile.kind === 'image'
+              ? t('Unified image generation')
+              : t('Unified media jobs')}
+          </Badge>
         ) : (
           endpoints.length > 1 && (
             <Tabs value={endpointType} onValueChange={setEndpointType}>
@@ -589,8 +605,9 @@ function CodeSamplesSection(props: {
         {t('must contain the API key from your token settings.')}
       </p>
 
-      {props.model.api_profile?.kind === 'image' &&
-        props.model.api_profile.webhook && <WebhookContractNotice />}
+      {props.model.api_profile && props.model.api_profile.webhook && (
+        <WebhookContractNotice />
+      )}
     </section>
   )
 }
@@ -658,7 +675,7 @@ function WebhookContractNotice() {
 function SupportedParametersSection(props: { model: PricingModel }) {
   const { t } = useTranslation()
   const params = useMemo(() => {
-    if (props.model.api_profile?.kind === 'image') {
+    if (props.model.api_profile) {
       return props.model.api_profile.parameters.map(profileParameterForDisplay)
     }
     return buildSupportedParameters(props.model)
@@ -966,9 +983,7 @@ export function ModelDetailsApi(props: {
       <CodeSamplesSection model={props.model} endpointMap={props.endpointMap} />
       <AuthSection />
       <SupportedParametersSection model={props.model} />
-      {props.model.api_profile?.kind !== 'image' && (
-        <RateLimitsSection model={props.model} />
-      )}
+      {!props.model.api_profile && <RateLimitsSection model={props.model} />}
     </div>
   )
 }

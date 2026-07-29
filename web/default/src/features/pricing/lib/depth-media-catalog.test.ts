@@ -27,6 +27,7 @@ import {
 
 const sourceModels: PricingModel[] = [
   {
+    id: 73,
     model_name: 'depth-anything-v2-small-video',
     description: 'legacy depth',
     quota_type: 1,
@@ -45,6 +46,7 @@ const sourceModels: PricingModel[] = [
     ['image-upscale-fidelity-4x', 0.05],
     ['image-upscale-sharp-4x', 0.05],
   ].map(([modelName, price]) => ({
+    id: 74,
     model_name: String(modelName),
     description: `legacy ${modelName}`,
     quota_type: 1 as const,
@@ -78,12 +80,12 @@ describe('DepthMedia model plaza catalog', () => {
     const background = models.find(
       (model) => model.model_name === 'background-remove'
     )
-    const upscale = models.find(
-      (model) => model.model_name === 'image-upscale'
-    )
+    const upscale = models.find((model) => model.model_name === 'image-upscale')
 
     assert.deepEqual(
-      background?.api_profile?.pricing_variants?.map((variant) => variant.price),
+      background?.api_profile?.pricing_variants?.map(
+        (variant) => variant.price
+      ),
       [0.02, 0.03, 0.03]
     )
     assert.deepEqual(

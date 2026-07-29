@@ -98,7 +98,7 @@ export type ApiProfileCombinationConstraint = {
 }
 
 export type ModelApiProfile = {
-  kind: 'image'
+  kind: 'image' | 'media'
   endpoint: string
   async: boolean
   poll_endpoint?: string
@@ -107,6 +107,14 @@ export type ModelApiProfile = {
   operations?: string[]
   parameters: ApiProfileParameter[]
   constraints?: ApiProfileCombinationConstraint[]
+  pricing_variants?: ModelPricingVariant[]
+}
+
+export type ModelPricingVariant = {
+  label: string
+  parameters: Record<string, string | number | boolean>
+  price: number
+  unit: 'request' | 'second'
 }
 
 /** Input/output modalities supported by a model. */
