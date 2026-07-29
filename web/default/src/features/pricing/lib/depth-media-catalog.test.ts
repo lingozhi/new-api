@@ -21,6 +21,7 @@ import { describe, test } from 'node:test'
 
 import type { PricingModel } from '../types'
 import {
+  buildDepthMediaAiIntegrationGuide,
   buildDepthMediaJobSample,
   consolidateDepthMediaModels,
 } from './depth-media-catalog'
@@ -149,5 +150,30 @@ describe('DepthMedia model plaza catalog', () => {
     assert.match(sample, /\/v1\/jobs\/<TASK_ID>/)
     assert.doesNotMatch(sample, /chat\/completions/)
     assert.doesNotMatch(sample, /messages/)
+  })
+
+  test('generates a self-contained AI integration guide for one-click copy', () => {
+    const models = consolidateDepthMediaModels(sourceModels)
+    const guide = buildDepthMediaAiIntegrationGuide({
+      baseUrl: 'https://api.opwan.ai',
+      apiKeyEnv: 'OPWAN_API_KEY',
+      selectedModel: models[2],
+      publicModels: models,
+    })
+
+    assert.match(guide, /^# Opwan DepthMedia API integration guide/m)
+    assert.match(guide, /POST https:\/\/api\.opwan\.ai\/v1\/jobs/)
+    assert.match(guide, /GET https:\/\/api\.opwan\.ai\/v1\/jobs\/\{task_id\}/)
+    assert.match(guide, /Authorization: Bearer \$OPWAN_API_KEY/)
+    assert.match(guide, /image-upscale/)
+    assert.match(guide, /operation=upscale, quality=fidelity, scale=4/)
+    assert.match(guide, /0\.05 CNY per request/)
+    assert.match(guide, /background-remove/)
+    assert.match(guide, /depth-video/)
+    assert.match(guide, /Webhook/)
+    assert.match(guide, /X-Webhook-Signature/)
+    assert.match(guide, /SUCCESS/)
+    assert.match(guide, /FAILURE/)
+    assert.match(guide, /Do not use \/v1\/chat\/completions/)
   })
 })
