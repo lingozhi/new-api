@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { ColumnDef } from '@tanstack/react-table'
 import { Music } from 'lucide-react'
 /* eslint-disable react-refresh/only-export-components */
-import { useState, useMemo } from 'react'
+import { useState, useMemo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
@@ -35,7 +35,7 @@ import {
   AudioPreviewDialog,
   type AudioClip,
 } from '../dialogs/audio-preview-dialog'
-import { FailReasonDialog } from '../dialogs/fail-reason-dialog'
+import { TaskLogDetailsDialog } from '../dialogs/task-log-details-dialog'
 import { useUsageLogsContext } from '../usage-logs-provider'
 import {
   createDurationColumn,
@@ -224,6 +224,7 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
 
         const isSunoSuccess =
           log.platform === 'suno' && status === TASK_STATUS.SUCCESS
+        let mediaPreview: ReactNode = null
         if (isSunoSuccess) {
           const data = parseTaskData(log.data)
           if (
@@ -234,7 +235,7 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
                 (c as Record<string, unknown>).audio_url
             )
           ) {
-            return <AudioPreviewCell log={log} />
+            mediaPreview = <AudioPreviewCell log={log} />
           }
         }
 
@@ -249,7 +250,7 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
 
         if (isSuccess && isVideoTask && isUrl) {
           const videoUrl = `/v1/videos/${log.task_id}/content`
-          return (
+          mediaPreview = (
             <a
               href={videoUrl}
               target='_blank'
@@ -261,28 +262,30 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
           )
         }
 
-        if (!failReason) {
-          return <span className='text-muted-foreground/60 text-xs'>-</span>
-        }
-
         return (
-          <>
+          <div className='flex max-w-[200px] flex-col items-start gap-1'>
+            {mediaPreview}
             <button
               type='button'
-              className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
+              className={cn(
+                'group flex max-w-full items-center gap-1 text-left text-xs hover:underline',
+                failReason
+                  ? 'text-red-600 dark:text-red-400'
+                  : 'text-foreground'
+              )}
               onClick={() => setDialogOpen(true)}
-              title={t('Click to view full error message')}
+              title={t('View task diagnostics')}
             >
-              <span className='truncate leading-snug text-red-600 group-hover:underline dark:text-red-400'>
-                {failReason}
+              <span className='truncate leading-snug'>
+                {failReason || t('View details')}
               </span>
             </button>
-            <FailReasonDialog
-              failReason={failReason}
+            <TaskLogDetailsDialog
+              log={log}
               open={dialogOpen}
               onOpenChange={setDialogOpen}
             />
-          </>
+          </div>
         )
       },
       size: 200,

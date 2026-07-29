@@ -85,10 +85,7 @@ describe('task log diagnostics', () => {
       }),
     })
 
-    assert.equal(
-      diagnostics.resultUrl,
-      'https://cdn.example.com/result.webp'
-    )
+    assert.equal(diagnostics.resultUrl, 'https://cdn.example.com/result.webp')
     assert.deepEqual(diagnostics.error, {})
     assert.deepEqual(diagnostics.response, {
       result_url: 'https://upstream.example.com/result.webp',
