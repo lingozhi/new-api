@@ -27,6 +27,12 @@ var TaskTimeoutMinutes int
 // temporary variable for sora patch, will be removed in future
 var TaskPricePatches []string
 
+// TaskPricePerSecondModels use a fixed per-second price but reconcile the
+// maximum submit-time precharge to the provider-reported duration on completion.
+var TaskPricePerSecondModels = []string{
+	"depth-anything-v2-small-video",
+}
+
 // TrustedRedirectDomains is a list of trusted domains for redirect URL validation.
 // Domains support subdomain matching (e.g., "example.com" matches "sub.example.com").
 var TrustedRedirectDomains []string
