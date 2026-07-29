@@ -61,7 +61,7 @@ func ValidateJSONWebhookURL(webhookURL string) error {
 		return err
 	}
 	if !strings.EqualFold(parsed.Scheme, "https") {
-		return fmt.Errorf("async image webhook transport only supports https URLs")
+		return fmt.Errorf("async task webhook transport only supports https URLs")
 	}
 	return validateWebhookFetchURL(webhookURL)
 }

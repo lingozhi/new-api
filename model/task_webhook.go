@@ -601,10 +601,7 @@ func FindDueTaskWebhooks(now int64, limit int) ([]*TaskWebhook, error) {
 	}
 	var webhooks []*TaskWebhook
 	err := DB.Model(&TaskWebhook{}).
-		Joins(
-			"LEFT JOIN tasks ON tasks.task_id = task_webhooks.task_id AND tasks.platform = ?",
-			constant.TaskPlatformOpenAIImage,
-		).
+		Joins("LEFT JOIN tasks ON tasks.task_id = task_webhooks.task_id").
 		Where("task_webhooks.status = ? AND task_webhooks.next_attempt_at <= ? AND (task_webhooks.lease_expires_at IS NULL OR task_webhooks.lease_expires_at <= ?)", TaskWebhookStatusPending, now, now).
 		Where("tasks.id IS NULL OR tasks.status IN ?", []TaskStatus{TaskStatusSuccess, TaskStatusFailure}).
 		Order("task_webhooks.id asc").

@@ -31,6 +31,16 @@ func SetVideoRouter(router *gin.Engine) {
 		videoV1Router.GET("/videos/:task_id", controller.RelayTaskFetch)
 	}
 
+	depthMediaV1Router := router.Group("/v1")
+	depthMediaV1Router.Use(middleware.RouteTag("relay"))
+	depthMediaV1Router.Use(middleware.DepthMediaRequestConvert(), middleware.TokenAuth(), middleware.Distribute())
+	{
+		depthMediaV1Router.POST("/depth/jobs", controller.RelayTask)
+		depthMediaV1Router.GET("/depth/jobs/:task_id", controller.RelayTaskFetch)
+		depthMediaV1Router.POST("/media/jobs", controller.RelayTask)
+		depthMediaV1Router.GET("/media/jobs/:task_id", controller.RelayTaskFetch)
+	}
+
 	klingV1Router := router.Group("/kling/v1")
 	klingV1Router.Use(middleware.RouteTag("relay"))
 	klingV1Router.Use(middleware.KlingRequestConvert(), middleware.TokenAuth(), middleware.Distribute())

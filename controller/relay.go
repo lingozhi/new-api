@@ -1484,7 +1484,17 @@ func RelayTask(c *gin.Context) {
 		task.Quota = result.Quota
 		task.Data = result.TaskData
 		task.Action = relayInfo.Action
-		if insertErr := task.Insert(); insertErr != nil {
+		var webhook *model.TaskWebhook
+		if value, exists := c.Get("task_request"); exists {
+			if request, ok := value.(relaycommon.TaskSubmitReq); ok && request.WebhookURL != "" {
+				webhook = &model.TaskWebhook{
+					TaskID: task.TaskID,
+					URL:    request.WebhookURL,
+					Secret: request.WebhookSecret,
+				}
+			}
+		}
+		if insertErr := model.InsertTaskWithWebhook(task, webhook); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())
 		}
 	}

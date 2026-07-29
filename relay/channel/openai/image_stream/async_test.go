@@ -2344,6 +2344,46 @@ func TestDeliverDueImageWebhooksKeepsDeliveryIDAcrossRetries(t *testing.T) {
 	assert.Equal(t, model.TaskWebhookStatusDelivered, hook.Status)
 }
 
+func TestDeliverDueImageWebhooksDeliversGenericTaskPayload(t *testing.T) {
+	setupAsyncImageSubmitTestDB(t)
+	now := common.GetTimestamp()
+	task := &model.Task{
+		TaskID:     "task_depth_media_delivery",
+		Platform:   constant.TaskPlatform("59"),
+		Status:     model.TaskStatusSuccess,
+		Progress:   "100%",
+		SubmitTime: now,
+		UpdatedAt:  now,
+		PrivateData: model.TaskPrivateData{
+			ResultURL: "https://cdn.example.com/result.webp",
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+	hook := &model.TaskWebhook{
+		TaskID: task.TaskID,
+		URL:    "https://example.com/hook",
+		Secret: "webhook-secret",
+	}
+	require.NoError(t, model.DB.Create(hook).Error)
+
+	previousSender := sendAsyncImageWebhook
+	sendAsyncImageWebhook = func(_ context.Context, _ string, _ string, deliveryID string, payload any) error {
+		assert.Equal(t, task.TaskID, deliveryID)
+		body, ok := payload.(gin.H)
+		require.True(t, ok)
+		assert.Equal(t, task.TaskID, body["task_id"])
+		assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), body["status"])
+		assert.Equal(t, "https://cdn.example.com/result.webp", body["result_url"])
+		return nil
+	}
+	t.Cleanup(func() { sendAsyncImageWebhook = previousSender })
+
+	delivered, retried, err := deliverDueImageWebhooks(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, delivered)
+	assert.Zero(t, retried)
+}
+
 func TestDeliverDueImageWebhooksQuarantinesUnreadableCredentialsPerRow(t *testing.T) {
 	setupAsyncImageSubmitTestDB(t)
 	now := common.GetTimestamp()
