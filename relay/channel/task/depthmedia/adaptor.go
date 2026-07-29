@@ -35,6 +35,10 @@ const (
 	ModelUpscaleFast4X     = "image-upscale-fast-4x"
 	ModelUpscaleFidelity4X = "image-upscale-fidelity-4x"
 	ModelUpscaleSharp4X    = "image-upscale-sharp-4x"
+
+	PublicModelDepthVideo       = "depth-video"
+	PublicModelBackgroundRemove = "background-remove"
+	PublicModelImageUpscale     = "image-upscale"
 )
 
 var supportedModels = []string{

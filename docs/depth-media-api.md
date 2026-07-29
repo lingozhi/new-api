@@ -21,7 +21,7 @@ Content-Type: application/json
 
 ## 深度视频
 
-模型：`depth-anything-v2-small-video`
+模型：`depth-video`
 
 计费为 `$0.002/秒`（按当前网站汇率约 `¥0.0146/秒`）。系统根据上游返回的
 实际帧数和 FPS 计算时长，不采用客户端申报值；不足一秒的部分向上取整。单个视频
@@ -32,6 +32,7 @@ curl https://api.opwan.ai/v1/jobs \
   -H "Authorization: Bearer $OPWAN_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
+    "model": "depth-video",
     "source_url": "https://cdn.example.com/input.mp4",
     "operation": "depth",
     "webhook_url": "https://client.example.com/webhooks/depth-media",
@@ -49,23 +50,26 @@ POST /v1/jobs
 
 支持的参数组合：
 
-| 模型 | operation | quality | scale | 单次价格 |
-| --- | --- | --- | --- | --- |
-| `background-remove-fast` | `remove_background` | `fast` | 不传 | `$0.02` |
-| `background-remove-quality` | `remove_background` | `quality` | 不传 | `$0.03` |
-| `background-remove-matting` | `remove_background` | `matting` | 不传 | `$0.03` |
-| `image-upscale-fast-2x` | `upscale` | `fast` | `2` | `$0.02` |
-| `image-upscale-fast-4x` | `upscale` | `fast` | `4` | `$0.02` |
-| `image-upscale-fidelity-4x` | `upscale` | `fidelity` | `4` | `$0.05` |
-| `image-upscale-sharp-4x` | `upscale` | `sharp` | `4` | `$0.05` |
+| 模型 | 档位 | operation | quality | scale | 单次价格 |
+| --- | --- | --- | --- | --- | --- |
+| `background-remove` | 快速 | `remove_background` | `fast` | 不传 | `$0.02` |
+| `background-remove` | 高质量 | `remove_background` | `quality` | 不传 | `$0.03` |
+| `background-remove` | 精细抠图 | `remove_background` | `matting` | 不传 | `$0.03` |
+| `image-upscale` | 快速 2 倍 | `upscale` | `fast` | `2` | `$0.02` |
+| `image-upscale` | 快速 4 倍 | `upscale` | `fast` | `4` | `$0.02` |
+| `image-upscale` | 高保真 4 倍 | `upscale` | `fidelity` | `4` | `$0.05` |
+| `image-upscale` | 锐化 4 倍 | `upscale` | `sharp` | `4` | `$0.05` |
 
-模型会根据参数组合自动选择。图片格式支持上游允许的 `png` 和 `webp`。
+模型广场只展示 `depth-video`、`background-remove`、`image-upscale` 三个模型。
+具体处理档位和价格由参数决定，并在模型详情抽屉中展示。图片格式支持上游允许的
+`png` 和 `webp`。
 
 ```bash
 curl https://api.opwan.ai/v1/jobs \
   -H "Authorization: Bearer $OPWAN_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
+    "model": "image-upscale",
     "source_url": "https://cdn.example.com/input.png",
     "operation": "upscale",
     "quality": "fidelity",

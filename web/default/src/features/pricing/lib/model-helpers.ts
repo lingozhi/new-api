@@ -107,3 +107,9 @@ export function replaceModelInPath(path: string, modelName: string): string {
 export function isTokenBasedModel(model: PricingModel): boolean {
   return model.quota_type === QUOTA_TYPE_VALUES.TOKEN
 }
+
+export function getFixedPriceUnit(model: PricingModel): 'request' | 'seconds' {
+  return model.api_profile?.pricing_variants?.[0]?.unit === 'second'
+    ? 'seconds'
+    : 'request'
+}

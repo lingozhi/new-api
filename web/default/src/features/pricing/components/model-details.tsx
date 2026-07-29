@@ -55,6 +55,7 @@ import {
   formatUptimePct,
   getSuccessRateTextClass,
 } from '@/features/performance-metrics/lib/format'
+import { formatCurrencyFromUSD } from '@/lib/currency'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 
@@ -77,6 +78,7 @@ import {
   isTokenBasedModel,
 } from '../lib/model-helpers'
 import {
+  calculateMediaVariantPrice,
   formatFixedPrice,
   formatGroupPrice,
   formatImageResolutionPrice,
@@ -101,6 +103,82 @@ function SectionTitle(props: { children: React.ReactNode }) {
     <h2 className='text-muted-foreground mb-3 text-xs font-semibold tracking-wider uppercase'>
       {props.children}
     </h2>
+  )
+}
+
+function MediaVariantPricingSection(props: {
+  model: PricingModel
+  priceRate: number
+  usdExchangeRate: number
+  showRechargePrice: boolean
+  groupRatio: Record<string, number>
+  usableGroup: Record<string, { desc: string; ratio: number }>
+}) {
+  const { t } = useTranslation()
+  const variants = props.model.api_profile?.pricing_variants || []
+  if (variants.length === 0) return null
+  const groups = getAvailableGroups(props.model, props.usableGroup)
+
+  return (
+    <div className='space-y-2'>
+      <p className='text-muted-foreground text-xs font-medium'>
+        {t('Parameter pricing')}
+      </p>
+      <div className='overflow-hidden rounded-lg border'>
+        {variants.map((variant) => {
+          const parameters = Object.entries(variant.parameters)
+            .map(([key, value]) => `${key}=${value}`)
+            .join(' · ')
+          return (
+            <div
+              key={`${variant.label}-${parameters}`}
+              className='border-border/60 flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2.5 last:border-b-0'
+            >
+              <div className='min-w-0'>
+                <p className='text-sm font-medium'>{variant.label}</p>
+                <code className='text-muted-foreground block text-xs break-all'>
+                  {parameters}
+                </code>
+              </div>
+              <div className='flex shrink-0 flex-col items-end gap-1'>
+                {groups.map((group) => {
+                  const displayPrice = calculateMediaVariantPrice(
+                    variant.price,
+                    getConfiguredGroupRatio(props.groupRatio, group),
+                    props.showRechargePrice,
+                    props.priceRate,
+                    props.usdExchangeRate
+                  )
+                  return (
+                    <span
+                      key={group}
+                      className='font-mono text-sm font-semibold'
+                    >
+                      {groups.length > 1 && (
+                        <span className='text-muted-foreground mr-1 text-xs font-normal'>
+                          {group}
+                        </span>
+                      )}
+                      {formatCurrencyFromUSD(displayPrice, {
+                        digitsLarge: 4,
+                        digitsSmall: 6,
+                        abbreviate: false,
+                      })}
+                      <span className='text-muted-foreground ml-1 text-xs font-normal'>
+                        /
+                        {variant.unit === 'second'
+                          ? t('seconds')
+                          : t('request')}
+                      </span>
+                    </span>
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -1275,6 +1353,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
   const isDynamic =
     props.model.billing_mode === 'tiered_expr' &&
     Boolean(props.model.billing_expr)
+  const isMediaProfile = props.model.api_profile?.kind === 'media'
 
   return (
     <div className='@container/details space-y-4'>
@@ -1302,32 +1381,46 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
 
           <section className='bg-card/60 space-y-5 rounded-xl border p-4 shadow-sm'>
             <SectionTitle>{t('Pricing')}</SectionTitle>
-            <PriceSection
+            {!isMediaProfile && (
+              <>
+                <PriceSection
+                  model={props.model}
+                  priceRate={props.priceRate}
+                  usdExchangeRate={props.usdExchangeRate}
+                  tokenUnit={props.tokenUnit}
+                  showRechargePrice={showRechargePrice}
+                />
+                <ImageResolutionPricingSection
+                  model={props.model}
+                  priceRate={props.priceRate}
+                  usdExchangeRate={props.usdExchangeRate}
+                  showRechargePrice={showRechargePrice}
+                />
+              </>
+            )}
+            <MediaVariantPricingSection
               model={props.model}
               priceRate={props.priceRate}
               usdExchangeRate={props.usdExchangeRate}
-              tokenUnit={props.tokenUnit}
               showRechargePrice={showRechargePrice}
-            />
-            <ImageResolutionPricingSection
-              model={props.model}
-              priceRate={props.priceRate}
-              usdExchangeRate={props.usdExchangeRate}
-              showRechargePrice={showRechargePrice}
+              groupRatio={props.groupRatio}
+              usableGroup={props.usableGroup}
             />
             {isDynamic && (
               <DynamicPricingBreakdown billingExpr={props.model.billing_expr} />
             )}
-            <GroupPricingSection
-              model={props.model}
-              groupRatio={props.groupRatio}
-              usableGroup={props.usableGroup}
-              autoGroups={props.autoGroups}
-              priceRate={props.priceRate}
-              usdExchangeRate={props.usdExchangeRate}
-              tokenUnit={props.tokenUnit}
-              showRechargePrice={showRechargePrice}
-            />
+            {!isMediaProfile && (
+              <GroupPricingSection
+                model={props.model}
+                groupRatio={props.groupRatio}
+                usableGroup={props.usableGroup}
+                autoGroups={props.autoGroups}
+                priceRate={props.priceRate}
+                usdExchangeRate={props.usdExchangeRate}
+                tokenUnit={props.tokenUnit}
+                showRechargePrice={showRechargePrice}
+              />
+            )}
           </section>
 
           <ModelBackendDetailsSection model={props.model} />

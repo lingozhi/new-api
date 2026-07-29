@@ -31,7 +31,11 @@ import {
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
 import { getImageResolutionStartingPrice } from '../lib/image-resolution-price'
-import { getDisplayGroupRatio, isTokenBasedModel } from '../lib/model-helpers'
+import {
+  getDisplayGroupRatio,
+  getFixedPriceUnit,
+  isTokenBasedModel,
+} from '../lib/model-helpers'
 import {
   formatImageResolutionPrice,
   formatPrice,
@@ -212,7 +216,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             props.selectedGroup
           )}
         </span>{' '}
-        / {t('request')}
+        / {t(getFixedPriceUnit(props.model))}
       </span>
     )
   }

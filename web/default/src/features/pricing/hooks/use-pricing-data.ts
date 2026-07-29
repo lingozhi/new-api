@@ -18,12 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { useStatus } from '@/hooks/use-status'
 
 import { getPricing } from '../api'
+import { consolidateDepthMediaModels } from '../lib/depth-media-catalog'
 
 export function usePricingData() {
+  const { t } = useTranslation()
   const { status } = useStatus()
 
   const { data, isLoading, error, refetch } = useQuery({
@@ -60,7 +63,7 @@ export function usePricingData() {
 
     const vendorMap = new Map(data.vendors.map((v) => [v.id, v]))
 
-    return data.data.map((model) => {
+    const enrichedModels = data.data.map((model) => {
       const vendor = model.vendor_id
         ? vendorMap.get(model.vendor_id)
         : undefined
@@ -73,7 +76,8 @@ export function usePricingData() {
         group_ratio: data.group_ratio,
       }
     })
-  }, [data])
+    return consolidateDepthMediaModels(enrichedModels, t)
+  }, [data, t])
 
   return {
     models,
