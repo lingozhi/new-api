@@ -73,6 +73,7 @@ function isSensitiveKey(key: string): boolean {
     normalized.endsWith('apikey') ||
     normalized.endsWith('token') ||
     normalized.endsWith('secret') ||
+    normalized.endsWith('secretkey') ||
     normalized.endsWith('password') ||
     normalized.endsWith('credential') ||
     normalized.endsWith('privatekey')
@@ -151,8 +152,13 @@ export function buildTaskLogDiagnostics(log: TaskLog): TaskLogDiagnostics {
   const responseResultUrl = getSafeTaskLogUrl(dataRecord.result_url)
 
   const error: TaskLogDiagnostics['error'] = {}
-  const errorCode = optionalString(dataRecord.error_code)
-  const errorMessage = optionalString(dataRecord.error)
+  const nestedError = isRecord(dataRecord.error) ? dataRecord.error : {}
+  const errorCode =
+    optionalString(dataRecord.error_code) ??
+    optionalString(nestedError.code) ??
+    optionalString(nestedError.type)
+  const errorMessage =
+    optionalString(dataRecord.error) ?? optionalString(nestedError.message)
   const failReason = optionalString(log.fail_reason)
   if (errorCode) error.code = errorCode
   if (errorMessage) error.message = errorMessage

@@ -247,6 +247,7 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
           log.action === TASK_ACTIONS.REMIX_GENERATE
         const isSuccess = status === TASK_STATUS.SUCCESS
         const isUrl = failReason?.startsWith('http')
+        const displayFailReason = isSuccess ? '' : failReason
 
         if (isSuccess && isVideoTask && isUrl) {
           const videoUrl = `/v1/videos/${log.task_id}/content`
@@ -269,7 +270,7 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
               type='button'
               className={cn(
                 'group flex max-w-full items-center gap-1 text-left text-xs hover:underline',
-                failReason
+                displayFailReason
                   ? 'text-red-600 dark:text-red-400'
                   : 'text-foreground'
               )}
@@ -277,7 +278,7 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
               title={t('View task diagnostics')}
             >
               <span className='truncate leading-snug'>
-                {failReason || t('View details')}
+                {displayFailReason || t('View details')}
               </span>
             </button>
             <TaskLogDetailsDialog
