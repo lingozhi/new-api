@@ -100,6 +100,28 @@ func TestTaskAdaptorBuildsMediaRequestWithoutGatewayWebhookFields(t *testing.T) 
 	assert.Equal(t, "application/json", request.Header.Get("Content-Type"))
 }
 
+func TestTaskAdaptorBuildsDepthRequestWithUnifiedOperation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(nil)
+	c.Set("task_request", relaycommon.TaskSubmitReq{
+		Model: ModelDepthVideo,
+		Image: "https://cdn.example.com/input.mp4",
+	})
+	info := newTestRelayInfo("https://modal.example.com", "upstream-secret", ActionDepth)
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "https://cdn.example.com/input.mp4", payload["source_url"])
+	assert.Equal(t, "depth", payload["operation"])
+}
+
 func TestTaskAdaptorValidatesDepthAndMediaRequests(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {
@@ -157,19 +179,19 @@ func TestTaskAdaptorValidatesDepthAndMediaRequests(t *testing.T) {
 	}
 }
 
-func TestTaskAdaptorBuildsActionURLs(t *testing.T) {
+func TestTaskAdaptorBuildsUnifiedJobURL(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	info := newTestRelayInfo("https://modal.example.com/", "key", ActionDepth)
 	adaptor.Init(info)
 
 	requestURL, err := adaptor.BuildRequestURL(info)
 	require.NoError(t, err)
-	assert.Equal(t, "https://modal.example.com/v1/depth/jobs", requestURL)
+	assert.Equal(t, "https://modal.example.com/v1/jobs", requestURL)
 
 	info.Action = ActionMedia
 	requestURL, err = adaptor.BuildRequestURL(info)
 	require.NoError(t, err)
-	assert.Equal(t, "https://modal.example.com/v1/media/jobs", requestURL)
+	assert.Equal(t, "https://modal.example.com/v1/jobs", requestURL)
 
 	info.Action = "unknown"
 	_, err = adaptor.BuildRequestURL(info)
@@ -196,7 +218,7 @@ func TestTaskAdaptorReturnsPublicTaskIDForAcceptedSubmission(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), `"id":"task_public"`)
 }
 
-func TestTaskAdaptorFetchesDepthAndMediaTasks(t *testing.T) {
+func TestTaskAdaptorFetchesUnifiedJobs(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		paths = append(paths, request.URL.Path)
@@ -215,7 +237,7 @@ func TestTaskAdaptorFetchesDepthAndMediaTasks(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, response.Body.Close())
 	}
-	assert.Equal(t, []string{"/v1/depth/jobs/job_1", "/v1/media/jobs/job_1"}, paths)
+	assert.Equal(t, []string{"/v1/jobs/job_1", "/v1/jobs/job_1"}, paths)
 
 	_, err := adaptor.FetchTask(server.URL, "upstream-key", map[string]any{"action": ActionDepth}, "")
 	require.Error(t, err)
