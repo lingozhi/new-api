@@ -205,7 +205,7 @@ describe('task log diagnostics', () => {
     })
 
     let cursor = diagnostics.response as Record<string, unknown>
-    for (let depth = 0; depth < 20; depth++) {
+    for (let depth = 0; depth < 19; depth++) {
       cursor = cursor.nested as Record<string, unknown>
     }
     assert.equal(cursor.nested, '[MAX DEPTH REACHED]')

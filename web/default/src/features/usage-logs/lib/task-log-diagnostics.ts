@@ -22,6 +22,7 @@ const REDACTED_VALUE = '[REDACTED]'
 const MAX_DIAGNOSTIC_STRING_LENGTH = 20_000
 const MAX_DIAGNOSTIC_ARRAY_ITEMS = 100
 const MAX_DIAGNOSTIC_OBJECT_FIELDS = 200
+const MAX_DIAGNOSTIC_DEPTH = 20
 const REQUEST_PARAMETER_KEYS = [
   'source_url',
   'operation',
@@ -95,11 +96,12 @@ function summarizeDiagnosticString(value: string): string {
   return `${value.slice(0, MAX_DIAGNOSTIC_STRING_LENGTH)}… [truncated ${omitted} characters]`
 }
 
-function redactSensitiveValues(value: unknown): unknown {
+function redactSensitiveValues(value: unknown, depth = 0): unknown {
+  if (depth >= MAX_DIAGNOSTIC_DEPTH) return '[MAX DEPTH REACHED]'
   if (Array.isArray(value)) {
     const visibleItems = value
       .slice(0, MAX_DIAGNOSTIC_ARRAY_ITEMS)
-      .map((item) => redactSensitiveValues(item))
+      .map((item) => redactSensitiveValues(item, depth + 1))
     const omitted = value.length - visibleItems.length
     if (omitted > 0) {
       visibleItems.push(`[${omitted} more items omitted]`)
@@ -114,7 +116,9 @@ function redactSensitiveValues(value: unknown): unknown {
     .slice(0, MAX_DIAGNOSTIC_OBJECT_FIELDS)
     .map(([key, item]) => [
       key,
-      isSensitiveKey(key) ? REDACTED_VALUE : redactSensitiveValues(item),
+      isSensitiveKey(key)
+        ? REDACTED_VALUE
+        : redactSensitiveValues(item, depth + 1),
     ])
   const omitted = entries.length - visibleEntries.length
   if (omitted > 0) {
