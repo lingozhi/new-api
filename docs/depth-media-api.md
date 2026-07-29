@@ -22,6 +22,10 @@ Content-Type: application/json
 
 模型：`depth-anything-v2-small-video`
 
+计费为 `$0.002/秒`（按当前网站汇率约 `¥0.0146/秒`）。系统根据上游返回的
+实际帧数和 FPS 计算时长，不采用客户端申报值；不足一秒的部分向上取整。单个视频
+最长 600 秒，提交时会按 600 秒预扣，任务完成后自动按实际秒数结算并退回差额。
+
 ```bash
 curl https://api.opwan.ai/v1/depth/jobs \
   -H "Authorization: Bearer $OPWAN_API_TOKEN" \
@@ -43,15 +47,15 @@ POST /v1/media/jobs
 
 支持的参数组合：
 
-| 模型 | operation | quality | scale |
-| --- | --- | --- | --- |
-| `background-remove-fast` | `remove_background` | `fast` | 不传 |
-| `background-remove-quality` | `remove_background` | `quality` | 不传 |
-| `background-remove-matting` | `remove_background` | `matting` | 不传 |
-| `image-upscale-fast-2x` | `upscale` | `fast` | `2` |
-| `image-upscale-fast-4x` | `upscale` | `fast` | `4` |
-| `image-upscale-fidelity-4x` | `upscale` | `fidelity` | `4` |
-| `image-upscale-sharp-4x` | `upscale` | `sharp` | `4` |
+| 模型 | operation | quality | scale | 单次价格 |
+| --- | --- | --- | --- | --- |
+| `background-remove-fast` | `remove_background` | `fast` | 不传 | `$0.02` |
+| `background-remove-quality` | `remove_background` | `quality` | 不传 | `$0.03` |
+| `background-remove-matting` | `remove_background` | `matting` | 不传 | `$0.03` |
+| `image-upscale-fast-2x` | `upscale` | `fast` | `2` | `$0.02` |
+| `image-upscale-fast-4x` | `upscale` | `fast` | `4` | `$0.02` |
+| `image-upscale-fidelity-4x` | `upscale` | `fidelity` | `4` | `$0.05` |
+| `image-upscale-sharp-4x` | `upscale` | `sharp` | `4` | `$0.05` |
 
 模型会根据参数组合自动选择。图片格式支持上游允许的 `png` 和 `webp`。
 
