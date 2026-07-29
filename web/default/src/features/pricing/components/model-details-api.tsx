@@ -682,7 +682,9 @@ function SupportedParametersSection(props: { model: PricingModel }) {
   const { t } = useTranslation()
   const params = useMemo(() => {
     if (props.model.api_profile) {
-      return props.model.api_profile.parameters.map(profileParameterForDisplay)
+      return props.model.api_profile.parameters.map((parameter) =>
+        profileParameterForDisplay(parameter, props.model.api_profile?.kind)
+      )
     }
     return buildSupportedParameters(props.model)
   }, [props.model])
@@ -754,7 +756,8 @@ function SupportedParametersSection(props: { model: PricingModel }) {
 }
 
 function profileParameterForDisplay(
-  parameter: ApiProfileParameter
+  parameter: ApiProfileParameter,
+  profileKind?: ModelApiProfile['kind']
 ): SupportedParameter {
   let range: string | undefined
   if (parameter.min !== undefined && parameter.max !== undefined) {
@@ -775,10 +778,19 @@ function profileParameterForDisplay(
     enumValues: parameter.enum_values,
     range,
     descriptionKey:
+      (profileKind === 'media'
+        ? MEDIA_PARAMETER_DESCRIPTION_KEYS[parameter.name]
+        : undefined) ||
       IMAGE_PARAMETER_DESCRIPTION_KEYS[parameter.name] ||
       parameter.description ||
       parameter.name,
   }
+}
+
+const MEDIA_PARAMETER_DESCRIPTION_KEYS: Record<string, string> = {
+  quality: 'Media processing quality profile',
+  webhook_url: 'URL receiving asynchronous task completion notifications',
+  webhook_secret: 'Secret used to sign asynchronous task webhook deliveries',
 }
 
 const IMAGE_PARAMETER_DESCRIPTION_KEYS: Record<string, string> = {
