@@ -803,6 +803,8 @@ type TaskSubmitReq struct {
 	Seconds        string                 `json:"seconds,omitempty"`
 	InputReference string                 `json:"input_reference,omitempty"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	WebhookURL     string                 `json:"webhook_url,omitempty"`
+	WebhookSecret  string                 `json:"webhook_secret,omitempty"`
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {

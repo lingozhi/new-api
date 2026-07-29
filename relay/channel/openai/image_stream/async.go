@@ -3342,7 +3342,7 @@ func deliverDueImageWebhooks(ctx context.Context) (int, int, error) {
 		go func(webhook *model.TaskWebhook) {
 			defer wg.Done()
 			defer func() { <-semaphore }()
-			task, exists, err := model.GetImageTaskByTaskID(webhook.TaskID)
+			task, exists, err := model.GetByOnlyTaskId(webhook.TaskID)
 			if err != nil {
 				results <- deliveryResult{err: fmt.Errorf("load webhook task %s: %w", webhook.TaskID, err)}
 				return
@@ -3370,7 +3370,22 @@ func deliverDueImageWebhooks(ctx context.Context) (int, int, error) {
 				results <- deliveryResult{}
 				return
 			}
-			if err := sendAsyncImageWebhook(ctx, webhookURL, secret, webhook.DeliveryID(), BuildImageTaskResponse(task)); err != nil {
+			var payload any
+			if task.Platform == constant.TaskPlatformOpenAIImage {
+				payload = BuildImageTaskResponse(task)
+			} else {
+				payload = gin.H{
+					"task_id":    task.TaskID,
+					"platform":   task.Platform,
+					"status":     task.Status,
+					"progress":   task.Progress,
+					"result_url": task.GetResultURL(),
+					"error":      task.FailReason,
+					"created_at": task.SubmitTime,
+					"updated_at": task.UpdatedAt,
+				}
+			}
+			if err := sendAsyncImageWebhook(ctx, webhookURL, secret, webhook.DeliveryID(), payload); err != nil {
 				if persistErr := recordImageWebhookFailure(webhook, err); persistErr != nil {
 					results <- deliveryResult{err: persistErr}
 					return

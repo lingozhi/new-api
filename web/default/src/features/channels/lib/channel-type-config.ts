@@ -144,6 +144,20 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models exposed by this channel',
     },
   },
+  59: {
+    id: 59,
+    name: CHANNEL_TYPES[59],
+    icon: 'replicate',
+    defaultBaseUrl:
+      'https://chenlingzhiclz--depth-video-api-web-api.modal.run',
+    hints: {
+      baseUrl:
+        'Default: https://chenlingzhiclz--depth-video-api-web-api.modal.run',
+      key: 'Modal API bearer token',
+      models:
+        'depth-anything-v2-small-video and background/image processing profiles',
+    },
+  },
 }
 
 /**
