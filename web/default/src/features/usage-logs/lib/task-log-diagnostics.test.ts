@@ -100,9 +100,12 @@ describe('task log diagnostics', () => {
         api_key: 'sk-secret',
         authorization: 'Bearer secret',
         'x-api-key': 'sk-header-secret',
+        secret_key: 'secret-key-value',
         nested: {
           access_token: 'secret-token',
+          accessToken: 'camel-token',
           client_secret: 'client-secret',
+          webhook_secret: 'webhook-secret',
           safe_value: 'visible',
         },
       },
@@ -118,9 +121,12 @@ describe('task log diagnostics', () => {
       api_key: '[REDACTED]',
       authorization: '[REDACTED]',
       'x-api-key': '[REDACTED]',
+      secret_key: '[REDACTED]',
       nested: {
         access_token: '[REDACTED]',
+        accessToken: '[REDACTED]',
         client_secret: '[REDACTED]',
+        webhook_secret: '[REDACTED]',
         safe_value: 'visible',
       },
     })
@@ -142,6 +148,26 @@ describe('task log diagnostics', () => {
 
     assert.equal(diagnostics.resultUrl, resultUrl)
     assert.deepEqual(diagnostics.error, {})
+  })
+
+  test('extracts structured upstream errors into the error summary', () => {
+    const diagnostics = buildTaskLogDiagnostics({
+      ...failedDepthMediaTask,
+      fail_reason: 'Upstream request failed',
+      data: {
+        error: {
+          code: 'source_not_found',
+          message: 'Source image returned HTTP 404',
+        },
+        status: 'failed',
+      },
+    })
+
+    assert.deepEqual(diagnostics.error, {
+      code: 'source_not_found',
+      message: 'Source image returned HTTP 404',
+      fail_reason: 'Upstream request failed',
+    })
   })
 
   test('keeps malformed legacy data readable without throwing', () => {
