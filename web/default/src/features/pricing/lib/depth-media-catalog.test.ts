@@ -118,6 +118,11 @@ describe('DepthMedia model plaza catalog', () => {
       assert.match(sample, /raise_for_status|response\.ok|result\.ok/)
       assert.match(sample, /deadline/i)
       assert.match(sample, /timed out/i)
+      if (language === 'python') {
+        assert.match(sample, /timeout=/)
+      } else {
+        assert.match(sample, /AbortSignal\.timeout/)
+      }
     }
   })
 
