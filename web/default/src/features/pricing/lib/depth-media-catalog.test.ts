@@ -24,6 +24,8 @@ import {
   buildDepthMediaJobSample,
   consolidateDepthMediaModels,
 } from './depth-media-catalog'
+import { getFixedPriceUnit } from './model-helpers'
+import { calculateMediaVariantPrice } from './price'
 
 const sourceModels: PricingModel[] = [
   {
@@ -92,6 +94,13 @@ describe('DepthMedia model plaza catalog', () => {
       upscale?.api_profile?.pricing_variants?.map((variant) => variant.price),
       [0.02, 0.02, 0.05, 0.05]
     )
+    assert.equal(getFixedPriceUnit(models[0]), 'seconds')
+    assert.equal(getFixedPriceUnit(models[1]), 'request')
+  })
+
+  test('applies group and recharge multipliers to parameter prices', () => {
+    assert.equal(calculateMediaVariantPrice(0.03, 1.5, false, 1, 1), 0.045)
+    assert.equal(calculateMediaVariantPrice(0.03, 1.5, true, 4, 8), 0.0225)
   })
 
   test('generates the unified jobs contract instead of chat completions', () => {

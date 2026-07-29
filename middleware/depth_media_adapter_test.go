@@ -141,6 +141,26 @@ func TestDepthMediaRequestConvertAcceptsPublicCatalogAliases(t *testing.T) {
 	}
 }
 
+func TestDepthMediaRequestConvertRejectsDepthAliasWithoutDepthOperation(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/v1/jobs", DepthMediaRequestConvert(), func(c *gin.Context) {
+		t.Fatal("request should have been aborted")
+	})
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/jobs",
+		strings.NewReader(`{"model":"depth-video","source_url":"https://cdn.example.com/input.mp4"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), "depth-video requires operation depth")
+}
+
 func TestDepthMediaRequestConvertRejectsUnsupportedProfile(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
