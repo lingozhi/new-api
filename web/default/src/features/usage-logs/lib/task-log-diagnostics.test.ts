@@ -170,6 +170,29 @@ describe('task log diagnostics', () => {
     })
   })
 
+  test('bounds large response values before they reach the diagnostics UI', () => {
+    const largeText = 'x'.repeat(25_000)
+    const dataUri = `data:image/png;base64,${'a'.repeat(25_000)}`
+    const diagnostics = buildTaskLogDiagnostics({
+      ...failedDepthMediaTask,
+      data: {
+        large_text: largeText,
+        image: dataUri,
+        items: Array.from({ length: 105 }, (_, index) => index),
+      },
+    })
+
+    const response = diagnostics.response as Record<string, unknown>
+    assert.match(String(response.large_text), /truncated 5000 characters/)
+    assert.equal(
+      response.image,
+      `[DATA URI OMITTED: ${dataUri.length} characters]`
+    )
+    assert.deepEqual((response.items as unknown[]).slice(-1), [
+      '[5 more items omitted]',
+    ])
+  })
+
   test('keeps malformed legacy data readable without throwing', () => {
     const diagnostics = buildTaskLogDiagnostics({
       ...failedDepthMediaTask,
