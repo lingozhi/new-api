@@ -281,11 +281,14 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
                 {displayFailReason || t('View details')}
               </span>
             </button>
-            <TaskLogDetailsDialog
-              log={log}
-              open={dialogOpen}
-              onOpenChange={setDialogOpen}
-            />
+            {dialogOpen ? (
+              <TaskLogDetailsDialog
+                log={log}
+                isAdmin={isAdmin}
+                open={dialogOpen}
+                onOpenChange={setDialogOpen}
+              />
+            ) : null}
           </div>
         )
       },

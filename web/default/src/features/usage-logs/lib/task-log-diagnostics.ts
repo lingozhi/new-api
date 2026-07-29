@@ -19,6 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 import type { TaskLog } from '../types'
 
 const REDACTED_VALUE = '[REDACTED]'
+const MAX_DIAGNOSTIC_STRING_LENGTH = 20_000
+const MAX_DIAGNOSTIC_ARRAY_ITEMS = 100
+const MAX_DIAGNOSTIC_OBJECT_FIELDS = 200
 const REQUEST_PARAMETER_KEYS = [
   'source_url',
   'operation',
@@ -80,18 +83,44 @@ function isSensitiveKey(key: string): boolean {
   )
 }
 
+function summarizeDiagnosticString(value: string): string {
+  if (
+    value.length > MAX_DIAGNOSTIC_STRING_LENGTH &&
+    value.toLowerCase().startsWith('data:')
+  ) {
+    return `[DATA URI OMITTED: ${value.length} characters]`
+  }
+  if (value.length <= MAX_DIAGNOSTIC_STRING_LENGTH) return value
+  const omitted = value.length - MAX_DIAGNOSTIC_STRING_LENGTH
+  return `${value.slice(0, MAX_DIAGNOSTIC_STRING_LENGTH)}… [truncated ${omitted} characters]`
+}
+
 function redactSensitiveValues(value: unknown): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => redactSensitiveValues(item))
+    const visibleItems = value
+      .slice(0, MAX_DIAGNOSTIC_ARRAY_ITEMS)
+      .map((item) => redactSensitiveValues(item))
+    const omitted = value.length - visibleItems.length
+    if (omitted > 0) {
+      visibleItems.push(`[${omitted} more items omitted]`)
+    }
+    return visibleItems
   }
+  if (typeof value === 'string') return summarizeDiagnosticString(value)
   if (!isRecord(value)) return value
 
-  return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [
+  const entries = Object.entries(value)
+  const visibleEntries = entries
+    .slice(0, MAX_DIAGNOSTIC_OBJECT_FIELDS)
+    .map(([key, item]) => [
       key,
       isSensitiveKey(key) ? REDACTED_VALUE : redactSensitiveValues(item),
     ])
-  )
+  const omitted = entries.length - visibleEntries.length
+  if (omitted > 0) {
+    visibleEntries.push(['__omitted_fields__', omitted])
+  }
+  return Object.fromEntries(visibleEntries)
 }
 
 export function getSafeTaskLogUrl(value: unknown): string | undefined {

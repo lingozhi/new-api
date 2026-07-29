@@ -34,6 +34,7 @@ import type { TaskLog } from '../../types'
 
 interface TaskLogDetailsDialogProps {
   log: TaskLog
+  isAdmin: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -169,10 +170,12 @@ export function TaskLogDetailsDialog(props: TaskLogDetailsDialogProps) {
             copyable={false}
           />
         </div>
-        <div>
-          <p className='text-muted-foreground text-xs'>{t('Channel')}</p>
-          <p className='font-mono text-sm'>#{props.log.channel_id}</p>
-        </div>
+        {props.isAdmin && props.log.channel_id > 0 ? (
+          <div>
+            <p className='text-muted-foreground text-xs'>{t('Channel')}</p>
+            <p className='font-mono text-sm'>#{props.log.channel_id}</p>
+          </div>
+        ) : null}
         <div>
           <p className='text-muted-foreground text-xs'>{t('Operation')}</p>
           <p className='text-sm'>{props.log.action || '-'}</p>
