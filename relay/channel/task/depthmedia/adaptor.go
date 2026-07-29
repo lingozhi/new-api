@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -23,6 +24,8 @@ import (
 const (
 	ActionDepth = "depth"
 	ActionMedia = "media"
+
+	maxDepthVideoBillingSeconds = 10 * 60
 
 	ModelDepthVideo        = "depth-anything-v2-small-video"
 	ModelBackgroundFast    = "background-remove-fast"
@@ -54,11 +57,13 @@ type requestPayload struct {
 }
 
 type responsePayload struct {
-	ID        string `json:"id"`
-	Status    string `json:"status"`
-	Progress  int    `json:"progress"`
-	ResultURL string `json:"result_url,omitempty"`
-	Error     string `json:"error,omitempty"`
+	ID        string  `json:"id"`
+	Status    string  `json:"status"`
+	Progress  int     `json:"progress"`
+	ResultURL string  `json:"result_url,omitempty"`
+	Error     string  `json:"error,omitempty"`
+	FPS       float64 `json:"fps,omitempty"`
+	Frames    int     `json:"frames,omitempty"`
 }
 
 type TaskAdaptor struct {
@@ -187,6 +192,40 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 
 func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, body io.Reader) (*http.Response, error) {
 	return channel.DoTaskApiRequest(a, c, info, body)
+}
+
+func (a *TaskAdaptor) EstimateBilling(_ *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	if info.OriginModelName != ModelDepthVideo {
+		return nil
+	}
+	return map[string]float64{"seconds": maxDepthVideoBillingSeconds}
+}
+
+func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	if task == nil || taskResult == nil || taskResult.Status != model.TaskStatusSuccess ||
+		task.Action != ActionDepth {
+		return 0
+	}
+	billing := task.PrivateData.BillingContext
+	if billing == nil || billing.OriginModelName != ModelDepthVideo ||
+		billing.ModelPrice <= 0 || billing.GroupRatio <= 0 {
+		return 0
+	}
+	var response responsePayload
+	if err := common.Unmarshal(task.Data, &response); err != nil ||
+		response.FPS <= 0 || response.Frames <= 0 {
+		return 0
+	}
+	seconds := math.Ceil(float64(response.Frames) / response.FPS)
+	seconds = min(seconds, maxDepthVideoBillingSeconds)
+	quota, clamp := common.QuotaFromFloatChecked(
+		billing.ModelPrice * common.QuotaPerUnit * billing.GroupRatio * seconds,
+	)
+	task.PrivateData.FinalQuotaClamp = clamp
+	if quota <= 0 {
+		return 0
+	}
+	return quota
 }
 
 func (a *TaskAdaptor) DoResponse(c *gin.Context, response *http.Response, info *relaycommon.RelayInfo) (string, []byte, *dto.TaskError) {
