@@ -193,6 +193,24 @@ describe('task log diagnostics', () => {
     ])
   })
 
+  test('stops traversing deeply nested upstream responses', () => {
+    let nested: Record<string, unknown> = { value: 'visible' }
+    for (let depth = 0; depth < 1_000; depth++) {
+      nested = { nested }
+    }
+
+    const diagnostics = buildTaskLogDiagnostics({
+      ...failedDepthMediaTask,
+      data: nested,
+    })
+
+    let cursor = diagnostics.response as Record<string, unknown>
+    for (let depth = 0; depth < 20; depth++) {
+      cursor = cursor.nested as Record<string, unknown>
+    }
+    assert.equal(cursor.nested, '[MAX DEPTH REACHED]')
+  })
+
   test('keeps malformed legacy data readable without throwing', () => {
     const diagnostics = buildTaskLogDiagnostics({
       ...failedDepthMediaTask,
