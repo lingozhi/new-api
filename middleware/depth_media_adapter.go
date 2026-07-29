@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"bytes"
 	"io"
 	"net/http"
 	"strings"
@@ -76,7 +75,15 @@ func DepthMediaRequestConvert() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		c.Request.Body = io.NopCloser(bytes.NewReader(data))
+		common.CleanupBodyStorage(c)
+		storage, err := common.CreateBodyStorage(data)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to cache normalized request"})
+			c.Abort()
+			return
+		}
+		c.Set(common.KeyBodyStorage, storage)
+		c.Request.Body = io.NopCloser(storage)
 		c.Request.ContentLength = int64(len(data))
 		c.Request.Header.Set("Content-Type", "application/json")
 		c.Request.URL.Path = "/v1/video/generations"
