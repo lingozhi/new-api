@@ -141,6 +141,35 @@ func TestFindDueTaskWebhooksIncludesOrphanForTerminalCleanup(t *testing.T) {
 	assert.Equal(t, hook.ID, due[0].ID)
 }
 
+func TestFindDueTaskWebhooksWaitsForGenericTaskTerminalState(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.AutoMigrate(&TaskWebhook{}))
+
+	task := &Task{
+		TaskID:     "task_depth_media_webhook",
+		Platform:   constant.TaskPlatform("59"),
+		Status:     TaskStatusInProgress,
+		SubmitTime: common.GetTimestamp(),
+	}
+	require.NoError(t, DB.Create(task).Error)
+	hook := &TaskWebhook{
+		TaskID: task.TaskID,
+		URL:    "https://example.com/depth-media-hook",
+		Secret: "secret",
+	}
+	require.NoError(t, DB.Create(hook).Error)
+
+	due, err := FindDueTaskWebhooks(common.GetTimestamp(), 10)
+	require.NoError(t, err)
+	assert.Empty(t, due)
+
+	require.NoError(t, DB.Model(task).Update("status", TaskStatusSuccess).Error)
+	due, err = FindDueTaskWebhooks(common.GetTimestamp(), 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	assert.Equal(t, hook.ID, due[0].ID)
+}
+
 func TestClaimDueTaskWebhooksLeasesDeliveryAndKeepsStableIDAcrossRetries(t *testing.T) {
 	truncateTables(t)
 	require.NoError(t, DB.AutoMigrate(&TaskWebhook{}))
