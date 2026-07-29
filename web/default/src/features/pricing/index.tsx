@@ -270,6 +270,9 @@ export function Pricing() {
                 if (!open) setSelectedModelName(null)
               }}
               model={selectedModel}
+              publicModels={(models || []).filter(
+                (model) => model.api_profile?.kind === 'media'
+              )}
               groupRatio={groupRatio || {}}
               usableGroup={usableGroup || {}}
               endpointMap={

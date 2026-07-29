@@ -36,6 +36,13 @@ export type DepthMediaSampleContext = {
   endpointPath: string
 }
 
+export type DepthMediaAiIntegrationGuideContext = {
+  baseUrl: string
+  apiKeyEnv: string
+  selectedModel: PricingModel
+  publicModels: PricingModel[]
+}
+
 const DEPTH_MODEL = 'depth-anything-v2-small-video'
 
 const BACKGROUND_PROFILES = [
@@ -427,5 +434,82 @@ export function buildDepthMediaJobSample(
     `}`,
     '',
     `console.log(result)`,
+  ].join('\n')
+}
+
+function formatGuideVariant(variant: ModelPricingVariant): string {
+  const parameters = Object.entries(variant.parameters)
+    .map(([name, value]) => `${name}=${value}`)
+    .join(', ')
+  const unit = variant.unit === 'second' ? 'second' : 'request'
+  return `- ${variant.label}: ${parameters}; ${variant.price} USD per ${unit}`
+}
+
+export function buildDepthMediaAiIntegrationGuide(
+  context: DepthMediaAiIntegrationGuideContext
+): string {
+  const baseUrl = context.baseUrl.replace(/\/$/, '')
+  const catalog = context.publicModels
+    .filter((model) => model.api_profile?.kind === 'media')
+    .map((model) => {
+      const variants =
+        model.api_profile?.pricing_variants?.map(formatGuideVariant) ?? []
+      return [
+        `## ${model.model_name}`,
+        model.description || '',
+        '',
+        'Allowed parameter combinations:',
+        ...variants,
+      ].join('\n')
+    })
+    .join('\n\n')
+  const quickStart = buildDepthMediaJobSample('curl', {
+    baseUrl,
+    apiKeyEnv: context.apiKeyEnv,
+    modelName: context.selectedModel.model_name || '',
+    endpointPath: '/v1/jobs',
+  })
+
+  return [
+    '# Opwan DepthMedia API integration guide',
+    '',
+    'Use this document as the source of truth when implementing the integration.',
+    '',
+    '## Contract',
+    `- Base URL: ${baseUrl}`,
+    `- Submit: POST ${baseUrl}/v1/jobs`,
+    `- Poll: GET ${baseUrl}/v1/jobs/{task_id}`,
+    `- Authentication: Authorization: Bearer $${context.apiKeyEnv}`,
+    '- Content-Type: application/json',
+    '- Submit response: HTTP 202 with task_id',
+    '- Poll every 3 to 5 seconds until status is SUCCESS or FAILURE.',
+    '- On SUCCESS, read the generated OSS URL from data.result_url.',
+    '- Treat QUEUED and IN_PROGRESS as non-terminal states.',
+    '- Use a 15-minute overall polling deadline and a 30-second timeout per HTTP request.',
+    '- Do not use /v1/chat/completions for these models.',
+    '',
+    '## Public models and pricing',
+    catalog,
+    '',
+    `## Quick start: ${context.selectedModel.model_name}`,
+    '```bash',
+    quickStart,
+    '```',
+    '',
+    '## Webhook',
+    '- Optional request fields: webhook_url and webhook_secret.',
+    '- webhook_url must be a publicly reachable HTTPS URL.',
+    '- Delivery is at least once. Deduplicate using X-Webhook-Delivery-Id.',
+    '- Verify X-Webhook-Timestamp and X-Webhook-Signature: v1=<hex>.',
+    '- Signature input: v1.timestamp.deliveryID.rawBody.',
+    '- Signature algorithm: HMAC-SHA256 using webhook_secret; compare in constant time.',
+    '- Reject timestamps outside the replay window allowed by your application.',
+    '- Return HTTP 2xx after accepting a callback.',
+    '',
+    '## Implementation requirements',
+    '- source_url must be a publicly reachable image or video URL.',
+    '- Preserve the exact model, operation, quality, scale, and format combinations listed above.',
+    '- Surface upstream FAILURE details to the caller instead of retrying forever.',
+    '- Store task_id so polling and Webhook delivery can be reconciled.',
   ].join('\n')
 }
