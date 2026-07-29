@@ -44,6 +44,33 @@ func TestDepthMediaRequestConvertInfersProfileAndPreservesWebhook(t *testing.T) 
 	assert.Equal(t, http.StatusNoContent, recorder.Code)
 }
 
+func TestDepthMediaRequestConvertReplacesReusableBodyStorage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/v1/media/jobs", DepthMediaRequestConvert(), func(c *gin.Context) {
+		request, err := getModelFromRequest(c)
+		require.NoError(t, err)
+		assert.Equal(t, taskdepthmedia.ModelUpscaleFast2X, request.Model)
+		c.Status(http.StatusNoContent)
+	})
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/media/jobs",
+		strings.NewReader(`{
+			"source_url":"https://cdn.example.com/input.png",
+			"operation":"upscale",
+			"quality":"fast",
+			"scale":2
+		}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusNoContent, recorder.Code)
+}
+
 func TestDepthMediaRequestConvertRejectsUnsupportedProfile(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
