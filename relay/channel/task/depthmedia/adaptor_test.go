@@ -267,3 +267,82 @@ func TestTaskAdaptorParsesLifecycle(t *testing.T) {
 	_, err = adaptor.ParseTaskResult([]byte(`not-json`))
 	require.Error(t, err)
 }
+
+func TestTaskAdaptorEstimatesMaximumDepthVideoDuration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	adaptor := &TaskAdaptor{}
+
+	depthInfo := newTestRelayInfo("https://modal.example.com", "key", ActionDepth)
+	depthInfo.OriginModelName = ModelDepthVideo
+	assert.Equal(t, map[string]float64{"seconds": 600}, adaptor.EstimateBilling(c, depthInfo))
+
+	imageInfo := newTestRelayInfo("https://modal.example.com", "key", ActionMedia)
+	imageInfo.OriginModelName = ModelUpscaleFast2X
+	assert.Nil(t, adaptor.EstimateBilling(c, imageInfo))
+}
+
+func TestTaskAdaptorReconcilesDepthVideoToActualDuration(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	task := &model.Task{
+		Action: ActionDepth,
+		Data: []byte(
+			`{"id":"job_1","status":"completed","progress":100,"fps":30,"frames":299}`,
+		),
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice:      0.002,
+				GroupRatio:      0.5,
+				OriginModelName: ModelDepthVideo,
+			},
+		},
+	}
+
+	quota := adaptor.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+	})
+
+	assert.Equal(t, 5000, quota)
+}
+
+func TestTaskAdaptorKeepsPrechargeWhenActualDurationIsUnavailable(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	task := &model.Task{
+		Action: ActionDepth,
+		Data:   []byte(`{"id":"job_1","status":"completed","progress":100}`),
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice:      0.002,
+				GroupRatio:      1,
+				OriginModelName: ModelDepthVideo,
+			},
+		},
+	}
+
+	assert.Zero(t, adaptor.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+	}))
+}
+
+func TestTaskAdaptorCapsReportedDurationAtMaximum(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	task := &model.Task{
+		Action: ActionDepth,
+		Data: []byte(
+			`{"id":"job_1","status":"completed","progress":100,"fps":1,"frames":1000}`,
+		),
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice:      0.002,
+				GroupRatio:      1,
+				OriginModelName: ModelDepthVideo,
+			},
+		},
+	}
+
+	quota := adaptor.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+	})
+
+	assert.Equal(t, 600000, quota)
+}
