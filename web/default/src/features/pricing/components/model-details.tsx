@@ -1337,6 +1337,7 @@ const TAB_META: Record<
 
 export interface ModelDetailsContentProps {
   model: PricingModel
+  publicModels?: PricingModel[]
   groupRatio: Record<string, number>
   usableGroup: Record<string, { desc: string; ratio: number }>
   endpointMap: Record<string, { path?: string; method?: string }>
@@ -1445,6 +1446,7 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
         <TabsContent value='api' className='outline-none'>
           <ModelDetailsApi
             model={props.model}
+            publicModels={props.publicModels}
             endpointMap={props.endpointMap}
           />
         </TabsContent>
@@ -1573,6 +1575,9 @@ export function ModelDetails() {
 
         <ModelDetailsContent
           model={model}
+          publicModels={models?.filter(
+            (candidate) => candidate.api_profile?.kind === 'media'
+          )}
           groupRatio={groupRatio || {}}
           usableGroup={usableGroup || {}}
           autoGroups={autoGroups || []}

@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   ChevronRight,
+  Copy,
   Gauge,
   KeyRound,
   ScrollText,
@@ -39,10 +40,16 @@ import {
   staticDataTableClassNames as tableStyles,
 } from '@/components/data-table'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useStatus } from '@/hooks/use-status'
+import { copyToClipboard } from '@/lib/copy-to-clipboard'
+import { toast } from 'sonner'
 
-import { buildDepthMediaJobSample } from '../lib/depth-media-catalog'
+import {
+  buildDepthMediaAiIntegrationGuide,
+  buildDepthMediaJobSample,
+} from '../lib/depth-media-catalog'
 import {
   buildAsyncImageSample,
   IMAGE_SAMPLE_LANGUAGES,
@@ -457,6 +464,7 @@ function buildSample(
 
 function CodeSamplesSection(props: {
   model: PricingModel
+  publicModels: PricingModel[]
   endpointMap: Record<string, { path?: string; method?: string }>
 }) {
   const { t } = useTranslation()
@@ -528,10 +536,42 @@ function CodeSamplesSection(props: {
     endpointPath: activeEndpoint.path,
     apiProfile: props.model.api_profile,
   })
+  const aiIntegrationGuide =
+    props.model.api_profile?.kind === 'media'
+      ? buildDepthMediaAiIntegrationGuide({
+          baseUrl,
+          apiKeyEnv: 'NEW_API_KEY',
+          selectedModel: props.model,
+          publicModels: props.publicModels,
+        })
+      : ''
+
+  const copyAiIntegrationGuide = async () => {
+    const copied = await copyToClipboard(aiIntegrationGuide)
+    if (copied) {
+      toast.success(t('Copied to clipboard'))
+      return
+    }
+    toast.error(t('Failed to copy'))
+  }
 
   return (
     <section>
-      <SectionTitle icon={ScrollText}>{t('Code samples')}</SectionTitle>
+      <div className='mb-3 flex flex-wrap items-center justify-between gap-2'>
+        <SectionTitle icon={ScrollText}>{t('Code samples')}</SectionTitle>
+        {aiIntegrationGuide && (
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            className='h-8'
+            onClick={copyAiIntegrationGuide}
+          >
+            <Copy aria-hidden='true' className='size-3.5' />
+            {t('Copy AI integration guide')}
+          </Button>
+        )}
+      </div>
 
       {props.model.api_profile && (
         <div className='mb-3 flex flex-wrap gap-1.5'>
@@ -998,11 +1038,20 @@ function AuthSection() {
 
 export function ModelDetailsApi(props: {
   model: PricingModel
+  publicModels?: PricingModel[]
   endpointMap: Record<string, { path?: string; method?: string }>
 }) {
+  const publicModels = props.publicModels?.length
+    ? props.publicModels
+    : [props.model]
+
   return (
     <div className='space-y-6'>
-      <CodeSamplesSection model={props.model} endpointMap={props.endpointMap} />
+      <CodeSamplesSection
+        model={props.model}
+        publicModels={publicModels}
+        endpointMap={props.endpointMap}
+      />
       <AuthSection />
       <SupportedParametersSection model={props.model} />
       {!props.model.api_profile && <RateLimitsSection model={props.model} />}
