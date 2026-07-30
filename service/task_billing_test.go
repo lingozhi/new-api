@@ -1130,6 +1130,45 @@ func TestSettle_NonPerCallBilling_AppliesAdaptorAdjustment(t *testing.T) {
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 }
 
+func TestSubtitleRemovalDurationSettlementRefundsMaximumPrecharge(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 33, 33, 33
+	const preConsumed = 6_000_000
+	const actualQuota = 30_000
+	const userQuotaAfterPrecharge = 10_000_000
+	const tokenQuotaAfterPrecharge = 1_000_000
+
+	seedUser(t, userID, userQuotaAfterPrecharge)
+	seedToken(t, tokenID, userID, "sk-subtitle-duration", tokenQuotaAfterPrecharge)
+	setTokenUsedQuota(t, tokenID, preConsumed)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.PrivateData.BillingContext.OriginModelName = "subtitle-remove"
+	task.PrivateData.BillingContext.ModelPrice = 0.02
+	task.PrivateData.BillingContext.GroupRatio = 1
+	task.PrivateData.BillingContext.PerCallBilling = false
+
+	adaptor := &mockAdaptor{adjustReturn: actualQuota}
+	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}
+
+	settledQuota, reason, clamp, ok := resolveTaskBillingOnComplete(adaptor, task, taskResult)
+	require.True(t, ok)
+	RecalculateTaskQuota(ctx, task, settledQuota, reason, clamp)
+
+	const refund = preConsumed - actualQuota
+	assert.Equal(t, userQuotaAfterPrecharge+refund, getUserQuota(t, userID))
+	assert.Equal(t, tokenQuotaAfterPrecharge+refund, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, actualQuota, task.Quota)
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeRefund, log.Type)
+	assert.Equal(t, refund, log.Quota)
+}
+
 func TestResolveTaskBillingOnCompleteClampsAdaptorQuota(t *testing.T) {
 	task := makeTask(1, 1, 100, 0, BillingSourceWallet, 0)
 	adaptor := &mockAdaptor{adjustReturn: common.MaxQuota + 1}
