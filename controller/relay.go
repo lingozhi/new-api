@@ -1363,6 +1363,19 @@ func taskRelayAPIError(taskErr *dto.TaskError) *types.NewAPIError {
 	return apiErr
 }
 
+func buildTaskBillingContext(relayInfo *relaycommon.RelayInfo) *model.TaskBillingContext {
+	return &model.TaskBillingContext{
+		ModelPrice:      relayInfo.PriceData.ModelPrice,
+		GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
+		ModelRatio:      relayInfo.PriceData.ModelRatio,
+		OtherRatios:     relayInfo.PriceData.OtherRatios(),
+		OriginModelName: relayInfo.OriginModelName,
+		PerCallBilling: (common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) ||
+			relayInfo.PriceData.UsePrice) &&
+			!common.StringsContains(constant.TaskPricePerSecondModels, relayInfo.OriginModelName),
+	}
+}
+
 func RelayTask(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
@@ -1473,16 +1486,7 @@ func RelayTask(c *gin.Context) {
 		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
 		task.PrivateData.TokenId = relayInfo.TokenId
 		task.PrivateData.NodeName = common.NodeName
-		task.PrivateData.BillingContext = &model.TaskBillingContext{
-			ModelPrice:      relayInfo.PriceData.ModelPrice,
-			GroupRatio:      relayInfo.PriceData.GroupRatioInfo.GroupRatio,
-			ModelRatio:      relayInfo.PriceData.ModelRatio,
-			OtherRatios:     relayInfo.PriceData.OtherRatios(),
-			OriginModelName: relayInfo.OriginModelName,
-			PerCallBilling: (common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) ||
-				relayInfo.PriceData.UsePrice) &&
-				!common.StringsContains(constant.TaskPricePerSecondModels, relayInfo.OriginModelName),
-		}
+		task.PrivateData.BillingContext = buildTaskBillingContext(relayInfo)
 		task.Quota = result.Quota
 		task.Data = result.TaskData
 		task.Action = relayInfo.Action
