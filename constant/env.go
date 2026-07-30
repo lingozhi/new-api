@@ -31,6 +31,7 @@ var TaskPricePatches []string
 // maximum submit-time precharge to the provider-reported duration on completion.
 var TaskPricePerSecondModels = []string{
 	"depth-anything-v2-small-video",
+	"subtitle-remove",
 }
 
 // TrustedRedirectDomains is a list of trusted domains for redirect URL validation.
