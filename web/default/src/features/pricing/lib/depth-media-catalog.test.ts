@@ -104,6 +104,19 @@ describe('DepthMedia model plaza catalog', () => {
     assert.equal(getFixedPriceUnit(models[0]), 'seconds')
     assert.equal(getFixedPriceUnit(models[1]), 'request')
     assert.equal(getFixedPriceUnit(models[3]), 'seconds')
+    const subtitleParameters =
+      models[3]?.api_profile?.parameters?.filter((parameter) =>
+        ['quality', 'format'].includes(parameter.name)
+      ) ?? []
+    assert.ok(
+      subtitleParameters.every((parameter) => parameter.required !== true)
+    )
+    assert.deepEqual(
+      models[3]?.api_profile?.pricing_variants?.map(
+        (variant) => variant.parameters.subtitle_area
+      ),
+      ['bottom', 'full']
+    )
   })
 
   test('applies group and recharge multipliers to parameter prices', () => {
@@ -196,6 +209,10 @@ describe('DepthMedia model plaza catalog', () => {
     assert.match(
       guide,
       /operation=remove_subtitles, quality=quality, format=mp4, subtitle_area=bottom/
+    )
+    assert.match(
+      guide,
+      /operation=remove_subtitles, quality=quality, format=mp4, subtitle_area=full/
     )
     assert.match(guide, /0\.02 USD per second/)
     assert.match(guide, /Webhook/)

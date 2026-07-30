@@ -56,6 +56,8 @@ func TestResolveModel(t *testing.T) {
 
 	_, err := ResolveModel("upscale", "fidelity", 2)
 	require.Error(t, err)
+	_, err = ResolveModel("remove_subtitles", "quality", 2)
+	require.Error(t, err)
 }
 
 func TestTaskAdaptorBuildsMediaRequestWithoutGatewayWebhookFields(t *testing.T) {
@@ -125,20 +127,26 @@ func TestTaskAdaptorBuildsDepthRequestWithUnifiedOperation(t *testing.T) {
 
 func TestTaskAdaptorBuildsSubtitleRemovalRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	c, _ := gin.CreateTestContext(nil)
-	c.Set("task_request", relaycommon.TaskSubmitReq{
-		Model: ModelSubtitleRemove,
-		Image: "https://cdn.example.com/captioned.mp4",
-		Metadata: map[string]any{
-			"operation":     "remove_subtitles",
-			"quality":       "quality",
-			"format":        "mp4",
-			"subtitle_area": "bottom",
-		},
-	})
-	info := newTestRelayInfo("https://modal.example.com", "upstream-secret", ActionMedia)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v1/video/generations",
+		strings.NewReader(`{
+			"model":"subtitle-remove",
+			"image":"https://cdn.example.com/captioned.mp4",
+			"metadata":{
+				"operation":" Remove_Subtitles ",
+				"quality":" Quality ",
+				"format":"MP4",
+				"subtitle_area":"Bottom"
+			}
+		}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := newTestRelayInfo("https://modal.example.com", "upstream-secret", "")
 	adaptor := &TaskAdaptor{}
 	adaptor.Init(info)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
 
 	body, err := adaptor.BuildRequestBody(c, info)
 	require.NoError(t, err)
@@ -176,6 +184,11 @@ func TestTaskAdaptorValidatesDepthAndMediaRequests(t *testing.T) {
 			name:       "subtitle removal",
 			body:       `{"model":"subtitle-remove","image":"https://cdn.example.com/input.mp4","metadata":{"operation":"remove_subtitles","quality":"quality","format":"mp4","subtitle_area":"full"}}`,
 			wantAction: ActionMedia,
+		},
+		{
+			name:      "subtitle removal rejects scale",
+			body:      `{"model":"subtitle-remove","image":"https://cdn.example.com/input.mp4","metadata":{"operation":"remove_subtitles","quality":"quality","format":"mp4","subtitle_area":"bottom","scale":2}}`,
+			wantError: true,
 		},
 		{
 			name:      "missing source",
