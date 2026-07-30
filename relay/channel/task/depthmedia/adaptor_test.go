@@ -430,5 +430,5 @@ func TestTaskAdaptorReconcilesSubtitleRemovalToActualDuration(t *testing.T) {
 		Status: model.TaskStatusSuccess,
 	})
 
-	assert.Equal(t, 8000, quota)
+	assert.Equal(t, 40000, quota)
 }

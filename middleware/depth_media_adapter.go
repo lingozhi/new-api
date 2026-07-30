@@ -18,6 +18,7 @@ type depthMediaRequest struct {
 	Quality       string `json:"quality,omitempty"`
 	Scale         int    `json:"scale,omitempty"`
 	Format        string `json:"format,omitempty"`
+	SubtitleArea  string `json:"subtitle_area,omitempty"`
 	WebhookURL    string `json:"webhook_url,omitempty"`
 	WebhookSecret string `json:"webhook_secret,omitempty"`
 }
@@ -57,7 +58,8 @@ func DepthMediaRequestConvert() gin.HandlerFunc {
 			modelName = taskdepthmedia.ModelDepthVideo
 		} else if modelName == "" ||
 			modelName == taskdepthmedia.PublicModelBackgroundRemove ||
-			modelName == taskdepthmedia.PublicModelImageUpscale {
+			modelName == taskdepthmedia.PublicModelImageUpscale ||
+			modelName == taskdepthmedia.PublicModelSubtitleRemove {
 			resolved, err := taskdepthmedia.ResolveModel(request.Operation, request.Quality, request.Scale)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -76,15 +78,22 @@ func DepthMediaRequestConvert() gin.HandlerFunc {
 				c.Abort()
 				return
 			}
+			if modelName == taskdepthmedia.PublicModelSubtitleRemove &&
+				!strings.EqualFold(strings.TrimSpace(request.Operation), "remove_subtitles") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "subtitle-remove requires operation remove_subtitles"})
+				c.Abort()
+				return
+			}
 			modelName = resolved
 		}
 
 		metadata := map[string]any{
-			"source_url": request.SourceURL,
-			"operation":  request.Operation,
-			"quality":    request.Quality,
-			"scale":      request.Scale,
-			"format":     request.Format,
+			"source_url":    request.SourceURL,
+			"operation":     request.Operation,
+			"quality":       request.Quality,
+			"scale":         request.Scale,
+			"format":        request.Format,
+			"subtitle_area": request.SubtitleArea,
 		}
 		unified := relaycommon.TaskSubmitReq{
 			Prompt:        "process media",

@@ -1,6 +1,6 @@
 # DepthMedia API 调用说明
 
-DepthMedia 是统一的异步媒体处理接口。深度视频、图片去背景和图片高清放大都通过
+DepthMedia 是统一的异步媒体处理接口。深度视频、视频去字幕、图片去背景和图片高清放大都通过
 `POST /v1/jobs` 提交。客户端会立即获得公开 `task_id`，随后可轮询任务状态，也可以
 通过 Webhook 接收最终结果。
 
@@ -60,7 +60,8 @@ POST /v1/jobs
 | `image-upscale` | 高保真 4 倍 | `upscale` | `fidelity` | `4` | `$0.05` |
 | `image-upscale` | 锐化 4 倍 | `upscale` | `sharp` | `4` | `$0.05` |
 
-模型广场只展示 `depth-video`、`background-remove`、`image-upscale` 三个模型。
+模型广场只展示 `depth-video`、`background-remove`、`image-upscale`、
+`subtitle-remove` 四个模型。
 具体处理档位和价格由参数决定，并在模型详情抽屉中展示。图片格式支持上游允许的
 `png` 和 `webp`。
 
@@ -75,6 +76,35 @@ curl https://api.opwan.ai/v1/jobs \
     "quality": "fidelity",
     "scale": 4,
     "format": "webp",
+    "webhook_url": "https://client.example.com/webhooks/depth-media",
+    "webhook_secret": "replace-with-your-secret"
+  }'
+```
+
+## 视频去字幕
+
+模型：`subtitle-remove`
+
+按源视频实际时长计费，单价为 `$0.02/秒`。系统根据上游返回的帧数和 FPS
+计算时长，不采用客户端申报值；不足一秒的部分向上取整。单个视频最长 600 秒，
+提交时按 600 秒预扣，任务完成后按实际秒数结算并退回差额。
+
+`subtitle_area` 支持：
+
+- `bottom`：只扫描画面底部字幕区域，默认值，速度更快。
+- `full`：扫描完整画面，适用于字幕位置不固定的视频。
+
+```bash
+curl https://api.opwan.ai/v1/jobs \
+  -H "Authorization: Bearer $OPWAN_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "subtitle-remove",
+    "source_url": "https://cdn.example.com/captioned.mp4",
+    "operation": "remove_subtitles",
+    "quality": "quality",
+    "format": "mp4",
+    "subtitle_area": "bottom",
     "webhook_url": "https://client.example.com/webhooks/depth-media",
     "webhook_secret": "replace-with-your-secret"
   }'

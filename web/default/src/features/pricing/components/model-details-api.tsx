@@ -828,7 +828,9 @@ function profileParameterForDisplay(
 }
 
 const MEDIA_PARAMETER_DESCRIPTION_KEYS: Record<string, string> = {
+  format: 'Output media format',
   quality: 'Media processing quality profile',
+  subtitle_area: 'Area to scan for hard-coded subtitles',
   webhook_url: 'URL receiving asynchronous task completion notifications',
   webhook_secret: 'Secret used to sign asynchronous task webhook deliveries',
 }

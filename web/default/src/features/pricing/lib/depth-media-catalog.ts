@@ -44,6 +44,7 @@ export type DepthMediaAiIntegrationGuideContext = {
 }
 
 const DEPTH_MODEL = 'depth-anything-v2-small-video'
+const SUBTITLE_MODEL = 'subtitle-remove'
 
 const BACKGROUND_PROFILES = [
   {
@@ -94,6 +95,7 @@ const SOURCE_MODEL_NAMES = new Set([
   DEPTH_MODEL,
   ...BACKGROUND_PROFILES.map((profile) => profile.source),
   ...UPSCALE_PROFILES.map((profile) => profile.source),
+  SUBTITLE_MODEL,
 ])
 
 function mediaProfile(
@@ -178,6 +180,7 @@ export function consolidateDepthMediaModels(
 ): PricingModel[] {
   const indexed = new Map(models.map((model) => [model.model_name, model]))
   const depth = indexed.get(DEPTH_MODEL)
+  const subtitle = indexed.get(SUBTITLE_MODEL)
   const background = BACKGROUND_PROFILES.flatMap((profile) => {
     const model = indexed.get(profile.source)
     return model ? [{ model, profile }] : []
@@ -305,6 +308,59 @@ export function consolidateDepthMediaModels(
       )
     )
   }
+  if (subtitle) {
+    publicModels.push(
+      consolidatedModel(
+        [subtitle],
+        SUBTITLE_MODEL,
+        translate(
+          'Remove hard-coded subtitles from videos and return a clean MP4.'
+        ),
+        translate('Video,Subtitle removal'),
+        mediaProfile(
+          'remove_subtitles',
+          [
+            {
+              name: 'quality',
+              type: 'enum',
+              required: true,
+              default: 'quality',
+              enum_values: ['quality'],
+              description: 'Media processing quality profile',
+            },
+            {
+              name: 'format',
+              type: 'enum',
+              required: true,
+              default: 'mp4',
+              enum_values: ['mp4'],
+              description: 'Output media format',
+            },
+            {
+              name: 'subtitle_area',
+              type: 'enum',
+              default: 'bottom',
+              enum_values: ['bottom', 'full'],
+              description: 'Area to scan for hard-coded subtitles',
+            },
+          ],
+          [
+            {
+              label: translate('Video subtitle removal'),
+              parameters: {
+                operation: 'remove_subtitles',
+                quality: 'quality',
+                format: 'mp4',
+                subtitle_area: 'bottom',
+              },
+              price: subtitle.model_price ?? 0,
+              unit: 'second',
+            },
+          ]
+        )
+      )
+    )
+  }
 
   if (publicModels.length === 0) return models
 
@@ -337,6 +393,15 @@ function samplePayload(modelName: string): Record<string, string | number> {
         operation: 'remove_background',
         quality: 'fast',
         format: 'webp',
+      }
+    case SUBTITLE_MODEL:
+      return {
+        model: modelName,
+        source_url: 'https://cdn.example.com/captioned.mp4',
+        operation: 'remove_subtitles',
+        quality: 'quality',
+        format: 'mp4',
+        subtitle_area: 'bottom',
       }
     default:
       return {
