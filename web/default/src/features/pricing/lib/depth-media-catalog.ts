@@ -323,7 +323,6 @@ export function consolidateDepthMediaModels(
             {
               name: 'quality',
               type: 'enum',
-              required: true,
               default: 'quality',
               enum_values: ['quality'],
               description: 'Media processing quality profile',
@@ -331,7 +330,6 @@ export function consolidateDepthMediaModels(
             {
               name: 'format',
               type: 'enum',
-              required: true,
               default: 'mp4',
               enum_values: ['mp4'],
               description: 'Output media format',
@@ -352,6 +350,17 @@ export function consolidateDepthMediaModels(
                 quality: 'quality',
                 format: 'mp4',
                 subtitle_area: 'bottom',
+              },
+              price: subtitle.model_price ?? 0,
+              unit: 'second',
+            },
+            {
+              label: translate('Video subtitle removal'),
+              parameters: {
+                operation: 'remove_subtitles',
+                quality: 'quality',
+                format: 'mp4',
+                subtitle_area: 'full',
               },
               price: subtitle.model_price ?? 0,
               unit: 'second',

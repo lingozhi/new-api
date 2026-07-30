@@ -111,7 +111,7 @@ func ResolveModel(operation, quality string, scale int) (string, error) {
 		}
 	case "remove_subtitles":
 		normalizedQuality := strings.ToLower(strings.TrimSpace(quality))
-		if normalizedQuality == "" || normalizedQuality == "quality" {
+		if scale == 0 && (normalizedQuality == "" || normalizedQuality == "quality") {
 			return ModelSubtitleRemove, nil
 		}
 	}
@@ -148,6 +148,21 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		if err := request.UnmarshalMetadata(&metadata); err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		}
+		metadata.Operation = strings.ToLower(strings.TrimSpace(metadata.Operation))
+		metadata.Quality = strings.ToLower(strings.TrimSpace(metadata.Quality))
+		metadata.Format = strings.ToLower(strings.TrimSpace(metadata.Format))
+		metadata.SubtitleArea = strings.ToLower(strings.TrimSpace(metadata.SubtitleArea))
+		if metadata.Operation == "remove_subtitles" {
+			if metadata.Quality == "" {
+				metadata.Quality = "quality"
+			}
+			if metadata.Format == "" {
+				metadata.Format = "mp4"
+			}
+			if metadata.SubtitleArea == "" {
+				metadata.SubtitleArea = "bottom"
+			}
+		}
 		resolved, err := ResolveModel(metadata.Operation, metadata.Quality, metadata.Scale)
 		if err != nil || resolved != request.Model {
 			if err == nil {
@@ -172,6 +187,14 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 					http.StatusBadRequest,
 				)
 			}
+		}
+		request.Metadata = map[string]interface{}{
+			"source_url":    metadata.SourceURL,
+			"operation":     metadata.Operation,
+			"quality":       metadata.Quality,
+			"scale":         metadata.Scale,
+			"format":        metadata.Format,
+			"subtitle_area": metadata.SubtitleArea,
 		}
 	}
 	info.Action = action
