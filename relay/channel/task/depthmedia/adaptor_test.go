@@ -44,6 +44,7 @@ func TestResolveModel(t *testing.T) {
 		{name: "upscale fast 4x", operation: "upscale", quality: "fast", scale: 4, want: ModelUpscaleFast4X},
 		{name: "upscale fidelity", operation: "upscale", quality: "fidelity", scale: 4, want: ModelUpscaleFidelity4X},
 		{name: "upscale sharp", operation: "upscale", quality: "sharp", scale: 4, want: ModelUpscaleSharp4X},
+		{name: "subtitle removal", operation: "remove_subtitles", quality: "quality", want: ModelSubtitleRemove},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -54,6 +55,8 @@ func TestResolveModel(t *testing.T) {
 	}
 
 	_, err := ResolveModel("upscale", "fidelity", 2)
+	require.Error(t, err)
+	_, err = ResolveModel("remove_subtitles", "quality", 2)
 	require.Error(t, err)
 }
 
@@ -122,6 +125,43 @@ func TestTaskAdaptorBuildsDepthRequestWithUnifiedOperation(t *testing.T) {
 	assert.Equal(t, "depth", payload["operation"])
 }
 
+func TestTaskAdaptorBuildsSubtitleRemovalRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v1/video/generations",
+		strings.NewReader(`{
+			"model":"subtitle-remove",
+			"image":"https://cdn.example.com/captioned.mp4",
+			"metadata":{
+				"operation":" Remove_Subtitles ",
+				"quality":" Quality ",
+				"format":"MP4",
+				"subtitle_area":"Bottom"
+			}
+		}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := newTestRelayInfo("https://modal.example.com", "upstream-secret", "")
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "https://cdn.example.com/captioned.mp4", payload["source_url"])
+	assert.Equal(t, "remove_subtitles", payload["operation"])
+	assert.Equal(t, "quality", payload["quality"])
+	assert.Equal(t, "mp4", payload["format"])
+	assert.Equal(t, "bottom", payload["subtitle_area"])
+}
+
 func TestTaskAdaptorValidatesDepthAndMediaRequests(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {
@@ -139,6 +179,16 @@ func TestTaskAdaptorValidatesDepthAndMediaRequests(t *testing.T) {
 			name:       "media",
 			body:       `{"model":"background-remove-fast","image":"https://cdn.example.com/input.png","metadata":{"operation":"remove_background","quality":"fast"}}`,
 			wantAction: ActionMedia,
+		},
+		{
+			name:       "subtitle removal",
+			body:       `{"model":"subtitle-remove","image":"https://cdn.example.com/input.mp4","metadata":{"operation":"remove_subtitles","quality":"quality","format":"mp4","subtitle_area":"full"}}`,
+			wantAction: ActionMedia,
+		},
+		{
+			name:      "subtitle removal rejects scale",
+			body:      `{"model":"subtitle-remove","image":"https://cdn.example.com/input.mp4","metadata":{"operation":"remove_subtitles","quality":"quality","format":"mp4","subtitle_area":"bottom","scale":2}}`,
+			wantError: true,
 		},
 		{
 			name:      "missing source",
@@ -302,6 +352,10 @@ func TestTaskAdaptorEstimatesMaximumDepthVideoDuration(t *testing.T) {
 	imageInfo := newTestRelayInfo("https://modal.example.com", "key", ActionMedia)
 	imageInfo.OriginModelName = ModelUpscaleFast2X
 	assert.Nil(t, adaptor.EstimateBilling(c, imageInfo))
+
+	subtitleInfo := newTestRelayInfo("https://modal.example.com", "key", ActionMedia)
+	subtitleInfo.OriginModelName = ModelSubtitleRemove
+	assert.Equal(t, map[string]float64{"seconds": 600}, adaptor.EstimateBilling(c, subtitleInfo))
 }
 
 func TestTaskAdaptorReconcilesDepthVideoToActualDuration(t *testing.T) {
@@ -367,4 +421,27 @@ func TestTaskAdaptorCapsReportedDurationAtMaximum(t *testing.T) {
 	})
 
 	assert.Equal(t, 600000, quota)
+}
+
+func TestTaskAdaptorReconcilesSubtitleRemovalToActualDuration(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	task := &model.Task{
+		Action: ActionMedia,
+		Data: []byte(
+			`{"id":"job_1","status":"completed","progress":100,"fps":24,"frames":73}`,
+		),
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice:      0.02,
+				GroupRatio:      1,
+				OriginModelName: ModelSubtitleRemove,
+			},
+		},
+	}
+
+	quota := adaptor.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+	})
+
+	assert.Equal(t, 40000, quota)
 }

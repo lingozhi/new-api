@@ -25,9 +25,10 @@ const (
 	ActionDepth = "depth"
 	ActionMedia = "media"
 
-	maxDepthVideoBillingSeconds = 10 * 60
+	maxVideoBillingSeconds = 10 * 60
 
 	ModelDepthVideo        = "depth-anything-v2-small-video"
+	ModelSubtitleRemove    = "subtitle-remove"
 	ModelBackgroundFast    = "background-remove-fast"
 	ModelBackgroundQuality = "background-remove-quality"
 	ModelBackgroundMatting = "background-remove-matting"
@@ -37,12 +38,14 @@ const (
 	ModelUpscaleSharp4X    = "image-upscale-sharp-4x"
 
 	PublicModelDepthVideo       = "depth-video"
+	PublicModelSubtitleRemove   = ModelSubtitleRemove
 	PublicModelBackgroundRemove = "background-remove"
 	PublicModelImageUpscale     = "image-upscale"
 )
 
 var supportedModels = []string{
 	ModelDepthVideo,
+	ModelSubtitleRemove,
 	ModelBackgroundFast,
 	ModelBackgroundQuality,
 	ModelBackgroundMatting,
@@ -53,11 +56,12 @@ var supportedModels = []string{
 }
 
 type requestPayload struct {
-	SourceURL string `json:"source_url"`
-	Operation string `json:"operation,omitempty"`
-	Quality   string `json:"quality,omitempty"`
-	Scale     int    `json:"scale,omitempty"`
-	Format    string `json:"format,omitempty"`
+	SourceURL    string `json:"source_url"`
+	Operation    string `json:"operation,omitempty"`
+	Quality      string `json:"quality,omitempty"`
+	Scale        int    `json:"scale,omitempty"`
+	Format       string `json:"format,omitempty"`
+	SubtitleArea string `json:"subtitle_area,omitempty"`
 }
 
 type responsePayload struct {
@@ -105,6 +109,11 @@ func ResolveModel(operation, quality string, scale int) (string, error) {
 				return ModelUpscaleSharp4X, nil
 			}
 		}
+	case "remove_subtitles":
+		normalizedQuality := strings.ToLower(strings.TrimSpace(quality))
+		if scale == 0 && (normalizedQuality == "" || normalizedQuality == "quality") {
+			return ModelSubtitleRemove, nil
+		}
 	}
 	return "", fmt.Errorf("unsupported media profile: operation=%q quality=%q scale=%d", operation, quality, scale)
 }
@@ -139,12 +148,53 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		if err := request.UnmarshalMetadata(&metadata); err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		}
+		metadata.Operation = strings.ToLower(strings.TrimSpace(metadata.Operation))
+		metadata.Quality = strings.ToLower(strings.TrimSpace(metadata.Quality))
+		metadata.Format = strings.ToLower(strings.TrimSpace(metadata.Format))
+		metadata.SubtitleArea = strings.ToLower(strings.TrimSpace(metadata.SubtitleArea))
+		if metadata.Operation == "remove_subtitles" {
+			if metadata.Quality == "" {
+				metadata.Quality = "quality"
+			}
+			if metadata.Format == "" {
+				metadata.Format = "mp4"
+			}
+			if metadata.SubtitleArea == "" {
+				metadata.SubtitleArea = "bottom"
+			}
+		}
 		resolved, err := ResolveModel(metadata.Operation, metadata.Quality, metadata.Scale)
 		if err != nil || resolved != request.Model {
 			if err == nil {
 				err = fmt.Errorf("model does not match media profile")
 			}
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		if resolved == ModelSubtitleRemove {
+			format := strings.ToLower(strings.TrimSpace(metadata.Format))
+			if format != "" && format != "mp4" {
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("subtitle removal format must be mp4"),
+					"invalid_request",
+					http.StatusBadRequest,
+				)
+			}
+			subtitleArea := strings.ToLower(strings.TrimSpace(metadata.SubtitleArea))
+			if subtitleArea != "" && subtitleArea != "bottom" && subtitleArea != "full" {
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("subtitle_area must be bottom or full"),
+					"invalid_request",
+					http.StatusBadRequest,
+				)
+			}
+		}
+		request.Metadata = map[string]interface{}{
+			"source_url":    metadata.SourceURL,
+			"operation":     metadata.Operation,
+			"quality":       metadata.Quality,
+			"scale":         metadata.Scale,
+			"format":        metadata.Format,
+			"subtitle_area": metadata.SubtitleArea,
 		}
 	}
 	info.Action = action
@@ -200,20 +250,23 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, bod
 }
 
 func (a *TaskAdaptor) EstimateBilling(_ *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
-	if info.OriginModelName != ModelDepthVideo {
+	if info.OriginModelName != ModelDepthVideo && info.OriginModelName != ModelSubtitleRemove {
 		return nil
 	}
-	return map[string]float64{"seconds": maxDepthVideoBillingSeconds}
+	return map[string]float64{"seconds": maxVideoBillingSeconds}
 }
 
 func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
-	if task == nil || taskResult == nil || taskResult.Status != model.TaskStatusSuccess ||
-		task.Action != ActionDepth {
+	if task == nil || taskResult == nil || taskResult.Status != model.TaskStatusSuccess {
 		return 0
 	}
 	billing := task.PrivateData.BillingContext
-	if billing == nil || billing.OriginModelName != ModelDepthVideo ||
-		billing.ModelPrice <= 0 || billing.GroupRatio <= 0 {
+	if billing == nil || billing.ModelPrice <= 0 || billing.GroupRatio <= 0 {
+		return 0
+	}
+	isDepthVideo := task.Action == ActionDepth && billing.OriginModelName == ModelDepthVideo
+	isSubtitleRemoval := task.Action == ActionMedia && billing.OriginModelName == ModelSubtitleRemove
+	if !isDepthVideo && !isSubtitleRemoval {
 		return 0
 	}
 	var response responsePayload
@@ -222,7 +275,7 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *rela
 		return 0
 	}
 	seconds := math.Ceil(float64(response.Frames) / response.FPS)
-	seconds = min(seconds, maxDepthVideoBillingSeconds)
+	seconds = min(seconds, maxVideoBillingSeconds)
 	quota, clamp := common.QuotaFromFloatChecked(
 		billing.ModelPrice * common.QuotaPerUnit * billing.GroupRatio * seconds,
 	)

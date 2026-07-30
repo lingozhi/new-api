@@ -119,6 +119,11 @@ func TestDepthMediaRequestConvertAcceptsPublicCatalogAliases(t *testing.T) {
 			body:      `{"model":"image-upscale","source_url":"https://cdn.example.com/input.png","operation":"upscale","quality":"sharp","scale":4}`,
 			wantModel: taskdepthmedia.ModelUpscaleSharp4X,
 		},
+		{
+			name:      "subtitle removal",
+			body:      `{"model":"subtitle-remove","source_url":"https://cdn.example.com/input.mp4","operation":"remove_subtitles","quality":"quality","format":"mp4","subtitle_area":"bottom"}`,
+			wantModel: taskdepthmedia.ModelSubtitleRemove,
+		},
 	}
 
 	for _, tt := range tests {
