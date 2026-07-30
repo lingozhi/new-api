@@ -48,6 +48,7 @@ const sourceModels: PricingModel[] = [
     ['image-upscale-fast-4x', 0.02],
     ['image-upscale-fidelity-4x', 0.05],
     ['image-upscale-sharp-4x', 0.05],
+    ['subtitle-remove', 0.02],
   ].map(([modelName, price]) => ({
     id: 74,
     model_name: String(modelName),
@@ -62,12 +63,17 @@ const sourceModels: PricingModel[] = [
 ]
 
 describe('DepthMedia model plaza catalog', () => {
-  test('collapses eight implementation profiles into three public models', () => {
+  test('collapses implementation profiles into four public models', () => {
     const models = consolidateDepthMediaModels(sourceModels)
 
     assert.deepEqual(
       models.map((model) => model.model_name),
-      ['depth-video', 'background-remove', 'image-upscale']
+      [
+        'depth-video',
+        'background-remove',
+        'image-upscale',
+        'subtitle-remove',
+      ]
     )
     assert.ok(
       models.every(
@@ -97,6 +103,7 @@ describe('DepthMedia model plaza catalog', () => {
     )
     assert.equal(getFixedPriceUnit(models[0]), 'seconds')
     assert.equal(getFixedPriceUnit(models[1]), 'request')
+    assert.equal(getFixedPriceUnit(models[3]), 'seconds')
   })
 
   test('applies group and recharge multipliers to parameter prices', () => {
@@ -152,6 +159,21 @@ describe('DepthMedia model plaza catalog', () => {
     assert.doesNotMatch(sample, /messages/)
   })
 
+  test('generates the subtitle-removal job contract', () => {
+    const sample = buildDepthMediaJobSample('curl', {
+      baseUrl: 'https://api.opwan.ai',
+      apiKeyEnv: 'OPWAN_API_KEY',
+      modelName: 'subtitle-remove',
+      endpointPath: '/v1/jobs',
+    })
+
+    assert.match(sample, /"model": "subtitle-remove"/)
+    assert.match(sample, /"operation": "remove_subtitles"/)
+    assert.match(sample, /"quality": "quality"/)
+    assert.match(sample, /"format": "mp4"/)
+    assert.match(sample, /"subtitle_area": "bottom"/)
+  })
+
   test('generates a self-contained AI integration guide for one-click copy', () => {
     const models = consolidateDepthMediaModels(sourceModels)
     const guide = buildDepthMediaAiIntegrationGuide({
@@ -170,6 +192,12 @@ describe('DepthMedia model plaza catalog', () => {
     assert.match(guide, /0\.05 USD per request/)
     assert.match(guide, /background-remove/)
     assert.match(guide, /depth-video/)
+    assert.match(guide, /subtitle-remove/)
+    assert.match(
+      guide,
+      /operation=remove_subtitles, quality=quality, format=mp4, subtitle_area=bottom/
+    )
+    assert.match(guide, /0\.02 USD per second/)
     assert.match(guide, /Webhook/)
     assert.match(guide, /X-Webhook-Signature/)
     assert.match(guide, /v1=<hex>/)
