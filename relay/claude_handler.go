@@ -21,6 +21,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func applyClaudeResponsesEffort(claudeRequest *dto.ClaudeRequest, openAIRequest *dto.GeneralOpenAIRequest) {
+	if claudeRequest == nil || openAIRequest == nil {
+		return
+	}
+	if effort := claudeRequest.GetEfforts(); effort != "" {
+		openAIRequest.ReasoningEffort = effort
+	}
+}
+
 func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 
 	info.InitChannelMeta(c)
@@ -149,6 +158,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if !ok {
 			return types.NewError(fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value), types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
+		applyClaudeResponsesEffort(request, openAIRequest)
 
 		usage, newApiErr := chatCompletionsViaResponses(c, info, adaptor, openAIRequest)
 		if newApiErr != nil {
