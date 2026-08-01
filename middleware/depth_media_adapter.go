@@ -59,28 +59,56 @@ func DepthMediaRequestConvert() gin.HandlerFunc {
 		} else if modelName == "" ||
 			modelName == taskdepthmedia.PublicModelBackgroundRemove ||
 			modelName == taskdepthmedia.PublicModelImageUpscale ||
-			modelName == taskdepthmedia.PublicModelSubtitleRemove {
-			resolved, err := taskdepthmedia.ResolveModel(request.Operation, request.Quality, request.Scale)
+			modelName == taskdepthmedia.PublicModelSubtitleRemove ||
+			modelName == taskdepthmedia.PublicModelVideoUpscale ||
+			modelName == taskdepthmedia.PublicModelVideoBackground {
+			operation := strings.ToLower(strings.TrimSpace(request.Operation))
+			quality := strings.ToLower(strings.TrimSpace(request.Quality))
+			scale := request.Scale
+			if operation == "video_upscale" {
+				if quality == "" {
+					quality = "quality"
+				}
+				if scale == 0 {
+					scale = 2
+				}
+			}
+			if operation == "remove_video_background" && quality == "" {
+				quality = "quality"
+			}
+			resolved, err := taskdepthmedia.ResolveModel(operation, quality, scale)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				c.Abort()
 				return
 			}
 			if modelName == taskdepthmedia.PublicModelBackgroundRemove &&
-				!strings.EqualFold(strings.TrimSpace(request.Operation), "remove_background") {
+				!strings.EqualFold(operation, "remove_background") {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "background-remove requires operation remove_background"})
 				c.Abort()
 				return
 			}
 			if modelName == taskdepthmedia.PublicModelImageUpscale &&
-				!strings.EqualFold(strings.TrimSpace(request.Operation), "upscale") {
+				!strings.EqualFold(operation, "upscale") {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "image-upscale requires operation upscale"})
 				c.Abort()
 				return
 			}
 			if modelName == taskdepthmedia.PublicModelSubtitleRemove &&
-				!strings.EqualFold(strings.TrimSpace(request.Operation), "remove_subtitles") {
+				!strings.EqualFold(operation, "remove_subtitles") {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "subtitle-remove requires operation remove_subtitles"})
+				c.Abort()
+				return
+			}
+			if modelName == taskdepthmedia.PublicModelVideoUpscale &&
+				!strings.EqualFold(operation, "video_upscale") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "video-upscale requires operation video_upscale"})
+				c.Abort()
+				return
+			}
+			if modelName == taskdepthmedia.PublicModelVideoBackground &&
+				!strings.EqualFold(operation, "remove_video_background") {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "video-background-remove requires operation remove_video_background"})
 				c.Abort()
 				return
 			}

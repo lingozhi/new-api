@@ -49,6 +49,10 @@ const sourceModels: PricingModel[] = [
     ['image-upscale-fidelity-4x', 0.05],
     ['image-upscale-sharp-4x', 0.05],
     ['subtitle-remove', 0.02],
+    ['video-upscale-quality-2x', 0.04],
+    ['video-upscale-quality-4x', 0.07],
+    ['video-background-remove-fast', 0.03],
+    ['video-background-remove-quality', 0.05],
   ].map(([modelName, price]) => ({
     id: 74,
     model_name: String(modelName),
@@ -63,12 +67,19 @@ const sourceModels: PricingModel[] = [
 ]
 
 describe('DepthMedia model plaza catalog', () => {
-  test('collapses implementation profiles into four public models', () => {
+  test('collapses implementation profiles into six public models', () => {
     const models = consolidateDepthMediaModels(sourceModels)
 
     assert.deepEqual(
       models.map((model) => model.model_name),
-      ['depth-video', 'background-remove', 'image-upscale', 'subtitle-remove']
+      [
+        'depth-video',
+        'background-remove',
+        'image-upscale',
+        'subtitle-remove',
+        'video-upscale',
+        'video-background-remove',
+      ]
     )
     assert.ok(
       models.every(
@@ -85,6 +96,12 @@ describe('DepthMedia model plaza catalog', () => {
       (model) => model.model_name === 'background-remove'
     )
     const upscale = models.find((model) => model.model_name === 'image-upscale')
+    const videoUpscale = models.find(
+      (model) => model.model_name === 'video-upscale'
+    )
+    const videoBackground = models.find(
+      (model) => model.model_name === 'video-background-remove'
+    )
 
     assert.deepEqual(
       background?.api_profile?.pricing_variants?.map(
@@ -96,9 +113,23 @@ describe('DepthMedia model plaza catalog', () => {
       upscale?.api_profile?.pricing_variants?.map((variant) => variant.price),
       [0.02, 0.02, 0.05, 0.05]
     )
+    assert.deepEqual(
+      videoUpscale?.api_profile?.pricing_variants?.map(
+        (variant) => variant.price
+      ),
+      [0.04, 0.07]
+    )
+    assert.deepEqual(
+      videoBackground?.api_profile?.pricing_variants?.map(
+        (variant) => variant.price
+      ),
+      [0.03, 0.05]
+    )
     assert.equal(getFixedPriceUnit(models[0]), 'seconds')
     assert.equal(getFixedPriceUnit(models[1]), 'request')
     assert.equal(getFixedPriceUnit(models[3]), 'seconds')
+    assert.equal(getFixedPriceUnit(videoUpscale), 'seconds')
+    assert.equal(getFixedPriceUnit(videoBackground), 'seconds')
     const subtitleParameters =
       models[3]?.api_profile?.parameters?.filter((parameter) =>
         ['quality', 'format'].includes(parameter.name)
@@ -182,6 +213,99 @@ describe('DepthMedia model plaza catalog', () => {
     assert.match(sample, /"subtitle_area": "bottom"/)
   })
 
+  test('generates the video enhancement job contracts', () => {
+    const upscaleSample = buildDepthMediaJobSample('curl', {
+      baseUrl: 'https://api.opwan.ai',
+      apiKeyEnv: 'OPWAN_API_KEY',
+      modelName: 'video-upscale',
+      endpointPath: '/v1/media/jobs',
+    })
+    assert.match(upscaleSample, /"model": "video-upscale"/)
+    assert.match(upscaleSample, /"operation": "video_upscale"/)
+    assert.match(upscaleSample, /"quality": "quality"/)
+    assert.match(upscaleSample, /"scale": 2/)
+    assert.match(upscaleSample, /"format": "mp4"/)
+
+    const backgroundSample = buildDepthMediaJobSample('curl', {
+      baseUrl: 'https://api.opwan.ai',
+      apiKeyEnv: 'OPWAN_API_KEY',
+      modelName: 'video-background-remove',
+      endpointPath: '/v1/media/jobs',
+    })
+    assert.match(backgroundSample, /"model": "video-background-remove"/)
+    assert.match(backgroundSample, /"operation": "remove_video_background"/)
+    assert.match(backgroundSample, /"quality": "quality"/)
+    assert.match(backgroundSample, /"format": "webm"/)
+  })
+
+  test('only advertises video options backed by configured source models', () => {
+    const models = consolidateDepthMediaModels(
+      sourceModels.filter(
+        (model) =>
+          ![
+            'video-upscale-quality-2x',
+            'video-background-remove-fast',
+          ].includes(model.model_name)
+      )
+    )
+    const videoUpscale = models.find(
+      (model) => model.model_name === 'video-upscale'
+    )
+    const videoBackground = models.find(
+      (model) => model.model_name === 'video-background-remove'
+    )
+
+    assert.deepEqual(
+      videoUpscale?.api_profile?.parameters?.find(
+        (parameter) => parameter.name === 'scale'
+      ),
+      {
+        name: 'scale',
+        type: 'enum',
+        required: true,
+        default: 4,
+        enum_values: ['4'],
+        description: 'Upscale multiplier',
+      }
+    )
+    assert.deepEqual(
+      videoBackground?.api_profile?.parameters?.find(
+        (parameter) => parameter.name === 'quality'
+      ),
+      {
+        name: 'quality',
+        type: 'enum',
+        default: 'quality',
+        enum_values: ['quality'],
+        description: 'Video background removal quality profile',
+      }
+    )
+    assert.deepEqual(
+      videoBackground?.api_profile?.parameters?.find(
+        (parameter) => parameter.name === 'format'
+      ),
+      {
+        name: 'format',
+        type: 'enum',
+        default: 'webm',
+        enum_values: ['webm', 'mp4'],
+        description: 'Output video format',
+      }
+    )
+    assert.deepEqual(
+      videoUpscale?.api_profile?.pricing_variants?.map(
+        (variant) => variant.parameters.scale
+      ),
+      [4]
+    )
+    assert.deepEqual(
+      videoBackground?.api_profile?.pricing_variants?.map(
+        (variant) => variant.parameters.quality
+      ),
+      ['quality']
+    )
+  })
+
   test('generates a self-contained AI integration guide for one-click copy', () => {
     const models = consolidateDepthMediaModels(sourceModels)
     const guide = buildDepthMediaAiIntegrationGuide({
@@ -204,6 +328,8 @@ describe('DepthMedia model plaza catalog', () => {
     assert.match(guide, /background-remove/)
     assert.match(guide, /depth-video/)
     assert.match(guide, /subtitle-remove/)
+    assert.match(guide, /video-upscale/)
+    assert.match(guide, /video-background-remove/)
     assert.match(
       guide,
       /operation=remove_subtitles, quality=quality, format=mp4, subtitle_area=bottom/

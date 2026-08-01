@@ -18,6 +18,8 @@ import (
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
 )
 
 func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
@@ -40,6 +42,7 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
+	normalizeResponsesToolArguments(&responsesResp, lunaReadToolArgumentsTransform(info))
 	if !responsesBridgeResponseHasVisibleOutput(&responsesResp) {
 		return nil, types.NewOpenAIError(
 			fmt.Errorf("responses completed without output text or a tool call"),
@@ -164,6 +167,7 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 		)
 	}
 	accumulator.SupplementResponseOutput(finalResponse)
+	normalizeResponsesToolArguments(finalResponse, lunaReadToolArgumentsTransform(info))
 	if !responsesBridgeResponseHasVisibleOutput(finalResponse) {
 		return nil, types.NewOpenAIError(
 			fmt.Errorf("responses completed without output text or a tool call"),
@@ -217,10 +221,11 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	responseId := helper.GetResponseID(c)
 	createAt := time.Now().Unix()
 	state, err := relayconvert.NewResponseStreamState(types.RelayFormatOpenAIResponses, info.RelayFormat, relayconvert.ResponseStreamOptions{
-		ID:           responseId,
-		Model:        info.UpstreamModelName,
-		Created:      createAt,
-		IncludeUsage: info.RelayFormat == types.RelayFormatClaude,
+		ID:                     responseId,
+		Model:                  info.UpstreamModelName,
+		Created:                createAt,
+		IncludeUsage:           info.RelayFormat == types.RelayFormatClaude,
+		ToolArgumentsTransform: lunaReadToolArgumentsTransform(info),
 	})
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
@@ -420,6 +425,46 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		helper.Done(c)
 	}
 	return usage, nil
+}
+
+func lunaReadToolArgumentsTransform(info *relaycommon.RelayInfo) relayconvert.ToolArgumentsTransform {
+	if info == nil || info.RelayFormat != types.RelayFormatClaude || info.OriginModelName != "gpt-5.6-luna" {
+		return nil
+	}
+	return normalizeLunaReadToolArguments
+}
+
+func normalizeLunaReadToolArguments(toolName, arguments string) (string, bool) {
+	if toolName != "Read" {
+		return arguments, false
+	}
+	if !gjson.Valid(arguments) {
+		return arguments, true
+	}
+	pages := gjson.Get(arguments, "pages")
+	if !pages.Exists() || pages.Type != gjson.String || pages.String() != "" {
+		return arguments, true
+	}
+	normalized, err := sjson.Delete(arguments, "pages")
+	if err != nil {
+		return arguments, true
+	}
+	return normalized, true
+}
+
+func normalizeResponsesToolArguments(response *dto.OpenAIResponsesResponse, transform relayconvert.ToolArgumentsTransform) {
+	if response == nil || transform == nil {
+		return
+	}
+	for i := range response.Output {
+		output := &response.Output[i]
+		arguments := output.ArgumentsString()
+		normalized, matched := transform(output.Name, arguments)
+		if !matched || normalized == arguments {
+			continue
+		}
+		output.Arguments = []byte(normalized)
+	}
 }
 
 func responsesBridgeEventHasVisibleOutput(event *dto.ResponsesStreamResponse) bool {

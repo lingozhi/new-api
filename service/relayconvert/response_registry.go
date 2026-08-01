@@ -26,6 +26,11 @@ type ResponseStreamFinalizerFunc func(c *gin.Context, info *relaycommon.RelayInf
 
 type ResponseConverterQuality string
 
+// ToolArgumentsTransform selects tools whose arguments must be buffered until complete.
+// matched must stay true for a selected tool even when normalized equals arguments; it
+// describes buffering eligibility, not whether the transform changed the payload.
+type ToolArgumentsTransform func(toolName, arguments string) (normalized string, matched bool)
+
 const (
 	ResponseConverterQualityGood        ResponseConverterQuality = "good"
 	ResponseConverterQualityFair        ResponseConverterQuality = "fair"
@@ -68,10 +73,11 @@ type responseConverterRoute struct {
 }
 
 type ResponseStreamOptions struct {
-	ID           string
-	Model        string
-	Created      int64
-	IncludeUsage bool
+	ID                     string
+	Model                  string
+	Created                int64
+	IncludeUsage           bool
+	ToolArgumentsTransform ToolArgumentsTransform
 }
 
 type ResponseStreamState struct {
@@ -850,6 +856,7 @@ func finalizeOAIChatStreamResponseToOAIResponses(_ *gin.Context, _ *relaycommon.
 func newOAIResponsesToOAIChatStreamState(options ResponseStreamOptions) any {
 	state := NewResponsesToChatStreamState(strings.TrimSpace(options.Model), options.IncludeUsage)
 	state.ID = strings.TrimSpace(options.ID)
+	state.ToolArgumentsTransform = options.ToolArgumentsTransform
 	if options.Created != 0 {
 		state.Created = options.Created
 	}
