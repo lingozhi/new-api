@@ -87,6 +87,50 @@ func TestOaiResponsesToChatStreamHandlerConvertsSSEOrderAndUsage(t *testing.T) {
 	)
 }
 
+func TestOaiResponsesToChatHandlerRejectsCompletedResponseWithoutVisibleOutput(t *testing.T) {
+	body := `{"id":"resp_1","model":"gpt-test","status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}`
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, false)
+
+	usage, apiErr := OaiResponsesToChatHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeEmptyResponse, apiErr.GetErrorCode())
+	require.Empty(t, recorder.Body.String())
+}
+
+func TestOaiResponsesToChatBufferedStreamHandlerRejectsMissingTerminal(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {"type":"response.output_text.delta","delta":"partial text"}`,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+
+	usage, apiErr := OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeBadResponse, apiErr.GetErrorCode())
+	require.Empty(t, recorder.Body.String())
+}
+
+func TestOaiResponsesToChatBufferedStreamHandlerRejectsCompletedResponseWithoutVisibleOutput(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+
+	usage, apiErr := OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeEmptyResponse, apiErr.GetErrorCode())
+	require.Empty(t, recorder.Body.String())
+}
+
 func TestOaiResponsesToChatStreamHandlerRejectsMissingTerminalBeforeStreaming(t *testing.T) {
 	tests := []struct {
 		name string
