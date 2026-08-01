@@ -77,8 +77,9 @@ func rawStringField(raw json.RawMessage, field string) (string, error) {
 
 // gptImageSizeFromUnifiedOptions maps the gateway's model-neutral
 // aspect_ratio/resolution controls to the size field accepted by the OpenAI
-// Responses image_generation tool. GPT Image 2 accepts the 15 official
-// resolution/aspect combinations plus automatic sizing at 1K.
+// Responses image_generation tool. GPT Image 2 accepts the combinations that
+// were verified against the configured image providers; unsupported 4K ratios
+// are intentionally absent from the shared capability matrix.
 func gptImageSizeFromUnifiedOptions(req *dto.ImageRequest, model string) (string, error) {
 	if req == nil {
 		return "", errors.New("image request is required")
@@ -91,7 +92,7 @@ func gptImageSizeFromUnifiedOptions(req *dto.ImageRequest, model string) (string
 			if capabilities.SupportsSize(size) {
 				return size, nil
 			}
-			return "", fmt.Errorf("size %q is not supported by model %s; use one of the 15 official sizes or auto", size, model)
+			return "", fmt.Errorf("size %q is not supported by model %s; use a size published by the model capability profile", size, model)
 		}
 		if capabilities.Family == common.ImageModelFamilyGPTImage {
 			if capabilities.SupportsSize(size) {
@@ -169,7 +170,7 @@ func gptImageSizeFromUnifiedOptions(req *dto.ImageRequest, model string) (string
 	if aspectRatio == "auto" {
 		return "", fmt.Errorf("aspect_ratio %q is only supported with resolution 1K by model %s", aspectRatio, model)
 	}
-	return "", fmt.Errorf("aspect_ratio %q is not supported by model %s; use one of 1:1, 16:9, 9:16, 3:4, or 4:3", aspectRatio, model)
+	return "", fmt.Errorf("aspect_ratio %q is not supported with resolution %s by model %s", aspectRatio, resolution, model)
 }
 
 // NormalizeUnifiedGPTImageDimensions converts the public aspect_ratio and
