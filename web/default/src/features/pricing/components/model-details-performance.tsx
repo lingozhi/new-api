@@ -32,6 +32,7 @@ import {
   formatThroughput,
   formatUptimePct,
   getSuccessRateTextClass,
+  hasObservablePerformance,
 } from '@/features/performance-metrics/lib/format'
 import type { PerformanceGroup } from '@/features/performance-metrics/types'
 import { cn } from '@/lib/utils'
@@ -169,7 +170,8 @@ export function ModelDetailsPerformance(props: { model: PricingModel }) {
     staleTime: 60 * 1000,
   })
   const groups = useMemo(
-    () => metricsQuery.data?.data.groups ?? [],
+    () =>
+      (metricsQuery.data?.data.groups ?? []).filter(hasObservablePerformance),
     [metricsQuery.data]
   )
   const performances = useMemo<PerformanceRow[]>(

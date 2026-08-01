@@ -33,6 +33,18 @@ export function formatUptimePct(pct: number): string {
   return `${pct.toFixed(2)}%`
 }
 
+export function hasObservablePerformance(metric: {
+  avg_latency_ms: number
+  avg_tps: number
+  avg_ttft_ms?: number
+}): boolean {
+  return (
+    metric.avg_latency_ms > 0 ||
+    metric.avg_tps > 0 ||
+    (metric.avg_ttft_ms ?? 0) > 0
+  )
+}
+
 export type SuccessRateLevel =
   | 'excellent'
   | 'good'

@@ -64,6 +64,53 @@ func TestAsyncImageOutputLeaseIsIdempotentAndContextAware(t *testing.T) {
 	assert.Empty(t, asyncImageOutputMaterializationSemaphore)
 }
 
+func TestAsyncImagePerformanceSampleUsesTerminalTaskOutcomeAndDuration(t *testing.T) {
+	task := &model.Task{
+		Status:     model.TaskStatusSuccess,
+		Group:      "gpt pro",
+		SubmitTime: 1_000,
+		FinishTime: 1_087,
+		Properties: model.Properties{OriginModelName: "gpt-image-2"},
+	}
+
+	sample, ok := asyncImagePerformanceSample(task)
+	require.True(t, ok)
+	assert.Equal(t, "gpt-image-2", sample.Model)
+	assert.Equal(t, "gpt pro", sample.Group)
+	assert.Equal(t, int64(87_000), sample.LatencyMs)
+	assert.Equal(t, int64(87_000), sample.GenerationMs)
+	assert.True(t, sample.Success)
+	assert.False(t, sample.HasTtft)
+
+	task.Status = model.TaskStatusFailure
+	task.Properties.OriginModelName = ""
+	task.PrivateData.BillingContext = &model.TaskBillingContext{OriginModelName: "gpt-image-2"}
+	sample, ok = asyncImagePerformanceSample(task)
+	require.True(t, ok)
+	assert.False(t, sample.Success)
+	assert.Equal(t, "gpt-image-2", sample.Model)
+}
+
+func TestAsyncImagePerformanceSampleRejectsIncompleteTask(t *testing.T) {
+	_, ok := asyncImagePerformanceSample(nil)
+	assert.False(t, ok)
+
+	_, ok = asyncImagePerformanceSample(&model.Task{
+		Status:     model.TaskStatusInProgress,
+		SubmitTime: 1_000,
+		FinishTime: 1_087,
+		Properties: model.Properties{OriginModelName: "gpt-image-2"},
+	})
+	assert.False(t, ok)
+
+	_, ok = asyncImagePerformanceSample(&model.Task{
+		Status:     model.TaskStatusSuccess,
+		SubmitTime: 1_000,
+		FinishTime: 1_087,
+	})
+	assert.False(t, ok)
+}
+
 func TestAsyncImageHealthPathUsesPublicImageRoute(t *testing.T) {
 	assert.Equal(t, "/v1/images/generations", asyncImageHealthPath(asyncImageTaskPayload{
 		RelayMode:                relayconstant.RelayModeImagesGenerations,

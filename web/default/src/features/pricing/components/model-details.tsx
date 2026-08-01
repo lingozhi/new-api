@@ -54,6 +54,7 @@ import {
   formatThroughput,
   formatUptimePct,
   getSuccessRateTextClass,
+  hasObservablePerformance,
 } from '@/features/performance-metrics/lib/format'
 import { formatCurrencyFromUSD } from '@/lib/currency'
 import { getLobeIcon } from '@/lib/lobe-icon'
@@ -273,7 +274,9 @@ function OverviewSummaryGrid(props: { model: PricingModel }) {
     staleTime: 60 * 1000,
   })
 
-  const groups = metricsQuery.data?.data.groups ?? []
+  const groups = (metricsQuery.data?.data.groups ?? []).filter(
+    hasObservablePerformance
+  )
   const successRates = groups
     .map((group) => group.success_rate)
     .filter((rate) => Number.isFinite(rate))

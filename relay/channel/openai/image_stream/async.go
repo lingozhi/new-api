@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
@@ -1948,6 +1949,9 @@ func finalizePersistedImageTask(ctx context.Context, taskID string) (*model.Task
 		return nil, fmt.Errorf("finalize image task %s returned no task", taskID)
 	}
 	if finalization.Applied {
+		if sample, ok := asyncImagePerformanceSample(finalization.Task); ok {
+			perfmetrics.Record(sample)
+		}
 		if err := model.DeliverImageTaskBillingLogOutbox(taskID); err != nil {
 			// The terminal task and its outbox are durable. A log-database outage
 			// must not reopen/refund the task; the system-task drain retries it.
@@ -1955,6 +1959,30 @@ func finalizePersistedImageTask(ctx context.Context, taskID string) (*model.Task
 		}
 	}
 	return finalization.Task, nil
+}
+
+func asyncImagePerformanceSample(task *model.Task) (perfmetrics.Sample, bool) {
+	if task == nil || (task.Status != model.TaskStatusSuccess && task.Status != model.TaskStatusFailure) {
+		return perfmetrics.Sample{}, false
+	}
+	modelName := strings.TrimSpace(task.Properties.OriginModelName)
+	if modelName == "" && task.PrivateData.BillingContext != nil {
+		modelName = strings.TrimSpace(task.PrivateData.BillingContext.OriginModelName)
+	}
+	if modelName == "" {
+		return perfmetrics.Sample{}, false
+	}
+	latencyMs := int64(0)
+	if task.FinishTime >= task.SubmitTime && task.SubmitTime > 0 {
+		latencyMs = (task.FinishTime - task.SubmitTime) * int64(time.Second/time.Millisecond)
+	}
+	return perfmetrics.Sample{
+		Model:        modelName,
+		Group:        task.Group,
+		LatencyMs:    latencyMs,
+		Success:      task.Status == model.TaskStatusSuccess,
+		GenerationMs: latencyMs,
+	}, true
 }
 
 func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) {
