@@ -118,7 +118,7 @@ func TestOaiResponsesToChatBufferedStreamHandlerRejectsMissingTerminal(t *testin
 
 func TestOaiResponsesToChatBufferedStreamHandlerRejectsCompletedResponseWithoutVisibleOutput(t *testing.T) {
 	body := strings.Join([]string{
-		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}`,
 		``,
 	}, "\n")
 	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)

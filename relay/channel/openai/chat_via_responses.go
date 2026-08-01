@@ -40,6 +40,13 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
+	if !responsesBridgeResponseHasVisibleOutput(&responsesResp) {
+		return nil, types.NewOpenAIError(
+			fmt.Errorf("responses completed without output text or a tool call"),
+			types.ErrorCodeEmptyResponse,
+			http.StatusBadGateway,
+		)
+	}
 
 	chatResult, err := relayconvert.ConvertResponse(c, info, types.RelayFormatOpenAI, &responsesResp)
 	if err != nil {
@@ -86,6 +93,7 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 	accumulator := relayconvert.NewResponsesBufferedAccumulator()
 	var finalResponse *dto.OpenAIResponsesResponse
 	var streamErr *types.NewAPIError
+	seenTerminal := false
 
 	scanner := helper.NewStreamScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
@@ -112,6 +120,7 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 		accumulator.ProcessEvent(&streamResp)
 		switch streamResp.Type {
 		case "response.completed", "response.done", "response.incomplete":
+			seenTerminal = true
 			finalResponse = streamResp.Response
 			if streamResp.Type == "response.incomplete" {
 				if finalResponse == nil {
@@ -130,7 +139,7 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 			}
 			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 		}
-		if streamErr != nil || finalResponse != nil {
+		if streamErr != nil || seenTerminal {
 			break
 		}
 	}
@@ -140,15 +149,28 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 	if err := scanner.Err(); err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
+	if !seenTerminal {
+		return nil, types.NewOpenAIError(
+			fmt.Errorf("responses stream ended without a terminal event"),
+			types.ErrorCodeBadResponse,
+			http.StatusBadGateway,
+		)
+	}
 	if finalResponse == nil {
-		finalResponse = &dto.OpenAIResponsesResponse{
-			ID:        helper.GetResponseID(c),
-			CreatedAt: int(time.Now().Unix()),
-			Model:     info.UpstreamModelName,
-			Status:    []byte(`"completed"`),
-		}
+		return nil, types.NewOpenAIError(
+			fmt.Errorf("responses terminal event omitted its response payload"),
+			types.ErrorCodeBadResponse,
+			http.StatusBadGateway,
+		)
 	}
 	accumulator.SupplementResponseOutput(finalResponse)
+	if !responsesBridgeResponseHasVisibleOutput(finalResponse) {
+		return nil, types.NewOpenAIError(
+			fmt.Errorf("responses completed without output text or a tool call"),
+			types.ErrorCodeEmptyResponse,
+			http.StatusBadGateway,
+		)
+	}
 
 	chatResult, err := relayconvert.ConvertResponse(c, info, types.RelayFormatOpenAI, finalResponse)
 	if err != nil {
@@ -407,11 +429,16 @@ func responsesBridgeEventHasVisibleOutput(event *dto.ResponsesStreamResponse) bo
 			return true
 		}
 	}
-	if event.Response != nil {
-		for i := range event.Response.Output {
-			if responsesBridgeOutputIsVisible(&event.Response.Output[i], false) {
-				return true
-			}
+	return responsesBridgeResponseHasVisibleOutput(event.Response)
+}
+
+func responsesBridgeResponseHasVisibleOutput(response *dto.OpenAIResponsesResponse) bool {
+	if response == nil {
+		return false
+	}
+	for i := range response.Output {
+		if responsesBridgeOutputIsVisible(&response.Output[i], false) {
+			return true
 		}
 	}
 	return false

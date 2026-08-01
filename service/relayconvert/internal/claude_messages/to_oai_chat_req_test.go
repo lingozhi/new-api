@@ -30,7 +30,10 @@ func TestClaudeMessagesRequestToOpenAIResponsesChatPreservesMixedAssistantConten
 
 	require.NoError(t, err)
 	require.Len(t, converted.Messages, 1)
-	assert.Equal(t, "I will inspect the canvas before editing it.", converted.Messages[0].StringContent())
+	content := converted.Messages[0].ParseContent()
+	require.Len(t, content, 1)
+	assert.Equal(t, dto.ContentTypeText, content[0].Type)
+	assert.Equal(t, "I will inspect the canvas before editing it.", content[0].Text)
 	toolCalls := converted.Messages[0].ParseToolCalls()
 	require.Len(t, toolCalls, 1)
 	assert.Equal(t, "toolu_1", toolCalls[0].ID)
