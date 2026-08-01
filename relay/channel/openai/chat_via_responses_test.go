@@ -133,6 +133,110 @@ func TestOaiResponsesToChatStreamHandlerPreservesReadPagesOutsideLuna(t *testing
 	require.JSONEq(t, `{"file_path":"/tmp/doc.pdf","pages":"1-5"}`, claudePartialJSON(t, recorder.Body.String()))
 }
 
+func TestOaiResponsesToChatHandlerOmitsEmptyReadPagesForLunaClaude(t *testing.T) {
+	body := `{"id":"resp_1","model":"provider-luna","status":"completed","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"Read","arguments":{"file_path":"/tmp/sentinel.png","limit":9007199254740991,"pages":""}}],"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}`
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, false)
+	info.RelayFormat = types.RelayFormatClaude
+	info.OriginModelName = "gpt-5.6-luna"
+
+	usage, apiErr := OaiResponsesToChatHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 5, usage.TotalTokens)
+	require.Contains(t, recorder.Body.String(), "9007199254740991")
+	input := claudeToolInput(t, recorder.Body.String())
+	require.Equal(t, "/tmp/sentinel.png", input["file_path"])
+	require.Equal(t, float64(9007199254740991), input["limit"])
+	require.NotContains(t, input, "pages")
+}
+
+func TestOaiResponsesToChatBufferedStreamHandlerOmitsEmptyReadPagesForLunaClaude(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"Read"}}`,
+		`data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"file_path\":\"/tmp/sentinel.png\",\"pages\":\"\"}"}`,
+		`data: {"type":"response.function_call_arguments.done","output_index":0,"item_id":"fc_1"}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"provider-luna","status":"completed","usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+	info.OriginModelName = "gpt-5.6-luna"
+
+	usage, apiErr := OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 5, usage.TotalTokens)
+	require.Equal(t, map[string]any{"file_path": "/tmp/sentinel.png"}, claudeToolInput(t, recorder.Body.String()))
+}
+
+func TestNormalizeLunaReadToolArguments(t *testing.T) {
+	tests := []struct {
+		name        string
+		toolName    string
+		arguments   string
+		want        string
+		wantMatched bool
+	}{
+		{
+			name:        "empty pages is removed without remarshal",
+			toolName:    "Read",
+			arguments:   `{"file_path":"/tmp/a.png","limit":9007199254740991,"pages":""}`,
+			want:        `{"file_path":"/tmp/a.png","limit":9007199254740991}`,
+			wantMatched: true,
+		},
+		{name: "legal pages", toolName: "Read", arguments: `{"pages":"1-5"}`, want: `{"pages":"1-5"}`, wantMatched: true},
+		{name: "whitespace pages", toolName: "Read", arguments: `{"pages":" "}`, want: `{"pages":" "}`, wantMatched: true},
+		{name: "null pages", toolName: "Read", arguments: `{"pages":null}`, want: `{"pages":null}`, wantMatched: true},
+		{name: "numeric pages", toolName: "Read", arguments: `{"pages":1}`, want: `{"pages":1}`, wantMatched: true},
+		{name: "nested pages", toolName: "Read", arguments: `{"options":{"pages":""}}`, want: `{"options":{"pages":""}}`, wantMatched: true},
+		{name: "malformed json", toolName: "Read", arguments: `{"pages":""`, want: `{"pages":""`, wantMatched: true},
+		{name: "other tool", toolName: "canvas_read", arguments: `{"pages":""}`, want: `{"pages":""}`, wantMatched: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, matched := normalizeLunaReadToolArguments(tt.toolName, tt.arguments)
+			require.Equal(t, tt.wantMatched, matched)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestLunaReadToolArgumentsTransformScope(t *testing.T) {
+	tests := []struct {
+		name string
+		info *relaycommon.RelayInfo
+		want bool
+	}{
+		{name: "nil info"},
+		{name: "OpenAI target", info: &relaycommon.RelayInfo{OriginModelName: "gpt-5.6-luna", RelayFormat: types.RelayFormatOpenAI}},
+		{name: "other model", info: &relaycommon.RelayInfo{OriginModelName: "gpt-5.6-luna-preview", RelayFormat: types.RelayFormatClaude}},
+		{name: "exact Luna Claude", info: &relaycommon.RelayInfo{OriginModelName: "gpt-5.6-luna", RelayFormat: types.RelayFormatClaude}, want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, lunaReadToolArgumentsTransform(tt.info) != nil)
+		})
+	}
+}
+
+func TestNormalizeResponsesToolArgumentsLeavesUnchangedArgumentsBytesAlone(t *testing.T) {
+	response := &dto.OpenAIResponsesResponse{Output: []dto.ResponsesOutput{
+		{Name: "Read", Arguments: []byte(`"{\"pages\":\"1-5\"}"`)},
+		{Name: "canvas_read", Arguments: []byte(`{"pages":""}`)},
+	}}
+	wantRead := string(response.Output[0].Arguments)
+	wantOther := string(response.Output[1].Arguments)
+
+	normalizeResponsesToolArguments(response, normalizeLunaReadToolArguments)
+
+	require.Equal(t, wantRead, string(response.Output[0].Arguments))
+	require.Equal(t, wantOther, string(response.Output[1].Arguments))
+}
+
 func TestOaiResponsesToChatHandlerRejectsCompletedResponseWithoutVisibleOutput(t *testing.T) {
 	body := `{"id":"resp_1","model":"gpt-test","status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}`
 	c, recorder, resp, info := newResponsesChatTestContext(t, body, false)
@@ -968,6 +1072,22 @@ func claudePartialJSON(t *testing.T, stream string) string {
 		}
 	}
 	return partial.String()
+}
+
+func claudeToolInput(t *testing.T, body string) map[string]any {
+	t.Helper()
+	var response dto.ClaudeResponse
+	require.NoError(t, common.UnmarshalJsonStr(body, &response))
+	for _, content := range response.Content {
+		if content.Type != "tool_use" {
+			continue
+		}
+		input, ok := content.Input.(map[string]any)
+		require.True(t, ok)
+		return input
+	}
+	require.FailNow(t, "Claude response did not contain a tool_use block")
+	return nil
 }
 
 type readError struct {

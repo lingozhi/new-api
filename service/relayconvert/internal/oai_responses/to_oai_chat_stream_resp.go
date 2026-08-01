@@ -11,10 +11,11 @@ import (
 )
 
 type ResponsesToChatStreamState struct {
-	ID           string
-	Model        string
-	Created      int64
-	IncludeUsage bool
+	ID                     string
+	Model                  string
+	Created                int64
+	IncludeUsage           bool
+	ToolArgumentsTransform func(toolName, arguments string) (normalized string, matched bool)
 
 	Usage *dto.Usage
 
@@ -35,15 +36,20 @@ type ResponsesToChatStreamState struct {
 }
 
 type responsesStreamTool struct {
-	Key        string
-	CallID     string
-	ItemID     string
-	Name       string
-	Arguments  string
-	Index      int
-	Sent       bool
-	NameSent   bool
-	ArgsSentAt int
+	Key                  string
+	CallID               string
+	ItemID               string
+	Name                 string
+	Arguments            string
+	Index                int
+	Sent                 bool
+	NameSent             bool
+	ArgsSentAt           int
+	TransformChecked     bool
+	TransformMatched     bool
+	ArgumentsReady       bool
+	MetadataReady        bool
+	ArgumentsTransformed bool
 }
 
 func NewResponsesToChatStreamState(model string, includeUsage bool) *ResponsesToChatStreamState {
@@ -190,7 +196,7 @@ func (s *ResponsesToChatStreamState) terminalOutputChunks(response *dto.OpenAIRe
 			}
 			chunks = append(chunks, s.reasoningDelta(reasoning.String())...)
 		case isResponsesToolOutputType(out.Type):
-			chunks = append(chunks, s.toolItem(&dto.ResponsesStreamResponse{Item: out})...)
+			chunks = append(chunks, s.toolItem(&dto.ResponsesStreamResponse{Type: responsesEventOutputItemDone, Item: out})...)
 		}
 	}
 	return chunks
@@ -226,8 +232,12 @@ func (s *ResponsesToChatStreamState) toolItem(event *dto.ResponsesStreamResponse
 		return nil
 	}
 	args := event.Item.ArgumentsString()
-	if args != "" {
+	if args != "" && !tool.ArgumentsReady {
 		tool.Arguments = args
+	}
+	if event.Type == responsesEventOutputItemDone {
+		tool.MetadataReady = true
+		s.prepareToolArguments(tool)
 	}
 	return s.toolDelta(tool, "")
 }
@@ -257,7 +267,44 @@ func (s *ResponsesToChatStreamState) flushPendingTool(event *dto.ResponsesStream
 	if tool == nil {
 		return nil
 	}
+	s.prepareToolArguments(tool)
 	return s.toolDelta(tool, "")
+}
+
+func (s *ResponsesToChatStreamState) shouldBufferToolArguments(tool *responsesStreamTool) bool {
+	if tool == nil || s.ToolArgumentsTransform == nil {
+		return false
+	}
+	if strings.TrimSpace(tool.Name) == "" {
+		return false
+	}
+	if !tool.TransformChecked {
+		_, tool.TransformMatched = s.ToolArgumentsTransform(tool.Name, tool.Arguments)
+		tool.TransformChecked = true
+	}
+	return tool.TransformMatched
+}
+
+func (s *ResponsesToChatStreamState) shouldHoldToolArguments(tool *responsesStreamTool) bool {
+	if tool == nil || s.ToolArgumentsTransform == nil {
+		return false
+	}
+	if strings.TrimSpace(tool.Name) == "" {
+		return !tool.MetadataReady
+	}
+	return s.shouldBufferToolArguments(tool) && !tool.ArgumentsReady
+}
+
+func (s *ResponsesToChatStreamState) prepareToolArguments(tool *responsesStreamTool) {
+	if tool == nil {
+		return
+	}
+	tool.ArgumentsReady = true
+	if tool.ArgumentsTransformed || strings.TrimSpace(tool.Name) == "" || !s.shouldBufferToolArguments(tool) {
+		return
+	}
+	tool.Arguments, _ = s.ToolArgumentsTransform(tool.Name, tool.Arguments)
+	tool.ArgumentsTransformed = true
 }
 
 func (s *ResponsesToChatStreamState) ensureToolForEvent(event *dto.ResponsesStreamResponse) *responsesStreamTool {
@@ -391,7 +438,10 @@ func (s *ResponsesToChatStreamState) toolDelta(tool *responsesStreamTool, explic
 	}
 
 	argsDelta := explicitDelta
-	if argsDelta == "" && len(tool.Arguments) > tool.ArgsSentAt {
+	bufferArguments := s.shouldHoldToolArguments(tool)
+	if bufferArguments {
+		argsDelta = ""
+	} else if argsDelta == "" && len(tool.Arguments) > tool.ArgsSentAt {
 		argsDelta = tool.Arguments[tool.ArgsSentAt:]
 	}
 	if tool.Sent && argsDelta == "" && (tool.Name == "" || tool.NameSent) {
@@ -513,6 +563,8 @@ func (s *ResponsesToChatStreamState) flushAllPendingTools() []dto.ChatCompletion
 			tool.Arguments += s.pendingArgsByItemID[itemID]
 			delete(s.pendingArgsByItemID, itemID)
 		}
+		tool.MetadataReady = true
+		s.prepareToolArguments(tool)
 		chunks = append(chunks, s.toolDelta(tool, "")...)
 	}
 	return chunks

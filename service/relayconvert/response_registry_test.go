@@ -489,6 +489,52 @@ func TestConvertStreamResponseStatefulDirectConverters(t *testing.T) {
 	require.IsType(t, dto.ChatCompletionsStreamResponse{}, responsesResults[len(responsesResults)-1].Value)
 }
 
+func TestResponseStreamOptionsPassToolArgumentsTransformToResponsesConverter(t *testing.T) {
+	state, err := NewResponseStreamState(types.RelayFormatOpenAIResponses, types.RelayFormatOpenAI, ResponseStreamOptions{
+		ID:    "chatcmpl_1",
+		Model: "gpt-test",
+		ToolArgumentsTransform: func(toolName string, arguments string) (string, bool) {
+			if toolName != "Read" {
+				return arguments, false
+			}
+			return `{"normalized":true}`, true
+		},
+	})
+	require.NoError(t, err)
+	outputIndex := 0
+
+	_, err = ConvertStreamResponseChunk(nil, nil, state, &dto.ResponsesStreamResponse{
+		Type:        "response.output_item.added",
+		OutputIndex: &outputIndex,
+		Item: &dto.ResponsesOutput{
+			Type:   "function_call",
+			ID:     "fc_read",
+			CallId: "call_read",
+			Name:   "Read",
+		},
+	})
+	require.NoError(t, err)
+	results, err := ConvertStreamResponseChunk(nil, nil, state, &dto.ResponsesStreamResponse{
+		Type:        "response.function_call_arguments.delta",
+		OutputIndex: &outputIndex,
+		Delta:       `{"pages":""}`,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, results)
+
+	results, err = ConvertStreamResponseChunk(nil, nil, state, &dto.ResponsesStreamResponse{
+		Type:        "response.function_call_arguments.done",
+		OutputIndex: &outputIndex,
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	chunk, ok := results[0].Value.(dto.ChatCompletionsStreamResponse)
+	require.True(t, ok)
+	require.Len(t, chunk.Choices, 1)
+	require.Len(t, chunk.Choices[0].Delta.ToolCalls, 1)
+	assert.Equal(t, `{"normalized":true}`, chunk.Choices[0].Delta.ToolCalls[0].Function.Arguments)
+}
+
 func TestConvertStreamResponseStatefulMultiHopResponsesToClaude(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		ClaudeConvertInfo: &relaycommon.ClaudeConvertInfo{
