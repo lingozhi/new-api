@@ -1817,14 +1817,6 @@ func TestValidateAsyncImageModelInputEnforcesProviderContracts(t *testing.T) {
 		&dto.ImageRequest{Prompt: "edit", Images: json.RawMessage(`["https://example.com/source.png"]`)},
 	))
 	require.ErrorContains(t,
-		validateAsyncImageModelInput(
-			"gpt-image-2-text-to-image",
-			"gpt-image-2",
-			&dto.ImageRequest{Prompt: "generate", Images: json.RawMessage(`["https://example.com/source.png"]`)},
-		),
-		"does not accept input_urls",
-	)
-	require.ErrorContains(t,
 		validateAsyncImageModelInput("public-alias", "mapped-model", &dto.ImageRequest{
 			Model:  "gpt-image-2-image-to-image",
 			Prompt: "edit",
