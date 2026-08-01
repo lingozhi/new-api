@@ -95,19 +95,7 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 
 		if role == "tool" || role == "function" {
 			callID := strings.TrimSpace(msg.ToolCallId)
-
-			var output any
-			if msg.Content == nil {
-				output = ""
-			} else if msg.IsStringContent() {
-				output = msg.StringContent()
-			} else {
-				if b, err := common.Marshal(msg.Content); err == nil {
-					output = string(b)
-				} else {
-					output = fmt.Sprintf("%v", msg.Content)
-				}
-			}
+			output := chatToolOutputToResponses(&msg)
 
 			if callID == "" {
 				inputItems = append(inputItems, map[string]any{
@@ -412,4 +400,51 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 	}
 
 	return out, nil
+}
+
+func chatToolOutputToResponses(message *dto.Message) any {
+	if message == nil || message.Content == nil {
+		return ""
+	}
+	if message.IsStringContent() {
+		return message.StringContent()
+	}
+
+	parts := message.ParseContent()
+	output := make([]map[string]any, 0, len(parts))
+	for _, part := range parts {
+		switch part.Type {
+		case dto.ContentTypeText:
+			output = append(output, map[string]any{
+				"type": "input_text",
+				"text": part.Text,
+			})
+		case dto.ContentTypeImageURL:
+			output = append(output, map[string]any{
+				"type":      "input_image",
+				"image_url": normalizeChatImageURLToString(part.ImageUrl),
+			})
+		case dto.ContentTypeFile:
+			output = append(output, map[string]any{
+				"type": "input_file",
+				"file": part.File,
+			})
+		default:
+			encoded, err := common.Marshal(part)
+			if err != nil {
+				encoded = []byte(fmt.Sprintf("%v", part))
+			}
+			output = append(output, map[string]any{
+				"type": "input_text",
+				"text": string(encoded),
+			})
+		}
+	}
+	if len(output) > 0 {
+		return output
+	}
+	if encoded, err := common.Marshal(message.Content); err == nil {
+		return string(encoded)
+	}
+	return fmt.Sprintf("%v", message.Content)
 }

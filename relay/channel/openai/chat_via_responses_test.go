@@ -87,6 +87,104 @@ func TestOaiResponsesToChatStreamHandlerConvertsSSEOrderAndUsage(t *testing.T) {
 	)
 }
 
+func TestOaiResponsesToChatHandlerRejectsCompletedResponseWithoutVisibleOutput(t *testing.T) {
+	body := `{"id":"resp_1","model":"gpt-test","status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}`
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, false)
+
+	usage, apiErr := OaiResponsesToChatHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeEmptyResponse, apiErr.GetErrorCode())
+	require.Empty(t, recorder.Body.String())
+}
+
+func TestOaiResponsesToChatHandlerRejectsWhitespaceOnlyOutput(t *testing.T) {
+	body := `{"id":"resp_1","model":"gpt-test","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":" \n\t "}]}],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}`
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, false)
+
+	usage, apiErr := OaiResponsesToChatHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeEmptyResponse, apiErr.GetErrorCode())
+	require.Empty(t, recorder.Body.String())
+}
+
+func TestOaiResponsesToChatHandlerPreservesRefusalOutput(t *testing.T) {
+	body := `{"id":"resp_1","model":"gpt-test","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"I cannot help with that request."}]}],"usage":{"input_tokens":2,"output_tokens":6,"total_tokens":8}}`
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, false)
+
+	usage, apiErr := OaiResponsesToChatHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 8, usage.TotalTokens)
+	require.Contains(t, recorder.Body.String(), "I cannot help with that request.")
+}
+
+func TestOaiResponsesToChatBufferedStreamHandlerRejectsMissingTerminal(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {"type":"response.output_text.delta","delta":"partial text"}`,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+
+	usage, apiErr := OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeBadResponse, apiErr.GetErrorCode())
+	require.Empty(t, recorder.Body.String())
+}
+
+func TestOaiResponsesToChatBufferedStreamHandlerRejectsCompletedResponseWithoutVisibleOutput(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+
+	usage, apiErr := OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeEmptyResponse, apiErr.GetErrorCode())
+	require.Empty(t, recorder.Body.String())
+}
+
+func TestOaiResponsesToChatBufferedStreamHandlerRejectsWhitespaceOnlyOutput(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":" \n\t "}]}],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+
+	usage, apiErr := OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, apiErr)
+	require.Equal(t, types.ErrorCodeEmptyResponse, apiErr.GetErrorCode())
+	require.Empty(t, recorder.Body.String())
+}
+
+func TestOaiResponsesToChatBufferedStreamHandlerPreservesRefusalOutput(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"refusal","refusal":"I cannot help with that request."}]}],"usage":{"input_tokens":2,"output_tokens":6,"total_tokens":8}}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+
+	usage, apiErr := OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 8, usage.TotalTokens)
+	require.Contains(t, recorder.Body.String(), "I cannot help with that request.")
+}
+
 func TestOaiResponsesToChatStreamHandlerRejectsMissingTerminalBeforeStreaming(t *testing.T) {
 	tests := []struct {
 		name string
@@ -121,11 +219,54 @@ func TestOaiResponsesToChatStreamHandlerEmitsClaudeErrorWhenTerminalIsMissingAft
 
 	require.Nil(t, apiErr)
 	require.NotNil(t, usage)
+	require.Zero(t, usage.TotalTokens)
+	require.True(t, info.UpstreamEmptyResponse)
 	got := recorder.Body.String()
 	require.Contains(t, got, "event: message_start")
 	require.Contains(t, got, "event: error")
 	require.Contains(t, got, `"type":"error"`)
 	require.NotContains(t, got, "event: message_stop")
+}
+
+func TestOaiResponsesToChatStreamHandlerRejectsWhitespaceOnlyCompletedForOpenAI(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {"type":"response.output_text.delta","delta":" \n\t "}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}}`,
+		``,
+	}, "\n\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Zero(t, usage.TotalTokens)
+	require.True(t, info.UpstreamEmptyResponse)
+	got := recorder.Body.String()
+	require.Contains(t, got, `"error"`)
+	require.NotContains(t, got, `"finish_reason":"stop"`)
+}
+
+func TestOaiResponsesToChatStreamHandlerPreservesRefusalDeltaForClaude(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {"type":"response.refusal.delta","delta":"I cannot help with that request."}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","usage":{"input_tokens":2,"output_tokens":6,"total_tokens":8}}}`,
+		``,
+	}, "\n\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 8, usage.TotalTokens)
+	got := recorder.Body.String()
+	require.Contains(t, got, `"type":"text_delta","text":"I cannot help with that request."`)
+	require.Contains(t, got, "event: message_stop")
+	require.NotContains(t, got, "event: error")
 }
 
 func TestOaiResponsesToChatStreamHandlerEmitsClaudeErrorOnParseInterruptionAfterStart(t *testing.T) {
@@ -141,8 +282,30 @@ func TestOaiResponsesToChatStreamHandlerEmitsClaudeErrorOnParseInterruptionAfter
 
 	require.Nil(t, apiErr)
 	require.NotNil(t, usage)
+	require.True(t, info.UpstreamEmptyResponse)
 	got := recorder.Body.String()
 	require.Contains(t, got, "event: message_start")
+	require.Contains(t, got, "event: error")
+	require.NotContains(t, got, "event: message_stop")
+}
+
+func TestOaiResponsesToChatStreamHandlerKeepsVisiblePartialOutputBillableOnInterruption(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {"type":"response.output_text.delta","delta":"partial answer"}`,
+		`data: {not-json}`,
+		``,
+	}, "\n\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.False(t, info.UpstreamEmptyResponse)
+	got := recorder.Body.String()
+	require.Contains(t, got, `"type":"text_delta","text":"partial answer"`)
 	require.Contains(t, got, "event: error")
 	require.NotContains(t, got, "event: message_stop")
 }

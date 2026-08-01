@@ -196,19 +196,13 @@ func claudeMessagesRequestToOpenAIChat(claudeRequest dto.ClaudeRequest, info *re
 			for _, mediaMsg := range content {
 				switch mediaMsg.Type {
 				case "text", "input_text":
-					message := dto.MediaContent{
-						Type:         "text",
-						Text:         mediaMsg.GetText(),
-						CacheControl: mediaMsg.CacheControl,
+					if message, ok := claudeMediaToOpenAI(mediaMsg); ok {
+						mediaMessages = append(mediaMessages, message)
 					}
-					mediaMessages = append(mediaMessages, message)
 				case "image":
-					imageData := fmt.Sprintf("data:%s;base64,%s", mediaMsg.Source.MediaType, mediaMsg.Source.Data)
-					mediaMessage := dto.MediaContent{
-						Type:     "image_url",
-						ImageUrl: &dto.MessageImageUrl{Url: imageData},
+					if message, ok := claudeMediaToOpenAI(mediaMsg); ok {
+						mediaMessages = append(mediaMessages, message)
 					}
-					mediaMessages = append(mediaMessages, mediaMessage)
 				case "tool_use":
 					toolCall := dto.ToolCallRequest{
 						ID:   mediaMsg.Id,
@@ -232,9 +226,19 @@ func claudeMessagesRequestToOpenAIChat(claudeRequest dto.ClaudeRequest, info *re
 					if mediaMsg.IsStringContent() {
 						oaiToolMessage.SetStringContent(mediaMsg.GetStringContent())
 					} else {
-						mediaContents := mediaMsg.ParseMediaContent()
-						encodedJSON, _ := common.Marshal(mediaContents)
-						oaiToolMessage.SetStringContent(string(encodedJSON))
+						claudeMediaContents := mediaMsg.ParseMediaContent()
+						openAIMediaContents := make([]dto.MediaContent, 0, len(claudeMediaContents))
+						for _, content := range claudeMediaContents {
+							if converted, ok := claudeMediaToOpenAI(content); ok {
+								openAIMediaContents = append(openAIMediaContents, converted)
+							}
+						}
+						if len(openAIMediaContents) > 0 {
+							oaiToolMessage.SetMediaContent(openAIMediaContents)
+						} else {
+							encodedJSON, _ := common.Marshal(claudeMediaContents)
+							oaiToolMessage.SetStringContent(string(encodedJSON))
+						}
 					}
 					openAIMessages = append(openAIMessages, oaiToolMessage)
 				}
@@ -243,7 +247,7 @@ func claudeMessagesRequestToOpenAIChat(claudeRequest dto.ClaudeRequest, info *re
 			if len(toolCalls) > 0 {
 				openAIMessage.SetToolCalls(toolCalls)
 			}
-			if len(mediaMessages) > 0 && len(toolCalls) == 0 {
+			if len(mediaMessages) > 0 {
 				openAIMessage.SetMediaContent(mediaMessages)
 			}
 		}
@@ -254,6 +258,35 @@ func claudeMessagesRequestToOpenAIChat(claudeRequest dto.ClaudeRequest, info *re
 
 	openAIRequest.Messages = openAIMessages
 	return &openAIRequest, nil
+}
+
+func claudeMediaToOpenAI(media dto.ClaudeMediaMessage) (dto.MediaContent, bool) {
+	switch media.Type {
+	case "text", "input_text":
+		return dto.MediaContent{
+			Type:         dto.ContentTypeText,
+			Text:         media.GetText(),
+			CacheControl: media.CacheControl,
+		}, true
+	case "image":
+		if media.Source == nil {
+			return dto.MediaContent{}, false
+		}
+		imageURL := strings.TrimSpace(media.Source.Url)
+		if imageURL == "" {
+			data := common.Interface2String(media.Source.Data)
+			if data == "" || strings.TrimSpace(media.Source.MediaType) == "" {
+				return dto.MediaContent{}, false
+			}
+			imageURL = fmt.Sprintf("data:%s;base64,%s", media.Source.MediaType, data)
+		}
+		return dto.MediaContent{
+			Type:     dto.ContentTypeImageURL,
+			ImageUrl: &dto.MessageImageUrl{Url: imageURL},
+		}, true
+	default:
+		return dto.MediaContent{}, false
+	}
 }
 
 func convertClaudeTools(tools any, allowResponsesTools bool) ([]dto.ToolCallRequest, []json.RawMessage, map[string]string, *uint, error) {

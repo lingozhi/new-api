@@ -46,6 +46,32 @@ func TestChatCompletionsRequestToResponsesRequestRejectsMultipleChoices(t *testi
 	assert.Contains(t, err.Error(), "n>1")
 }
 
+func TestChatCompletionsRequestToResponsesRequestPreservesMultimodalToolOutput(t *testing.T) {
+	toolResult := dto.Message{Role: "tool", ToolCallId: "call_1"}
+	toolResult.SetMediaContent([]dto.MediaContent{
+		{Type: dto.ContentTypeText, Text: "Rendered preview"},
+		{
+			Type: dto.ContentTypeImageURL,
+			ImageUrl: &dto.MessageImageUrl{
+				Url: "data:image/jpeg;base64,cGl4ZWxz",
+			},
+		},
+	})
+
+	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model:    "gpt-test",
+		Messages: []dto.Message{toolResult},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "function_call_output", gjson.GetBytes(got.Input, "0.type").String())
+	assert.Equal(t, "call_1", gjson.GetBytes(got.Input, "0.call_id").String())
+	assert.Equal(t, "input_text", gjson.GetBytes(got.Input, "0.output.0.type").String())
+	assert.Equal(t, "Rendered preview", gjson.GetBytes(got.Input, "0.output.0.text").String())
+	assert.Equal(t, "input_image", gjson.GetBytes(got.Input, "0.output.1.type").String())
+	assert.Equal(t, "data:image/jpeg;base64,cGl4ZWxz", gjson.GetBytes(got.Input, "0.output.1.image_url").String())
+}
+
 func assistantMessageWithTool(content string, id string, name string, args string) dto.Message {
 	msg := dto.Message{Role: "assistant", Content: content}
 	msg.SetToolCalls([]dto.ToolCallRequest{

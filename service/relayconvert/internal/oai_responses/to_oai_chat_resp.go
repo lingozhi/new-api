@@ -17,6 +17,8 @@ const (
 	responsesEventFailed                   = "response.failed"
 	responsesEventError                    = "response.error"
 	responsesEventOutputTextDelta          = "response.output_text.delta"
+	responsesEventRefusalDelta             = "response.refusal.delta"
+	responsesEventRefusalDone              = "response.refusal.done"
 	responsesEventOutputItemAdded          = "response.output_item.added"
 	responsesEventOutputItemDone           = "response.output_item.done"
 	responsesEventFunctionArgsDelta        = "response.function_call_arguments.delta"
@@ -197,6 +199,8 @@ func ExtractOutputTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
 		for _, c := range out.Content {
 			if c.Type == "output_text" && c.Text != "" {
 				sb.WriteString(c.Text)
+			} else if c.Type == "refusal" && c.Refusal != "" {
+				sb.WriteString(c.Refusal)
 			}
 		}
 	}
@@ -207,6 +211,8 @@ func ExtractOutputTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
 		for _, c := range out.Content {
 			if c.Text != "" {
 				sb.WriteString(c.Text)
+			} else if c.Refusal != "" {
+				sb.WriteString(c.Refusal)
 			}
 		}
 	}

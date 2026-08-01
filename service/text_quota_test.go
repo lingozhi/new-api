@@ -18,6 +18,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type recordingBillingSettler struct {
+	settled []int
+}
+
+func (s *recordingBillingSettler) Settle(actualQuota int) error {
+	s.settled = append(s.settled, actualQuota)
+	return nil
+}
+
+func (s *recordingBillingSettler) Refund(*gin.Context) {}
+
+func (s *recordingBillingSettler) NeedsRefund() bool { return false }
+
+func (s *recordingBillingSettler) GetPreConsumedQuota() int { return 5000 }
+
+func (s *recordingBillingSettler) Reserve(int) error { return nil }
+
 func TestCalculateTextQuotaSummaryClampsNegativeUncachedRemainder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -681,6 +698,79 @@ func TestCalculateTextQuotaSummaryKeepsToolSurchargeWithZeroTokens(t *testing.T)
 	require.Zero(t, summary.TotalTokens)
 	require.Equal(t, int64(5000), summary.ToolCallSurchargeQuota.Round(0).IntPart())
 	require.Equal(t, 5000, summary.Quota)
+}
+
+func TestPostTextConsumeQuotaSettlesExplicitEmptyResponseAtZero(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	tests := []struct {
+		name      string
+		configure func(*gin.Context, *relaycommon.RelayInfo)
+	}{
+		{
+			name: "fixed price",
+			configure: func(_ *gin.Context, info *relaycommon.RelayInfo) {
+				info.PriceData = types.PriceData{
+					UsePrice:       true,
+					ModelPrice:     0.25,
+					GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+				}
+			},
+		},
+		{
+			name: "tool surcharge",
+			configure: func(ctx *gin.Context, info *relaycommon.RelayInfo) {
+				ctx.Set("claude_web_search_requests", 2)
+				ctx.Set("image_generation_call", true)
+				info.PriceData = types.PriceData{
+					ModelRatio:      1,
+					CompletionRatio: 1,
+					GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+				}
+				info.ResponsesUsageInfo = &relaycommon.ResponsesUsageInfo{
+					BuiltInTools: map[string]*relaycommon.BuildInToolInfo{
+						dto.BuildInToolWebSearchPreview: {CallCount: 1},
+					},
+				}
+			},
+		},
+		{
+			name: "tiered expression",
+			configure: func(_ *gin.Context, info *relaycommon.RelayInfo) {
+				info.PriceData = types.PriceData{
+					ModelRatio:      1,
+					CompletionRatio: 1,
+					GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+				}
+				info.TieredBillingSnapshot = &billingexpr.BillingSnapshot{
+					BillingMode:               "tiered_expr",
+					ExprString:                `tier("base", 5000 + p + c)`,
+					GroupRatio:                1,
+					EstimatedQuotaBeforeGroup: 5000,
+					EstimatedQuotaAfterGroup:  5000,
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			settler := &recordingBillingSettler{}
+			info := &relaycommon.RelayInfo{
+				OriginModelName:       "gpt-5.6-luna",
+				UpstreamEmptyResponse: true,
+				FinalPreConsumedQuota: 5000,
+				Billing:               settler,
+				StartTime:             time.Now(),
+			}
+			tt.configure(ctx, info)
+
+			PostTextConsumeQuota(ctx, info, &dto.Usage{}, nil)
+
+			require.Equal(t, []int{0}, settler.settled)
+		})
+	}
 }
 
 func TestComposeTieredTextQuotaSaturatesFinalSurcharge(t *testing.T) {
