@@ -223,6 +223,7 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 				dto.ImageRoutingProtocolImagesEdits,
 				dto.ImageRoutingProtocolGeminiGenerate,
 				dto.ImageRoutingProtocolImagenPredict,
+				dto.ImageRoutingProtocolKIEJobs,
 				dto.ImageRoutingProtocolAdapter:
 				useGPTResponsesExecutor = false
 			default:
@@ -581,7 +582,7 @@ func validateAsyncImageProviderCapabilities(c *gin.Context, info *relaycommon.Re
 }
 
 func prepareAsyncImageAdaptorRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ImageRequest, allowPassThrough bool) (*image_stream.PreparedAsyncImageRequest, *types.NewAPIError) {
-	adaptor := GetAdaptor(info.ApiType)
+	adaptor := GetImageAdaptor(info)
 	if adaptor == nil {
 		return nil, types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}

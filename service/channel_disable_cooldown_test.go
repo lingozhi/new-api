@@ -89,6 +89,33 @@ func TestQuarantineAsyncImageChannelBlocksCoolingFallbackImmediately(t *testing.
 	assert.Nil(t, selected, "a failed image channel must not return as a cooling fallback")
 }
 
+func TestShouldQuarantineAsyncImageChannelClassifiesProviderAndClientFailures(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		errorCode  types.ErrorCode
+		message    string
+		want       bool
+	}{
+		{name: "caller bad request", statusCode: http.StatusBadRequest, errorCode: types.ErrorCodeInvalidRequest, message: "invalid size", want: false},
+		{name: "caller unprocessable request", statusCode: http.StatusUnprocessableEntity, errorCode: types.ErrorCodeInvalidRequest, message: "invalid prompt", want: false},
+		{name: "content policy rejection", statusCode: http.StatusBadRequest, errorCode: types.ErrorCodePromptBlocked, message: "prompt blocked", want: false},
+		{name: "authentication failure", statusCode: http.StatusUnauthorized, errorCode: types.ErrorCodeAccessDenied, message: "invalid provider key", want: true},
+		{name: "access failure", statusCode: http.StatusForbidden, errorCode: types.ErrorCodeAccessDenied, message: "provider denied access", want: true},
+		{name: "accepted task disappeared", statusCode: http.StatusNotFound, errorCode: types.ErrorCodeBadResponseStatusCode, message: "task not found", want: true},
+		{name: "rate limit", statusCode: http.StatusTooManyRequests, errorCode: types.ErrorCodeBadResponseStatusCode, message: "rate limited", want: true},
+		{name: "provider unavailable", statusCode: http.StatusServiceUnavailable, errorCode: types.ErrorCodeBadResponseStatusCode, message: "provider unavailable", want: true},
+		{name: "capability gap", statusCode: http.StatusBadRequest, errorCode: types.ErrorCodeBadResponseStatusCode, message: "image generation is not enabled for this group", want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			apiErr := types.NewErrorWithStatusCode(errors.New(test.message), test.errorCode, test.statusCode, types.ErrOptionWithSkipRetry())
+			apiErr.UpstreamStatusCode = test.statusCode
+			assert.Equal(t, test.want, ShouldQuarantineAsyncImageChannel(apiErr))
+		})
+	}
+}
+
 func TestShouldCooldownChannelForUpstreamErrorCoolsMalformedResponses(t *testing.T) {
 	err := types.NewErrorWithStatusCode(errors.New("API returned an empty or malformed response (HTTP 200)"), types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 

@@ -72,6 +72,11 @@ func TestChannelHealthOutcomeStatusScoresEmptyUpstreamAsFailure(t *testing.T) {
 	}
 }
 
+func TestChannelHealthPathNormalizesPublicAsyncImageJobsRoute(t *testing.T) {
+	assert.Equal(t, "/v1/jobs", ChannelHealthPath("/v1/jobs"))
+	assert.Equal(t, "/v1/jobs", ChannelHealthPath("/v1/jobs/task_123?include=result"))
+}
+
 // TestRecordChannelHealthOutcomeCountsEmptyUpstreamResponse verifies the
 // end-to-end effect: repeated 200-but-empty upstream responses (no apiErr, only
 // the UpstreamEmptyResponse flag) open the channel circuit, so a channel that
@@ -549,6 +554,18 @@ func TestRecordChannelHealthOutcomeDoesNotScoreImageCompletionLatency(t *testing
 				return &relaycommon.RelayInfo{
 					StartTime:         start,
 					FirstResponseTime: start.Add(20 * time.Second),
+				}
+			},
+		},
+		{
+			name:        "unified async image job",
+			channelID:   9001444,
+			modelName:   "test-async-image-jobs-latency",
+			requestPath: "/v1/jobs/task_123",
+			relayInfo: func(start time.Time) *relaycommon.RelayInfo {
+				return &relaycommon.RelayInfo{
+					StartTime:         start,
+					FirstResponseTime: start.Add(15 * time.Minute),
 				}
 			},
 		},

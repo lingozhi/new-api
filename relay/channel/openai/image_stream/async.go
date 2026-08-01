@@ -41,6 +41,8 @@ const (
 	asyncImageWebhookAttempts           = 5
 	asyncImageWebhookLease              = 5 * time.Minute
 	asyncImageUpstreamTimeout           = 5 * time.Minute
+	asyncImageKIEUpstreamTimeout        = 35 * time.Second
+	asyncImageProviderOverallDeadline   = 15 * time.Minute
 	asyncImageUploadTimeout             = 5 * time.Minute
 	asyncImageReservationStaleAfter     = 5 * time.Minute
 	asyncImageWorkerStaleAfter          = 20 * time.Minute
@@ -126,6 +128,7 @@ type asyncImageTaskPayload struct {
 	ChannelType                int                            `json:"channel_type,omitempty"`
 	ChannelCreateTime          int64                          `json:"channel_create_time,omitempty"`
 	ProviderStored             bool                           `json:"provider_response_stored,omitempty"`
+	ProviderDeadlineAt         int64                          `json:"provider_deadline_at,omitempty"`
 	ArtifactStored             bool                           `json:"artifact_stored,omitempty"`
 	AttemptedChannelIDs        []int                          `json:"attempted_channel_ids,omitempty"`
 	// ProviderCallStarted was written before the upstream request. A checkpoint
@@ -2067,6 +2070,15 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 	}
 
 	if payload.Executor == AsyncImageExecutorAdaptor && genericArtifact == nil {
+		if payload.ProviderStored && payload.ImageRoutingProtocol == dto.ImageRoutingProtocolKIEJobs {
+			deadlineAt := payload.ProviderDeadlineAt
+			if deadlineAt == 0 && task.SubmitTime > 0 {
+				deadlineAt = time.Unix(task.SubmitTime, 0).Add(asyncImageProviderOverallDeadline).Unix()
+			}
+			if deadlineAt > 0 && !time.Now().Before(time.Unix(deadlineAt, 0)) {
+				return false, failAsyncImageTask(ctx, task, errors.New("provider image polling deadline exceeded"))
+			}
+		}
 		if payload.PreparedRequest == nil || (!payload.PreparedRequest.DeferConversion && len(payload.PreparedRequest.Body) == 0) {
 			return false, failAsyncImageTask(ctx, task, errors.New("prepared provider image request is missing"))
 		}
@@ -2086,7 +2098,7 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 			}
 		}
 		genericAttemptStart = time.Now()
-		executionCtx, cancel := context.WithTimeout(ctx, asyncImageUpstreamTimeout)
+		executionCtx, cancel := context.WithTimeout(ctx, asyncImageAdaptorTimeout(payload))
 		passThroughBody := payload.PreparedRequest.Body
 		if payload.PreparedRequest.DeferConversion {
 			passThroughBody = nil
@@ -2128,6 +2140,9 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 				checkpointPayload := payload
 				checkpointPayload.ProviderStored = true
 				checkpointPayload.ProviderCallStarted = false
+				if checkpointPayload.ImageRoutingProtocol == dto.ImageRoutingProtocolKIEJobs && checkpointPayload.ProviderDeadlineAt == 0 {
+					checkpointPayload.ProviderDeadlineAt = time.Now().Add(asyncImageProviderOverallDeadline).Unix()
+				}
 				checkpointData, err := common.Marshal(checkpointPayload)
 				if err != nil {
 					return fmt.Errorf("encode provider image checkpoint: %w", err)
@@ -2140,6 +2155,7 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 					return errors.New("image task claim was lost before provider response checkpoint")
 				}
 				payload.ProviderStored = true
+				payload.ProviderDeadlineAt = checkpointPayload.ProviderDeadlineAt
 				genericUpstream = providerResponse
 				return nil
 			},
@@ -2155,15 +2171,18 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 			}
 			definitiveResponse := errors.Is(apiErr, ErrGenericImageDefinitiveResponse)
 			if definitiveResponse && genericUpstream == nil && payload.ProviderCallStarted {
-				service.RecordChannelHealthOutcome(genericChannel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), genericInfo, genericAttemptStart, apiErr, false)
-				channelError := *types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan())
-				service.QuarantineAsyncImageChannel(channelError, apiErr)
-				switched, switchErr := switchRejectedAsyncImageChannel(ctx, task, &payload, apiErr.Error())
-				if switchErr != nil {
-					return false, failAmbiguousAsyncImageTask(ctx, task)
-				}
-				if switched {
-					return false, errAsyncImageRetryScheduled
+				quarantine := service.ShouldQuarantineAsyncImageChannel(apiErr)
+				service.RecordChannelHealthOutcome(genericChannel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), genericInfo, genericAttemptStart, apiErr, !quarantine)
+				if quarantine {
+					channelError := *types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan())
+					service.QuarantineAsyncImageChannel(channelError, apiErr)
+					switched, switchErr := switchRejectedAsyncImageChannel(ctx, task, &payload, apiErr.Error())
+					if switchErr != nil {
+						return false, failCheckpointPendingAsyncImageTask(ctx, task, switchErr)
+					}
+					if switched {
+						return false, errAsyncImageRetryScheduled
+					}
 				}
 				reopenedPayload := payload
 				reopenedPayload.ProviderCallStarted = false
@@ -2184,12 +2203,42 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 			if genericUpstream == nil && payload.ProviderCallStarted {
 				return false, failAmbiguousAsyncImageTask(ctx, task)
 			}
+			pollDelay, hasPollDelay := types.ProviderTaskPollingRetryAfter(apiErr)
+			if payload.ProviderStored && hasPollDelay && apiErr.StatusCode < http.StatusBadRequest {
+				now := time.Now()
+				deadline := asyncImageProviderPollDeadline(task, payload)
+				if deadline.IsZero() || !now.Before(deadline) {
+					return false, failAsyncImageTask(ctx, task, fmt.Errorf("provider image polling deadline exceeded: %w", apiErr))
+				}
+				pollDelay = boundedAsyncImageProviderPollDelay(pollDelay, now, deadline)
+				if pollDelay <= 0 {
+					return false, failAsyncImageTask(ctx, task, fmt.Errorf("provider image polling deadline exceeded: %w", apiErr))
+				}
+				scheduled, scheduleErr := task.MarkImageProviderPoll(now.Add(pollDelay).Unix(), common.MaskSensitiveInfo(apiErr.Error()))
+				if scheduleErr != nil {
+					return false, fmt.Errorf("schedule pending provider image poll for task %s: %w", task.TaskID, scheduleErr)
+				}
+				if scheduled {
+					logger.LogWarn(ctx, fmt.Sprintf("provider image poll deferred: task=%s retry=%s", task.TaskID, pollDelay))
+				}
+				return false, errAsyncImageRetryScheduled
+			}
 			retryProvider := payload.ProviderStored && (executionErr != nil || errors.Is(apiErr, types.ErrProviderTaskPollingRetryable))
 			if retryProvider {
 				if task.ProviderAttempts+1 >= asyncImageProviderAttempts {
 					return false, failAsyncImageTask(ctx, task, fmt.Errorf("provider image polling exhausted retries: %w", apiErr))
 				}
 				delay := asyncImageRetryDelay(task.ProviderAttempts)
+				if hasPollDelay {
+					deadline := asyncImageProviderPollDeadline(task, payload)
+					if deadline.IsZero() || !time.Now().Before(deadline) {
+						return false, failAsyncImageTask(ctx, task, fmt.Errorf("provider image polling deadline exceeded: %w", apiErr))
+					}
+					delay = boundedAsyncImageProviderPollDelay(pollDelay, time.Now(), deadline)
+					if delay <= 0 {
+						return false, failAsyncImageTask(ctx, task, fmt.Errorf("provider image polling deadline exceeded: %w", apiErr))
+					}
+				}
 				scheduled, scheduleErr := task.MarkImageProviderRetry(time.Now().Add(delay).Unix(), common.MaskSensitiveInfo(apiErr.Error()))
 				if scheduleErr != nil {
 					return false, fmt.Errorf("schedule provider image polling retry for task %s: %w", task.TaskID, scheduleErr)
@@ -2224,15 +2273,22 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 				}
 				return false, errAsyncImageRetryScheduled
 			}
-			service.RecordChannelHealthOutcome(genericChannel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), genericInfo, genericAttemptStart, apiErr, false)
-			service.CooldownChannelForUpstreamError(*types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan()), apiErr)
+			quarantine := service.ShouldQuarantineAsyncImageChannel(apiErr)
+			service.RecordChannelHealthOutcome(genericChannel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), genericInfo, genericAttemptStart, apiErr, !quarantine)
+			channelError := *types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan())
+			if quarantine {
+				service.QuarantineAsyncImageChannel(channelError, apiErr)
+			} else {
+				service.CooldownChannelForUpstreamError(channelError, apiErr)
+			}
 			return false, failAsyncImageTask(ctx, task, apiErr)
 		}
 		if result == nil || result.Response == nil || len(result.Response.Data) == 0 {
 			responseErr := errors.New("provider returned no image response")
 			apiErr := types.NewErrorWithStatusCode(responseErr, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 			service.RecordChannelHealthOutcome(genericChannel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), genericInfo, genericAttemptStart, apiErr, false)
-			service.CooldownChannelForUpstreamError(*types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan()), apiErr)
+			channelError := *types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan())
+			service.QuarantineAsyncImageChannel(channelError, apiErr)
 			return false, failAsyncImageTask(ctx, task, responseErr)
 		}
 		genericArtifact = &genericImageArtifact{
@@ -2262,7 +2318,7 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 				apiErr := types.NewErrorWithStatusCode(materializeErr, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 				if genericChannel != nil {
 					service.RecordChannelHealthOutcome(genericChannel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), genericInfo, genericAttemptStart, apiErr, false)
-					service.CooldownChannelForUpstreamError(*types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan()), apiErr)
+					service.QuarantineAsyncImageChannel(*types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan()), apiErr)
 				}
 				return false, failAsyncImageTask(ctx, task, fmt.Errorf("materialize provider image response: %w", materializeErr))
 			}
@@ -2298,7 +2354,7 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 				if !genericAttemptStart.IsZero() {
 					service.RecordChannelHealthOutcome(genericChannel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), genericInfo, genericAttemptStart, apiErr, false)
 				}
-				service.CooldownChannelForUpstreamError(*types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan()), apiErr)
+				service.QuarantineAsyncImageChannel(*types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan()), apiErr)
 			}
 			return false, failAsyncImageTask(ctx, task, fmt.Errorf("validate provider image output contract: %w", contractErr))
 		}
@@ -2380,6 +2436,7 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 			payload.ImageRoutingUpstreamPath,
 			payload.RelayMode,
 		)
+		quarantineUpstream := false
 		if upstreamErr == nil {
 			outputContract := asyncImageExpectedOutputContract(payload)
 			if outputContract.requiresValidation() {
@@ -2393,7 +2450,7 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 				if contractErr != nil {
 					apiError := types.NewErrorWithStatusCode(contractErr, types.ErrorCodeBadResponseBody, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
 					service.RecordChannelHealthOutcome(channel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), nil, attemptStart, apiError, false)
-					service.CooldownChannelForUpstreamError(*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, apiKey, channel.GetAutoBan()), apiError)
+					service.QuarantineAsyncImageChannel(*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, apiKey, channel.GetAutoBan()), apiError)
 					return false, failCheckpointPendingAsyncImageTask(ctx, task, fmt.Errorf("validate provider image output contract: %w", contractErr))
 				}
 			}
@@ -2405,19 +2462,24 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 			}
 			statusCode := asyncImageUpstreamStatus(upstreamErr)
 			apiError := types.NewErrorWithStatusCode(upstreamErr, types.ErrorCodeBadResponse, statusCode, types.ErrOptionWithSkipRetry())
-			service.RecordChannelHealthOutcome(channel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), nil, attemptStart, apiError, false)
-			channelError := *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, apiKey, channel.GetAutoBan())
-			service.QuarantineAsyncImageChannel(channelError, apiError)
+			quarantineUpstream = service.ShouldQuarantineAsyncImageChannel(apiError)
+			service.RecordChannelHealthOutcome(channel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), nil, attemptStart, apiError, !quarantineUpstream)
+			if quarantineUpstream {
+				channelError := *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, apiKey, channel.GetAutoBan())
+				service.QuarantineAsyncImageChannel(channelError, apiError)
+			}
 		}
 		if upstreamErr != nil {
 			var upstreamResponseErr *asyncImageUpstreamError
 			if errors.As(upstreamErr, &upstreamResponseErr) && upstreamResponseErr.definitiveResponse {
-				switched, switchErr := switchRejectedAsyncImageChannel(ctx, task, &payload, upstreamErr.Error())
-				if switchErr != nil {
-					return false, failAmbiguousAsyncImageTask(ctx, task)
-				}
-				if switched {
-					return false, errAsyncImageRetryScheduled
+				if quarantineUpstream {
+					switched, switchErr := switchRejectedAsyncImageChannel(ctx, task, &payload, upstreamErr.Error())
+					if switchErr != nil {
+						return false, failCheckpointPendingAsyncImageTask(ctx, task, switchErr)
+					}
+					if switched {
+						return false, errAsyncImageRetryScheduled
+					}
 				}
 				reopenedPayload := payload
 				reopenedPayload.ProviderCallStarted = false
@@ -2595,6 +2657,13 @@ uploadLoop:
 	return finalized.Status == model.TaskStatusSuccess, nil
 }
 
+func asyncImageAdaptorTimeout(payload asyncImageTaskPayload) time.Duration {
+	if payload.ImageRoutingProtocol == dto.ImageRoutingProtocolKIEJobs {
+		return asyncImageKIEUpstreamTimeout
+	}
+	return asyncImageUpstreamTimeout
+}
+
 func loadAsyncImageChannel(task *model.Task, prepared *PreparedAsyncImageRequest, providerStored bool) (*model.Channel, string, error) {
 	channel, err := model.CacheGetChannel(task.ChannelId)
 	if err != nil {
@@ -2662,10 +2731,7 @@ func loadAsyncImageChannel(task *model.Task, prepared *PreparedAsyncImageRequest
 	}
 	apiKey, err := imageTaskChannelKey(channel, task.PrivateData)
 	if err != nil {
-		if !providerStored {
-			return nil, "", err
-		}
-		apiKey, _, _ = channel.GetNextEnabledKey()
+		return nil, "", err
 	}
 	return channel, apiKey, nil
 }
@@ -2914,6 +2980,33 @@ func asyncImageRetryDelay(attempt int) time.Duration {
 	return 15 * time.Second * time.Duration(1<<attempt)
 }
 
+func asyncImageProviderPollDeadline(task *model.Task, payload asyncImageTaskPayload) time.Time {
+	if payload.ProviderDeadlineAt > 0 {
+		return time.Unix(payload.ProviderDeadlineAt, 0)
+	}
+	if task != nil && task.SubmitTime > 0 {
+		return time.Unix(task.SubmitTime, 0).Add(asyncImageProviderOverallDeadline)
+	}
+	return time.Time{}
+}
+
+func boundedAsyncImageProviderPollDelay(delay time.Duration, now, deadline time.Time) time.Duration {
+	if delay < time.Second {
+		delay = time.Second
+	}
+	if delay > time.Minute {
+		delay = time.Minute
+	}
+	remaining := deadline.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	if delay > remaining {
+		return remaining
+	}
+	return delay
+}
+
 func retryableAsyncImageSubmissionError(apiErr *types.NewAPIError) bool {
 	if apiErr == nil {
 		return false
@@ -2992,6 +3085,10 @@ func beginAsyncImageProviderCall(task *model.Task, payload *asyncImageTaskPayloa
 }
 
 func switchRejectedAsyncImageChannel(ctx context.Context, task *model.Task, payload *asyncImageTaskPayload, lastError string) (bool, error) {
+	return switchAsyncImageChannel(ctx, task, payload, lastError)
+}
+
+func switchAsyncImageChannel(ctx context.Context, task *model.Task, payload *asyncImageTaskPayload, lastError string) (bool, error) {
 	if task == nil || payload == nil || payload.Request == nil || task.ProviderAttempts+1 >= asyncImageProviderAttempts {
 		return false, nil
 	}
@@ -3017,7 +3114,16 @@ func switchRejectedAsyncImageChannel(ctx context.Context, task *model.Task, payl
 			Path:                 service.ChannelHealthPath(requestPath),
 		})
 		if selectErr != nil {
-			return false, fmt.Errorf("select image failover channel: %w", selectErr)
+			// Failover is best-effort. If the selector itself is unavailable, keep
+			// the original provider/output error as the terminal task reason rather
+			// than replacing it with an internal routing diagnostic.
+			logger.LogWarn(ctx, fmt.Sprintf(
+				"async image failover selection skipped: task=%s channel=#%d err=%s",
+				task.TaskID,
+				task.ChannelId,
+				common.MaskSensitiveInfo(selectErr.Error()),
+			))
+			return false, nil
 		}
 		if candidate == nil {
 			return false, nil
@@ -3026,7 +3132,14 @@ func switchRejectedAsyncImageChannel(ctx context.Context, task *model.Task, payl
 		if !compatibleAsyncImageFailoverChannel(failedChannel, candidate, task, payload) {
 			continue
 		}
-		targetProtocol, targetUpstreamPath, _ := asyncImageFailoverRoute(candidate, task, payload)
+		targetProtocol, targetUpstreamPath, targetRequirement, ok := asyncImageFailoverTarget(candidate, task, payload)
+		if !ok {
+			continue
+		}
+		targetModel, modelErr := asyncImageFailoverModel(candidate, task.Properties.OriginModelName)
+		if modelErr != nil {
+			continue
+		}
 
 		key, keyIndex, keyErr := candidate.GetNextEnabledKey()
 		if keyErr != nil {
@@ -3040,51 +3153,29 @@ func switchRejectedAsyncImageChannel(ctx context.Context, task *model.Task, payl
 		nextPayload.ProviderCallStarted = false
 		nextPayload.ProviderStored = false
 		nextPayload.ArtifactStored = false
+		nextPayload.Upstream = nil
 		nextPayload.ChannelType = candidate.Type
 		nextPayload.ChannelCreateTime = candidate.CreatedTime
-		nextPayload.ChannelBaseURL = candidate.GetBaseURL()
-		nextPayload.ChannelProxy = candidate.GetSetting().Proxy
+		nextPayload.ChannelBaseURL = ""
+		nextPayload.ChannelProxy = ""
 		nextPayload.ExecutionDestinationHash = destinationHash
 		nextPayload.ExecutionDestinationStored = true
 		nextPayload.AttemptedChannelIDs = append(append([]int(nil), payload.AttemptedChannelIDs...), candidate.Id)
 		nextPayload.ImageRoutingProtocol = targetProtocol
 		nextPayload.ImageRoutingUpstreamPath = targetUpstreamPath
-		if nextPayload.Executor == AsyncImageExecutorResponses && targetProtocol == dto.ImageRoutingProtocolImagesGenerations {
-			prepared, prepareErr := prepareOpenAIImageFailoverRequest(candidate, &nextPayload, destinationHash)
+		if err := applyAsyncImageFailoverRequirement(&nextPayload, targetRequirement); err != nil {
+			continue
+		}
+		if targetProtocol == dto.ImageRoutingProtocolResponsesSSE {
+			nextPayload.Executor = AsyncImageExecutorResponses
+			nextPayload.PreparedRequest = nil
+		} else {
+			prepared, prepareErr := prepareAsyncImageFailoverRequest(candidate, task.Properties.OriginModelName, &nextPayload, destinationHash)
 			if prepareErr != nil {
-				return false, prepareErr
+				continue
 			}
 			nextPayload.Executor = AsyncImageExecutorAdaptor
 			nextPayload.PreparedRequest = prepared
-		} else if nextPayload.PreparedRequest != nil {
-			prepared := *nextPayload.PreparedRequest
-			apiType, _ := common.ChannelType2APIType(candidate.Type)
-			prepared.APIType = apiType
-			prepared.ChannelType = candidate.Type
-			prepared.ChannelCreateTime = candidate.CreatedTime
-			prepared.ChannelBaseURL = candidate.GetBaseURL()
-			prepared.ExecutionDestinationHash = destinationHash
-			prepared.ExecutionDestinationStored = true
-			prepared.APIVersion = candidate.Other
-			prepared.Organization = ""
-			if candidate.OpenAIOrganization != nil {
-				prepared.Organization = *candidate.OpenAIOrganization
-			}
-			channelSetting := candidate.GetSetting()
-			channelSetting.Proxy = ""
-			channelSetting.SystemPrompt = ""
-			channelSetting.SystemPromptOverride = false
-			prepared.ChannelSetting = &channelSetting
-			channelOtherSettings := candidate.GetOtherSettings()
-			channelOtherSettings.AdvancedCustom = nil
-			prepared.ChannelOtherSettings = &channelOtherSettings
-			overrideHash, overrideErr := AsyncImageExecutionOverrideFingerprint(candidate.GetParamOverride(), candidate.GetHeaderOverride())
-			if overrideErr != nil {
-				return false, overrideErr
-			}
-			prepared.ExecutionOverrideHash = overrideHash
-			prepared.ExecutionOverrideStored = true
-			nextPayload.PreparedRequest = &prepared
 		}
 		checkpointData, encodeErr := encodeAsyncImageTaskPayload(nextPayload)
 		if encodeErr != nil {
@@ -3098,10 +3189,27 @@ func switchRejectedAsyncImageChannel(ctx context.Context, task *model.Task, payl
 		nextPrivate.ChannelKeyHash = common.GenerateHMAC(key)
 		nextPrivate.ChannelMultiKeyIndex = keyIndex
 		if nextPrivate.BillingContext != nil && nextPrivate.BillingContext.ImageRequest != nil {
-			nextPrivate.BillingContext.ImageRequest.Protocol = targetProtocol
-			nextPrivate.BillingContext.ImageRequest.UpstreamPath = targetUpstreamPath
+			billingContext := *nextPrivate.BillingContext
+			imageRequest := *billingContext.ImageRequest
+			imageRequest.Operation = targetRequirement.Operation
+			imageRequest.Resolution = targetRequirement.Resolution
+			imageRequest.AspectRatio = targetRequirement.AspectRatio
+			imageRequest.Size = targetRequirement.Size
+			imageRequest.Quality = targetRequirement.Quality
+			imageRequest.OutputFormat = targetRequirement.OutputFormat
+			imageRequest.Count = targetRequirement.N
+			imageRequest.Protocol = targetProtocol
+			imageRequest.UpstreamPath = targetUpstreamPath
+			billingContext.ImageRequest = &imageRequest
+			nextPrivate.BillingContext = &billingContext
 		}
-		switched, switchErr := task.SwitchRejectedImageProviderChannel(candidate.Id, nextPrivate, storedCheckpoint, common.MaskSensitiveInfo(lastError))
+		switched, switchErr := task.SwitchRejectedImageProviderChannelWithModel(
+			candidate.Id,
+			targetModel,
+			nextPrivate,
+			storedCheckpoint,
+			common.MaskSensitiveInfo(lastError),
+		)
 		if switchErr != nil || !switched {
 			return switched, switchErr
 		}
@@ -3112,75 +3220,144 @@ func switchRejectedAsyncImageChannel(ctx context.Context, task *model.Task, payl
 }
 
 func compatibleAsyncImageFailoverChannel(failed, candidate *model.Channel, task *model.Task, payload *asyncImageTaskPayload) bool {
-	if failed == nil || candidate == nil || task == nil || payload == nil || candidate.Status != common.ChannelStatusEnabled {
+	if failed == nil || candidate == nil || task == nil || payload == nil || payload.Request == nil || payload.ImageRequirement == nil || candidate.Status != common.ChannelStatusEnabled {
 		return false
 	}
-	if failed.Type != candidate.Type || failed.GetModelMapping() != candidate.GetModelMapping() {
-		return false
-	}
-	apiType, _ := common.ChannelType2APIType(candidate.Type)
-	if payload.PreparedRequest != nil && payload.PreparedRequest.APIType != apiType {
-		return false
-	}
-	if payload.PreparedRequest != nil {
-		overrideHash, err := AsyncImageExecutionOverrideFingerprint(candidate.GetParamOverride(), candidate.GetHeaderOverride())
-		if err != nil {
-			return false
-		}
-		if payload.PreparedRequest.ExecutionOverrideStored && payload.PreparedRequest.ExecutionOverrideHash != overrideHash {
-			return false
-		}
-		if !payload.PreparedRequest.ExecutionOverrideStored && (len(candidate.GetParamOverride()) > 0 || len(candidate.GetHeaderOverride()) > 0) {
-			return false
-		}
-	}
-	protocol, upstreamPath, ok := asyncImageFailoverRoute(candidate, task, payload)
+	protocol, upstreamPath, requirement, ok := asyncImageFailoverTarget(candidate, task, payload)
 	if !ok {
 		return false
 	}
-	if protocol == payload.ImageRoutingProtocol && upstreamPath == payload.ImageRoutingUpstreamPath {
-		return true
+	if _, err := asyncImageFailoverModel(candidate, task.Properties.OriginModelName); err != nil {
+		return false
 	}
-	return payload.Executor == AsyncImageExecutorResponses &&
-		payload.RelayMode == relayconstant.RelayModeImagesGenerations &&
-		protocol == dto.ImageRoutingProtocolImagesGenerations &&
-		candidate.Type == constant.ChannelTypeOpenAI &&
-		len(payload.InputObjectKeys) == 0 && payload.MaskObjectKey == "" &&
-		len(payload.RequestExtra) == 0 &&
-		len(candidate.GetParamOverride()) == 0 && len(candidate.GetHeaderOverride()) == 0 &&
-		(candidate.OpenAIOrganization == nil || strings.TrimSpace(*candidate.OpenAIOrganization) == "")
+	if protocol == dto.ImageRoutingProtocolResponsesSSE {
+		return payload.RelayMode == relayconstant.RelayModeImagesGenerations &&
+			candidate.Type == constant.ChannelTypeOpenAI &&
+			len(payload.InputObjectKeys) == 0 && payload.MaskObjectKey == "" &&
+			len(payload.RequestExtra) == 0 &&
+			len(candidate.GetParamOverride()) == 0 && len(candidate.GetHeaderOverride()) == 0 &&
+			(candidate.OpenAIOrganization == nil || strings.TrimSpace(*candidate.OpenAIOrganization) == "")
+	}
+	if validateAsyncImageRoutingSnapshot(protocol, upstreamPath, true) != nil {
+		return false
+	}
+	return (payload.RelayMode == relayconstant.RelayModeImagesGenerations && requirement.Operation == dto.ImageOperationGeneration) ||
+		(payload.RelayMode == relayconstant.RelayModeImagesEdits && requirement.Operation == dto.ImageOperationEdit)
 }
 
-func asyncImageFailoverRoute(candidate *model.Channel, task *model.Task, payload *asyncImageTaskPayload) (dto.ImageRoutingProtocol, string, bool) {
+func asyncImageFailoverModel(candidate *model.Channel, originModel string) (string, error) {
+	if candidate == nil {
+		return "", errors.New("image failover channel is required")
+	}
+	current := strings.TrimPrefix(strings.TrimSpace(originModel), "models/")
+	if current == "" {
+		return "", errors.New("image failover model is required")
+	}
+	rawMapping := strings.TrimSpace(candidate.GetModelMapping())
+	if rawMapping == "" || rawMapping == "{}" {
+		return current, nil
+	}
+	mapping := make(map[string]string)
+	if err := common.UnmarshalJsonStr(rawMapping, &mapping); err != nil {
+		return "", fmt.Errorf("decode image failover model mapping: %w", err)
+	}
+	visited := map[string]struct{}{current: {}}
+	for {
+		mapped, ok := mapping[current]
+		if !ok || strings.TrimSpace(mapped) == "" {
+			return current, nil
+		}
+		mapped = strings.TrimPrefix(strings.TrimSpace(mapped), "models/")
+		if _, exists := visited[mapped]; exists {
+			return "", errors.New("image failover model mapping contains a cycle")
+		}
+		visited[mapped] = struct{}{}
+		current = mapped
+	}
+}
+
+func asyncImageFailoverTarget(candidate *model.Channel, task *model.Task, payload *asyncImageTaskPayload) (dto.ImageRoutingProtocol, string, dto.ImageSelectionRequirement, bool) {
+	if candidate == nil || task == nil || payload == nil || payload.ImageRequirement == nil {
+		return "", "", dto.ImageSelectionRequirement{}, false
+	}
 	settings := candidate.GetOtherSettings()
 	if settings.ImageRouting == nil {
-		return payload.ImageRoutingProtocol, payload.ImageRoutingUpstreamPath, payload.ImageRoutingProtocol == "" && payload.ImageRoutingUpstreamPath == ""
+		requirement, err := payload.ImageRequirement.Normalize()
+		return payload.ImageRoutingProtocol, payload.ImageRoutingUpstreamPath, requirement, err == nil && payload.ImageRoutingProtocol == "" && payload.ImageRoutingUpstreamPath == ""
 	}
 	profile, ok := settings.ImageRouting.ProfileForModel(task.Properties.OriginModelName)
-	if !ok || profile == nil || payload.ImageRequirement == nil || !settings.ImageRouting.Supports(task.Properties.OriginModelName, *payload.ImageRequirement) {
-		return "", "", false
+	if !ok || profile == nil {
+		return "", "", dto.ImageSelectionRequirement{}, false
 	}
-	protocol, upstreamPath, ok := profile.RouteForOperation(payload.ImageRequirement.Operation)
-	return protocol, upstreamPath, ok
+	requirement, err := profile.ApplyDefaults(*payload.ImageRequirement)
+	if err != nil || !settings.ImageRouting.Supports(task.Properties.OriginModelName, requirement) {
+		return "", "", dto.ImageSelectionRequirement{}, false
+	}
+	protocol, upstreamPath, ok := profile.RouteForOperation(requirement.Operation)
+	return protocol, upstreamPath, requirement, ok
 }
 
-func prepareOpenAIImageFailoverRequest(candidate *model.Channel, payload *asyncImageTaskPayload, destinationHash string) (*PreparedAsyncImageRequest, error) {
+func applyAsyncImageFailoverRequirement(payload *asyncImageTaskPayload, requirement dto.ImageSelectionRequirement) error {
+	if payload == nil || payload.Request == nil {
+		return errors.New("image failover request state is required")
+	}
+	normalized, err := requirement.Normalize()
+	if err != nil {
+		return err
+	}
+	request := *payload.Request
+	extra := copyAsyncImageExtra(payload.RequestExtra)
+	if extra == nil {
+		extra = make(map[string]json.RawMessage)
+	}
+	setExtraString := func(name, value string) error {
+		if value == "" {
+			return nil
+		}
+		encoded, marshalErr := common.Marshal(value)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		extra[name] = json.RawMessage(encoded)
+		return nil
+	}
+	if err := setExtraString("resolution", normalized.Resolution); err != nil {
+		return err
+	}
+	if err := setExtraString("aspect_ratio", normalized.AspectRatio); err != nil {
+		return err
+	}
+	for name, value := range normalized.OptionalValues {
+		extra[name] = append(json.RawMessage(nil), value...)
+	}
+	if normalized.Size != "" {
+		request.Size = normalized.Size
+	}
+	if normalized.Quality != "" {
+		request.Quality = normalized.Quality
+	}
+	if normalized.OutputFormat != "" {
+		encoded, marshalErr := common.Marshal(normalized.OutputFormat)
+		if marshalErr != nil {
+			return marshalErr
+		}
+		request.OutputFormat = json.RawMessage(encoded)
+	}
+	outputCount := normalized.N
+	request.N = &outputCount
+	request.Extra = extra
+	if err := request.SetImageSelectionRequirement(normalized); err != nil {
+		return err
+	}
+	payload.Request = &request
+	payload.RequestExtra = copyAsyncImageExtra(extra)
+	payload.ImageRequirement = &normalized
+	return nil
+}
+
+func prepareAsyncImageFailoverRequest(candidate *model.Channel, originModel string, payload *asyncImageTaskPayload, destinationHash string) (*PreparedAsyncImageRequest, error) {
 	if candidate == nil || payload == nil || payload.Request == nil {
 		return nil, errors.New("image failover request state is required")
-	}
-	providerRequest := *payload.Request
-	providerRequest.Async = nil
-	providerRequest.WebhookURL = ""
-	providerRequest.WebhookSecret = ""
-	providerRequest.Stream = nil
-	providerRequest.ResponseFormat = "url"
-	body, err := marshalAsyncImageBillingSnapshotRequest(&providerRequest)
-	if err != nil {
-		return nil, err
-	}
-	body, err = SanitizeAsyncImageRequestBody(body)
-	if err != nil {
-		return nil, err
 	}
 	overrideHash, err := AsyncImageExecutionOverrideFingerprint(candidate.GetParamOverride(), candidate.GetHeaderOverride())
 	if err != nil {
@@ -3191,19 +3368,40 @@ func prepareOpenAIImageFailoverRequest(candidate *model.Channel, payload *asyncI
 	channelSetting.SystemPrompt = ""
 	channelSetting.SystemPromptOverride = false
 	channelOtherSettings := candidate.GetOtherSettings()
+	advancedRouteHash := ""
+	if candidate.Type == constant.ChannelTypeAdvancedCustom {
+		if channelOtherSettings.AdvancedCustom == nil {
+			return nil, errors.New("advanced custom image failover route is missing")
+		}
+		route, ok := channelOtherSettings.AdvancedCustom.MatchPathForModel(common.ImageGenerationEndpoint, originModel)
+		if !ok {
+			return nil, errors.New("advanced custom image failover route could not be resolved")
+		}
+		advancedRouteHash, err = AsyncImageAdvancedRouteFingerprint(route)
+		if err != nil {
+			return nil, err
+		}
+	}
 	channelOtherSettings.AdvancedCustom = nil
 	outputCount := uint(1)
 	if payload.ImageRequirement != nil && payload.ImageRequirement.N > 0 {
 		outputCount = payload.ImageRequirement.N
 	}
-	apiType, _ := common.ChannelType2APIType(candidate.Type)
+	apiType, knownAPIType := common.ChannelType2APIType(candidate.Type)
+	if !knownAPIType {
+		return nil, fmt.Errorf("image failover channel type %d has no adaptor", candidate.Type)
+	}
+	organization := ""
+	if candidate.OpenAIOrganization != nil {
+		organization = *candidate.OpenAIOrganization
+	}
 	return &PreparedAsyncImageRequest{
-		Body:                       body,
+		DeferConversion:            true,
 		OutputCount:                outputCount,
 		RelayMode:                  payload.RelayMode,
 		ContentType:                "application/json",
-		RequestURLPath:             asyncImageHealthPath(*payload),
-		ChannelBaseURL:             candidate.GetBaseURL(),
+		RequestURLPath:             common.ImageGenerationEndpoint,
+		ChannelBaseURL:             "",
 		ExecutionDestinationHash:   destinationHash,
 		ExecutionDestinationStored: true,
 		APIType:                    apiType,
@@ -3211,10 +3409,12 @@ func prepareOpenAIImageFailoverRequest(candidate *model.Channel, payload *asyncI
 		ChannelCreateTime:          candidate.CreatedTime,
 		ConfigurationStored:        true,
 		APIVersion:                 candidate.Other,
+		Organization:               organization,
 		ExecutionOverrideHash:      overrideHash,
 		ExecutionOverrideStored:    true,
 		ChannelSetting:             &channelSetting,
 		ChannelOtherSettings:       &channelOtherSettings,
+		AdvancedRouteHash:          advancedRouteHash,
 		ImageRoutingProtocol:       payload.ImageRoutingProtocol,
 		ImageRoutingUpstreamPath:   payload.ImageRoutingUpstreamPath,
 	}, nil
@@ -3332,10 +3532,7 @@ func validateAsyncImageRoutingSnapshot(protocol dto.ImageRoutingProtocol, upstre
 }
 
 func asyncImageHealthPath(payload asyncImageTaskPayload) string {
-	if payload.RelayMode == relayconstant.RelayModeImagesEdits {
-		return "/v1/images/edits"
-	}
-	return "/v1/images/generations"
+	return common.ImageGenerationEndpoint
 }
 
 type asyncImageOutputContract struct {
