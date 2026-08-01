@@ -238,6 +238,24 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 				)
 			}
 		}
+		if resolved == ModelVideoUpscaleQuality2X || resolved == ModelVideoUpscaleQuality4X {
+			if metadata.Format != "" && metadata.Format != "mp4" {
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("video upscale format must be mp4"),
+					"invalid_request",
+					http.StatusBadRequest,
+				)
+			}
+		}
+		if resolved == ModelVideoBackgroundFast || resolved == ModelVideoBackgroundQuality {
+			if metadata.Format != "" && metadata.Format != "webm" && metadata.Format != "mp4" {
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("video background removal format must be webm or mp4"),
+					"invalid_request",
+					http.StatusBadRequest,
+				)
+			}
+		}
 		request.Metadata = map[string]interface{}{
 			"source_url":    metadata.SourceURL,
 			"operation":     metadata.Operation,

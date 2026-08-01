@@ -223,6 +223,16 @@ func TestTaskAdaptorValidatesDepthAndMediaRequests(t *testing.T) {
 			body:       `{"model":"video-background-remove-quality","image":"https://cdn.example.com/input.mp4","metadata":{"operation":"remove_video_background","quality":"quality","format":"webm"}}`,
 			wantAction: ActionMedia,
 		},
+		{
+			name:      "video upscale rejects image format",
+			body:      `{"model":"video-upscale-quality-2x","image":"https://cdn.example.com/input.mp4","metadata":{"operation":"video_upscale","quality":"quality","scale":2,"format":"webm"}}`,
+			wantError: true,
+		},
+		{
+			name:      "video background rejects unsupported format",
+			body:      `{"model":"video-background-remove-quality","image":"https://cdn.example.com/input.mp4","metadata":{"operation":"remove_video_background","quality":"quality","format":"png"}}`,
+			wantError: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
