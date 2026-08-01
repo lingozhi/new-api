@@ -165,7 +165,7 @@ func TestValidateUnifiedImageEntryPointRejectsNonCanonicalImageGeneration(t *tes
 		t.Run(test.name, func(t *testing.T) {
 			err := ValidateUnifiedImageEntryPoint(test.info, test.request)
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "POST /v1/images/generations")
+			assert.Contains(t, err.Error(), "POST /v1/jobs")
 		})
 	}
 }
@@ -233,7 +233,7 @@ func TestValidateUnifiedImagePayloadRejectsOverrideInjectedIntent(t *testing.T) 
 		t.Run(test.name, func(t *testing.T) {
 			err := ValidateUnifiedImagePayload(info, []byte(test.payload))
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "POST /v1/images/generations")
+			assert.Contains(t, err.Error(), "POST /v1/jobs")
 		})
 	}
 }
@@ -274,7 +274,7 @@ func TestValidateUnifiedImagePayloadStorageRejectsHiddenIntentAndRewinds(t *test
 
 	err = ValidateUnifiedImagePayloadStorage(info, storage)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "POST /v1/images/generations")
+	assert.Contains(t, err.Error(), "POST /v1/jobs")
 
 	position, seekErr := storage.Seek(0, io.SeekCurrent)
 	require.NoError(t, seekErr)
@@ -320,7 +320,7 @@ func TestValidateUnifiedImagePayloadStorageRejectsAmbiguousPassThroughImageInten
 			err = ValidateUnifiedImagePayloadStorage(info, storage)
 
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "POST /v1/images/generations")
+			assert.Contains(t, err.Error(), "POST /v1/jobs")
 			position, seekErr := storage.Seek(0, io.SeekCurrent)
 			require.NoError(t, seekErr)
 			assert.Equal(t, int64(0), position)
@@ -667,7 +667,7 @@ func TestValidateUnifiedImageParamOverrideRejectsPotentialImageOutputWrites(t *t
 			err := ValidateUnifiedImageParamOverride(info)
 
 			require.Error(t, err)
-			assert.Contains(t, err.Error(), "POST /v1/images/generations")
+			assert.Contains(t, err.Error(), "POST /v1/jobs")
 		})
 	}
 }

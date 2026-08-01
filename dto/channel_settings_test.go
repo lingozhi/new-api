@@ -208,6 +208,22 @@ func TestAdvancedCustomMatchPathForModel(t *testing.T) {
 	assert.Equal(t, advancedCustomConverterNone, fallbackRoute.Converter)
 }
 
+func TestAdvancedCustomImageRouteAcceptsPublicJobPath(t *testing.T) {
+	config := &AdvancedCustomConfig{Routes: []AdvancedCustomRoute{{
+		IncomingPath: "/v1/images/generations",
+		UpstreamPath: "/v1/images/generations",
+		Models:       []string{"gpt-image-2"},
+	}}}
+
+	route, ok := config.MatchPathForModel("/v1/jobs", "gpt-image-2")
+	require.True(t, ok)
+	assert.Equal(t, "/v1/images/generations", route.UpstreamPath)
+
+	config.Routes[0].IncomingPath = "/v1/jobs"
+	_, ok = config.MatchPathForModel("/v1/jobs", "gpt-image-2")
+	assert.True(t, ok)
+}
+
 func TestAdvancedCustomMatchPathForModelRegexRules(t *testing.T) {
 	config := &AdvancedCustomConfig{
 		Routes: []AdvancedCustomRoute{

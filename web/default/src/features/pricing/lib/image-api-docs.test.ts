@@ -32,9 +32,9 @@ import {
 
 const profile: ModelApiProfile = {
   kind: 'image',
-  endpoint: '/v1/images/generations',
+  endpoint: '/v1/jobs',
   async: true,
-  poll_endpoint: '/v1/images/generations/{task_id}',
+  poll_endpoint: '/v1/jobs/{task_id}',
   webhook: true,
   result_delivery: 'oss_url',
   operations: ['generation', 'edit'],
@@ -65,7 +65,7 @@ const context = {
   baseUrl: 'https://api.example.com',
   apiKeyEnv: 'OPWAN_API_KEY',
   modelName: 'gemini-image-model',
-  endpointPath: '/v1/images/generations',
+  endpointPath: '/v1/jobs',
   profile,
 }
 
@@ -179,20 +179,14 @@ describe('async image API samples', () => {
       baseUrl: 'https://api.opwan.ai',
       apiKeyEnv: 'OPWAN_API_KEY',
       modelName: 'gpt-image-2',
-      endpointPath: '/v1/images/generations',
+      endpointPath: '/v1/jobs',
       profile: guideProfile,
     })
 
     assert.match(guide, /^# Opwan image API integration guide/m)
     assert.match(guide, /Model: gpt-image-2/)
-    assert.match(
-      guide,
-      /POST https:\/\/api\.opwan\.ai\/v1\/images\/generations/
-    )
-    assert.match(
-      guide,
-      /GET https:\/\/api\.opwan\.ai\/v1\/images\/generations\/\{task_id\}/
-    )
+    assert.match(guide, /POST https:\/\/api\.opwan\.ai\/v1\/jobs/)
+    assert.match(guide, /GET https:\/\/api\.opwan\.ai\/v1\/jobs\/\{task_id\}/)
     assert.match(guide, /Authorization: Bearer \$OPWAN_API_KEY/)
     assert.match(guide, /resolution=4K, aspect_ratio=16:9, size=3840x2160/)
     assert.match(guide, /1:1=2880x2880/)
@@ -227,14 +221,11 @@ describe('async image API samples', () => {
   test('cURL stays copy-friendly and shows submit plus poll requests', () => {
     const sample = buildAsyncImageSample('curl', context)
 
-    assert.match(
-      sample,
-      /curl https:\/\/api\.example\.com\/v1\/images\/generations/
-    )
+    assert.match(sample, /curl https:\/\/api\.example\.com\/v1\/jobs/)
     assert.match(sample, /Idempotency-Key: image-request-<UNIQUE_ID>/)
     assert.match(
       sample,
-      /curl "https:\/\/api\.example\.com\/v1\/images\/generations\/<TASK_ID>"/
+      /curl "https:\/\/api\.example\.com\/v1\/jobs\/<TASK_ID>"/
     )
     assert.match(sample, /HTTP\/1\.1 202 Accepted/)
     assert.doesNotMatch(sample, /set -euo pipefail/)
@@ -252,10 +243,7 @@ describe('async image API samples', () => {
       /: "\$\{OPWAN_API_KEY:\?Set OPWAN_API_KEY before running\}"/
     )
     assert.match(sample, /HTTP\/1\.1 202 Accepted/)
-    assert.match(
-      sample,
-      /\/v1\/images\/generations\/task_0123456789abcdef0123456789abcdef/
-    )
+    assert.match(sample, /\/v1\/jobs\/task_0123456789abcdef0123456789abcdef/)
     assert.match(sample, /"object":"image\.generation\.task"/)
     assert.match(sample, /"created_at":1710000000/)
     assert.match(sample, /"aspect_ratio": "1:1"/)
@@ -278,7 +266,7 @@ describe('async image API samples', () => {
     )
     assert.match(
       sample,
-      /"https:\/\/api\.example\.com\/v1\/images\/generations\/\$\{TASK_ID\}"/
+      /"https:\/\/api\.example\.com\/v1\/jobs\/\$\{TASK_ID\}"/
     )
     assert.match(sample, /while \[ "\$TASK_STATUS" != "completed" \]/)
     assert.match(sample, /sleep "\$RETRY_AFTER_SECONDS"/)

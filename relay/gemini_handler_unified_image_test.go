@@ -63,5 +63,5 @@ func TestGeminiHelperRejectsPassThroughImageIntentHiddenByAliasPriority(t *testi
 	assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
 	assert.Equal(t, types.ErrorCodeInvalidRequest, apiErr.GetErrorCode())
 	assert.True(t, types.IsSkipRetryError(apiErr))
-	assert.Contains(t, apiErr.Error(), "POST /v1/images/generations")
+	assert.Contains(t, apiErr.Error(), "POST /v1/jobs")
 }

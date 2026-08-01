@@ -35,8 +35,6 @@ func SetVideoRouter(router *gin.Engine) {
 	depthMediaV1Router.Use(middleware.RouteTag("relay"))
 	depthMediaV1Router.Use(middleware.DepthMediaRequestConvert(), middleware.TokenAuth(), middleware.Distribute())
 	{
-		depthMediaV1Router.POST("/jobs", controller.RelayTask)
-		depthMediaV1Router.GET("/jobs/:task_id", controller.RelayTaskFetch)
 		depthMediaV1Router.POST("/depth/jobs", controller.RelayTask)
 		depthMediaV1Router.GET("/depth/jobs/:task_id", controller.RelayTaskFetch)
 		depthMediaV1Router.POST("/media/jobs", controller.RelayTask)

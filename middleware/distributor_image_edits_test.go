@@ -61,7 +61,7 @@ func TestGetModelRequestReadsBothMultipartImageEditAliases(t *testing.T) {
 func TestImageSelectionReusesValidatedJSONDefaults(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewBufferString(`{"model":"dall-e-3","prompt":"draw"}`))
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/jobs", bytes.NewBufferString(`{"model":"dall-e-3","prompt":"draw"}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 	defer common.CleanupBodyStorage(c)
 
@@ -87,7 +87,7 @@ func TestImageSelectionReusesValidatedJSONDefaults(t *testing.T) {
 func TestUnifiedImageSelectionUsesEditOperationForReferenceInput(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewBufferString(`{
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/jobs", bytes.NewBufferString(`{
 		"model":"gpt-image-2",
 		"input":{"prompt":"restyle","image_input":["https://example.com/source.png"]}
 	}`))

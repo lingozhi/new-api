@@ -45,7 +45,7 @@ func TestGetImageGenerationTaskPollsOnlyOwnedTask(t *testing.T) {
 	poll := func(userID int) (*httptest.ResponseRecorder, *image_stream.ImageTaskResponse) {
 		recorder := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(recorder)
-		c.Request = httptest.NewRequest(http.MethodGet, "/v1/images/generations/"+task.TaskID, nil)
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/jobs/"+task.TaskID, nil)
 		c.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
 		c.Set("id", userID)
 		GetImageGenerationTask(c)

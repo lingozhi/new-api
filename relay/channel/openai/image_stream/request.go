@@ -291,8 +291,8 @@ func validateAsyncOpenAIImageRequest(req *dto.ImageRequest, model string, enforc
 	return err
 }
 
-// buildGenerationsRequestWithError converts the classic
-// /v1/images/generations request shape into a /v1/responses payload with
+// buildGenerationsRequestWithError converts the unified POST /v1/jobs image
+// request shape into a /v1/responses payload with
 // stream:true. Text-only requests retain the historical string `input` shape;
 // requests carrying an image use a user content array with input_text and one
 // input_image part per source URL/data URI.

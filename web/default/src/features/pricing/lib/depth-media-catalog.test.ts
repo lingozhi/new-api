@@ -68,12 +68,7 @@ describe('DepthMedia model plaza catalog', () => {
 
     assert.deepEqual(
       models.map((model) => model.model_name),
-      [
-        'depth-video',
-        'background-remove',
-        'image-upscale',
-        'subtitle-remove',
-      ]
+      ['depth-video', 'background-remove', 'image-upscale', 'subtitle-remove']
     )
     assert.ok(
       models.every(
@@ -130,7 +125,7 @@ describe('DepthMedia model plaza catalog', () => {
         baseUrl: 'https://api.opwan.ai',
         apiKeyEnv: 'OPWAN_API_KEY',
         modelName: 'background-remove',
-        endpointPath: '/v1/jobs',
+        endpointPath: '/v1/media/jobs',
       })
 
       assert.match(sample, /SUCCESS/)
@@ -159,15 +154,15 @@ describe('DepthMedia model plaza catalog', () => {
       baseUrl: 'https://api.opwan.ai',
       apiKeyEnv: 'OPWAN_API_KEY',
       modelName: 'image-upscale',
-      endpointPath: '/v1/jobs',
+      endpointPath: '/v1/media/jobs',
     })
 
-    assert.match(sample, /POST https:\/\/api\.opwan\.ai\/v1\/jobs/)
+    assert.match(sample, /POST https:\/\/api\.opwan\.ai\/v1\/media\/jobs/)
     assert.match(sample, /"model": "image-upscale"/)
     assert.match(sample, /"operation": "upscale"/)
     assert.match(sample, /"quality": "fast"/)
     assert.match(sample, /"scale": 2/)
-    assert.match(sample, /\/v1\/jobs\/<TASK_ID>/)
+    assert.match(sample, /\/v1\/media\/jobs\/<TASK_ID>/)
     assert.doesNotMatch(sample, /chat\/completions/)
     assert.doesNotMatch(sample, /messages/)
   })
@@ -177,7 +172,7 @@ describe('DepthMedia model plaza catalog', () => {
       baseUrl: 'https://api.opwan.ai',
       apiKeyEnv: 'OPWAN_API_KEY',
       modelName: 'subtitle-remove',
-      endpointPath: '/v1/jobs',
+      endpointPath: '/v1/media/jobs',
     })
 
     assert.match(sample, /"model": "subtitle-remove"/)
@@ -197,8 +192,11 @@ describe('DepthMedia model plaza catalog', () => {
     })
 
     assert.match(guide, /^# Opwan DepthMedia API integration guide/m)
-    assert.match(guide, /POST https:\/\/api\.opwan\.ai\/v1\/jobs/)
-    assert.match(guide, /GET https:\/\/api\.opwan\.ai\/v1\/jobs\/\{task_id\}/)
+    assert.match(guide, /POST https:\/\/api\.opwan\.ai\/v1\/media\/jobs/)
+    assert.match(
+      guide,
+      /GET https:\/\/api\.opwan\.ai\/v1\/media\/jobs\/\{task_id\}/
+    )
     assert.match(guide, /Authorization: Bearer \$OPWAN_API_KEY/)
     assert.match(guide, /image-upscale/)
     assert.match(guide, /operation=upscale, quality=fidelity, scale=4/)

@@ -10,3 +10,9 @@ func TestImageEditAliasesShareRelayMode(t *testing.T) {
 	assert.Equal(t, RelayModeImagesEdits, Path2RelayMode("/v1/images/edits"))
 	assert.Equal(t, RelayModeImagesEdits, Path2RelayMode("/v1/edits"))
 }
+
+func TestImageJobAndStoredGenerationPathsShareRelayMode(t *testing.T) {
+	assert.Equal(t, RelayModeImagesGenerations, Path2RelayMode("/v1/jobs"))
+	assert.Equal(t, RelayModeImagesGenerations, Path2RelayMode("/v1/jobs/task_123"))
+	assert.Equal(t, RelayModeImagesGenerations, Path2RelayMode("/v1/images/generations"))
+}

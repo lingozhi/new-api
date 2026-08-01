@@ -1,7 +1,7 @@
 # DepthMedia API 调用说明
 
 DepthMedia 是统一的异步媒体处理接口。深度视频、视频去字幕、图片去背景和图片高清放大都通过
-`POST /v1/jobs` 提交。客户端会立即获得公开 `task_id`，随后可轮询任务状态，也可以
+`POST /v1/media/jobs` 提交。客户端会立即获得公开 `task_id`，随后可轮询任务状态，也可以
 通过 Webhook 接收最终结果。
 
 ## 鉴权
@@ -28,7 +28,7 @@ Content-Type: application/json
 最长 600 秒，提交时会按 600 秒预扣，任务完成后自动按实际秒数结算并退回差额。
 
 ```bash
-curl https://api.opwan.ai/v1/jobs \
+curl https://api.opwan.ai/v1/media/jobs \
   -H "Authorization: Bearer $OPWAN_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -45,7 +45,7 @@ curl https://api.opwan.ai/v1/jobs \
 接口：
 
 ```text
-POST /v1/jobs
+POST /v1/media/jobs
 ```
 
 支持的参数组合：
@@ -66,7 +66,7 @@ POST /v1/jobs
 `png` 和 `webp`。
 
 ```bash
-curl https://api.opwan.ai/v1/jobs \
+curl https://api.opwan.ai/v1/media/jobs \
   -H "Authorization: Bearer $OPWAN_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -95,7 +95,7 @@ curl https://api.opwan.ai/v1/jobs \
 - `full`：扫描完整画面，适用于字幕位置不固定的视频。
 
 ```bash
-curl https://api.opwan.ai/v1/jobs \
+curl https://api.opwan.ai/v1/media/jobs \
   -H "Authorization: Bearer $OPWAN_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -129,7 +129,7 @@ curl https://api.opwan.ai/v1/jobs \
 ## 查询任务
 
 ```bash
-curl https://api.opwan.ai/v1/jobs/task_xxx \
+curl https://api.opwan.ai/v1/media/jobs/task_xxx \
   -H "Authorization: Bearer $OPWAN_API_TOKEN"
 ```
 
@@ -209,7 +209,8 @@ v1.<timestamp>.<delivery_id>.<raw_request_body>
 ## 当前限制
 
 - 当前生产接口仅接收公网 `source_url`。
-- `/v1/jobs/upload` 暂未通过网关开放。
-- 旧的 `/v1/depth/jobs` 和 `/v1/media/jobs` 路径暂时保留兼容，新接入统一使用
-  `/v1/jobs`。
+- `/v1/media/jobs/upload` 暂未通过网关开放。
+- `/v1/depth/jobs` 暂时保留给深度视频兼容调用；新接入统一使用
+  `/v1/media/jobs`。
+- `/v1/jobs` 是异步图片生成入口，不用于 DepthMedia 媒体处理。
 - 渠道密钥和模型价格必须先在管理员后台配置，否则网站不会路由任务。

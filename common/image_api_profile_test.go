@@ -23,6 +23,8 @@ func TestNanoBanana2ImageAPIProfileMatchesRuntimeCapabilities(t *testing.T) {
 	profile := ImageAPIProfileForModel("models/gemini-3.1-flash-image-preview")
 
 	assert.Equal(t, "image", profile.Kind)
+	assert.Equal(t, "/v1/jobs", ImageGenerationEndpoint)
+	assert.Equal(t, "/v1/jobs/{task_id}", ImageGenerationPollPath)
 	assert.Equal(t, ImageGenerationEndpoint, profile.Endpoint)
 	assert.True(t, profile.Async)
 	assert.Equal(t, ImageGenerationPollPath, profile.PollEndpoint)

@@ -2,7 +2,7 @@ package image_stream
 
 // Legacy synchronous implementation retained for restored edit checkpoints and
 // direct internal callers. The public image surface uses the durable
-// /v1/images/generations task path for both text-to-image and image-to-image.
+// /v1/jobs task path for both text-to-image and image-to-image.
 // This handler bypasses the standard adaptor.DoRequest path and
 // instead:
 //
@@ -48,7 +48,7 @@ func IsGptImageModel(model string) bool {
 }
 
 // ShouldRunAsync is kept for callers that need to classify the image-generation
-// surface. All /v1/images/generations requests are asynchronous; the model and
+// surface. All POST /v1/jobs requests are asynchronous; the model and
 // legacy async flag no longer select a synchronous path.
 func ShouldRunAsync(_ string, _ *bool) bool {
 	return true

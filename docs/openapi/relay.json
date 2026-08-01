@@ -187,7 +187,7 @@
       "post": {
         "summary": "创建聊天对话",
         "deprecated": false,
-        "description": "根据对话历史创建文本或音频响应，支持流式和非流式。图片输出模型或 modalities 中包含 image 会返回 400；所有图片生成统一使用 POST /v1/images/generations。\n\n兼容 OpenAI Chat Completions API。\n",
+        "description": "根据对话历史创建文本或音频响应，支持流式和非流式。图片输出模型或 modalities 中包含 image 会返回 400；所有图片生成统一使用 POST /v1/jobs。\n\n兼容 OpenAI Chat Completions API。\n",
         "operationId": "createChatCompletion",
         "tags": [
           "OpenAI格式(Chat)"
@@ -249,7 +249,7 @@
       "post": {
         "summary": "创建响应 (OpenAI Responses API)",
         "deprecated": false,
-        "description": "OpenAI Responses API，用于创建文本模型响应，支持多轮对话、工具调用、推理等功能。image_generation 工具或图片输出模型会返回 400；所有图片生成统一使用 POST /v1/images/generations。\n",
+        "description": "OpenAI Responses API，用于创建文本模型响应，支持多轮对话、工具调用、推理等功能。image_generation 工具或图片输出模型会返回 400；所有图片生成统一使用 POST /v1/jobs。\n",
         "operationId": "createResponse",
         "tags": [
           "OpenAI格式(Responses)"
@@ -325,11 +325,11 @@
         ]
       }
     },
-    "/v1/images/generations": {
+    "/v1/jobs": {
       "post": {
         "summary": "异步生成图像",
         "deprecated": false,
-        "description": "统一的异步图像接口。通过 model 选择文生图或图生图模型，input 支持 prompt、image_input/input_urls、aspect_ratio、resolution 等参数。无论 async 取值为何，接口都立即返回 202 和 task_id；使用 Location 或 GET /v1/images/generations/{task_id} 轮询，也可以提供 callBackUrl 或 webhook_url 接收相同的终态任务对象。Webhook 采用至少一次投递语义，X-Webhook-Delivery-Id 在同一任务的所有重试中保持不变，接收方应据此去重；webhook_secret 非空时，X-Webhook-Signature 为 v1=<hex>，hex 是 HMAC-SHA256(secret, 'v1.' + X-Webhook-Timestamp + '.' + X-Webhook-Delivery-Id + '.' + 原始请求体)。接收方应校验签名并限制时间戳重放窗口。输入参考图会先进入私有对象存储，最终 result.data 只返回持久 URL。异步统一入口不接受 provider-native 的 input.messages/num_outputs 形状，请使用 input.prompt 和 input.image_input；GPT Responses 图片执行器只支持 n=1。",
+        "description": "统一的异步图像接口。通过 model 选择文生图或图生图模型，input 支持 prompt、image_input/input_urls、aspect_ratio、resolution 等参数。无论 async 取值为何，接口都立即返回 202 和 task_id；使用 Location 或 GET /v1/jobs/{task_id} 轮询，也可以提供 callBackUrl 或 webhook_url 接收相同的终态任务对象。Webhook 采用至少一次投递语义，X-Webhook-Delivery-Id 在同一任务的所有重试中保持不变，接收方应据此去重；webhook_secret 非空时，X-Webhook-Signature 为 v1=<hex>，hex 是 HMAC-SHA256(secret, 'v1.' + X-Webhook-Timestamp + '.' + X-Webhook-Delivery-Id + '.' + 原始请求体)。接收方应校验签名并限制时间戳重放窗口。输入参考图会先进入私有对象存储，最终 result.data 只返回持久 URL。异步统一入口不接受 provider-native 的 input.messages/num_outputs 形状，请使用 input.prompt 和 input.image_input；GPT Responses 图片执行器只支持 n=1。",
         "operationId": "createAsyncImageGeneration",
         "tags": [
           "图片生成"
@@ -410,7 +410,7 @@
         ]
       }
     },
-    "/v1/images/generations/{task_id}": {
+    "/v1/jobs/{task_id}": {
       "get": {
         "summary": "查询异步图像任务",
         "deprecated": false,
@@ -1243,7 +1243,7 @@
       "post": {
         "summary": "Gemini 内容生成（非图片）",
         "deprecated": false,
-        "description": "Gemini 原生 generateContent 非图片接口，支持文本及模型允许的音频输出。图片生成不在此接口返回；使用生图模型或在 responseModalities 中请求 IMAGE 会返回 400，请统一改用 POST /v1/images/generations。",
+        "description": "Gemini 原生 generateContent 非图片接口，支持文本及模型允许的音频输出。图片生成不在此接口返回；使用生图模型或在 responseModalities 中请求 IMAGE 会返回 400，请统一改用 POST /v1/jobs。",
         "operationId": "geminiRelayV1Beta",
         "tags": [
           "Gemini格式"
@@ -2554,7 +2554,7 @@
         "properties": {
           "model": {
             "type": "string",
-            "description": "文本或音频模型 ID；生图模型请改用 POST /v1/images/generations",
+            "description": "文本或音频模型 ID；生图模型请改用 POST /v1/jobs",
             "example": "gpt-4"
           },
           "messages": {
@@ -2692,7 +2692,7 @@
           },
           "modalities": {
             "type": "array",
-            "description": "此接口不支持 image 输出；图片生成请使用 POST /v1/images/generations",
+            "description": "此接口不支持 image 输出；图片生成请使用 POST /v1/jobs",
             "items": {
               "type": "string",
               "enum": [
@@ -2922,7 +2922,7 @@
         "properties": {
           "model": {
             "type": "string",
-            "description": "文本模型 ID；生图模型请改用 POST /v1/images/generations"
+            "description": "文本模型 ID；生图模型请改用 POST /v1/jobs"
           },
           "input": {
             "description": "输入内容，可以是字符串或消息数组",
@@ -2956,7 +2956,7 @@
           },
           "tools": {
             "type": "array",
-            "description": "不支持 image_generation 工具；图片生成请使用 POST /v1/images/generations",
+            "description": "不支持 image_generation 工具；图片生成请使用 POST /v1/jobs",
             "items": {
               "type": "object",
               "properties": {}

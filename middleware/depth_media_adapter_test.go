@@ -74,7 +74,7 @@ func TestDepthMediaRequestConvertReplacesReusableBodyStorage(t *testing.T) {
 func TestDepthMediaRequestConvertSupportsUnifiedDepthOperation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.POST("/v1/jobs", DepthMediaRequestConvert(), func(c *gin.Context) {
+	router.POST("/v1/media/jobs", DepthMediaRequestConvert(), func(c *gin.Context) {
 		var request relaycommon.TaskSubmitReq
 		require.NoError(t, c.ShouldBindJSON(&request))
 		assert.Equal(t, taskdepthmedia.ModelDepthVideo, request.Model)
@@ -84,7 +84,7 @@ func TestDepthMediaRequestConvertSupportsUnifiedDepthOperation(t *testing.T) {
 
 	request := httptest.NewRequest(
 		http.MethodPost,
-		"/v1/jobs",
+		"/v1/media/jobs",
 		strings.NewReader(`{
 			"source_url":"https://cdn.example.com/input.mp4",
 			"operation":"depth"
@@ -129,14 +129,14 @@ func TestDepthMediaRequestConvertAcceptsPublicCatalogAliases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
-			router.POST("/v1/jobs", DepthMediaRequestConvert(), func(c *gin.Context) {
+			router.POST("/v1/media/jobs", DepthMediaRequestConvert(), func(c *gin.Context) {
 				var request relaycommon.TaskSubmitReq
 				require.NoError(t, c.ShouldBindJSON(&request))
 				assert.Equal(t, tt.wantModel, request.Model)
 				c.Status(http.StatusNoContent)
 			})
 
-			request := httptest.NewRequest(http.MethodPost, "/v1/jobs", strings.NewReader(tt.body))
+			request := httptest.NewRequest(http.MethodPost, "/v1/media/jobs", strings.NewReader(tt.body))
 			request.Header.Set("Content-Type", "application/json")
 			recorder := httptest.NewRecorder()
 			router.ServeHTTP(recorder, request)
@@ -149,13 +149,13 @@ func TestDepthMediaRequestConvertAcceptsPublicCatalogAliases(t *testing.T) {
 func TestDepthMediaRequestConvertRejectsDepthAliasWithoutDepthOperation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.POST("/v1/jobs", DepthMediaRequestConvert(), func(c *gin.Context) {
+	router.POST("/v1/media/jobs", DepthMediaRequestConvert(), func(c *gin.Context) {
 		t.Fatal("request should have been aborted")
 	})
 
 	request := httptest.NewRequest(
 		http.MethodPost,
-		"/v1/jobs",
+		"/v1/media/jobs",
 		strings.NewReader(`{"model":"depth-video","source_url":"https://cdn.example.com/input.mp4"}`),
 	)
 	request.Header.Set("Content-Type", "application/json")

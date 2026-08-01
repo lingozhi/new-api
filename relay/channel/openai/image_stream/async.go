@@ -1269,7 +1269,7 @@ func writeReplayedAsyncImageTask(c *gin.Context, task *model.Task, requestHash s
 }
 
 func writeAcceptedImageTask(c *gin.Context, task *model.Task) {
-	c.Header("Location", "/v1/images/generations/"+task.TaskID)
+	c.Header("Location", strings.Replace(common.ImageGenerationPollPath, "{task_id}", task.TaskID, 1))
 	c.Header("Retry-After", "2")
 	c.Set(ContextKeyAsyncImageSubmitted, true)
 	c.JSON(http.StatusAccepted, BuildImageTaskResponse(task))

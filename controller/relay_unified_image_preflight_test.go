@@ -100,7 +100,7 @@ func TestRelayRejectsNonCanonicalImageGenerationBeforeBilling(t *testing.T) {
 			Relay(c, test.format)
 
 			require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
-			assert.Contains(t, recorder.Body.String(), "POST /v1/images/generations")
+			assert.Contains(t, recorder.Body.String(), "POST /v1/jobs")
 		})
 	}
 }

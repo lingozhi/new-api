@@ -1,6 +1,7 @@
 package router
 
 import (
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
@@ -59,10 +60,10 @@ func SetRelayRouter(router *gin.Engine) {
 		})
 	}
 
-	imageGenerationRouter := router.Group("/v1/images/generations")
-	imageGenerationRouter.Use(middleware.RouteTag("relay"))
-	imageGenerationRouter.GET("/:task_id", middleware.TokenAuthReadOnly(), controller.GetImageGenerationTask)
-	imageGenerationRouter.POST(
+	imageJobRouter := router.Group(common.ImageGenerationEndpoint)
+	imageJobRouter.Use(middleware.RouteTag("relay"))
+	imageJobRouter.GET("/:task_id", middleware.TokenAuthReadOnly(), controller.GetImageGenerationTask)
+	imageJobRouter.POST(
 		"",
 		middleware.SystemPerformanceCheck(),
 		middleware.TokenAuth(),

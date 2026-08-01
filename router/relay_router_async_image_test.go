@@ -75,7 +75,7 @@ func TestUnifiedImageRouteReplaysImageInputAfterStrictTokenChecks(t *testing.T) 
 			"image_input":["https://example.com/source.png"]
 		}
 	}`)
-	request := httptest.NewRequest(http.MethodPost, "/v1/images/generations", body)
+	request := httptest.NewRequest(http.MethodPost, "/v1/jobs", body)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer sk-"+token.Key)
 	request.Header.Set("Idempotency-Key", idempotencyKey)
@@ -84,7 +84,16 @@ func TestUnifiedImageRouteReplaysImageInputAfterStrictTokenChecks(t *testing.T) 
 
 	assert.Equal(t, http.StatusAccepted, recorder.Code, recorder.Body.String())
 	assert.Equal(t, "true", recorder.Header().Get("Idempotency-Replayed"))
+	assert.Equal(t, "/v1/jobs/"+task.TaskID, recorder.Header().Get("Location"))
 	assert.Contains(t, recorder.Body.String(), task.TaskID)
+
+	pollRequest := httptest.NewRequest(http.MethodGet, "/v1/jobs/"+task.TaskID, nil)
+	pollRequest.Header.Set("Authorization", "Bearer sk-"+token.Key)
+	pollRecorder := httptest.NewRecorder()
+	engine.ServeHTTP(pollRecorder, pollRequest)
+
+	assert.Equal(t, http.StatusOK, pollRecorder.Code, pollRecorder.Body.String())
+	assert.Contains(t, pollRecorder.Body.String(), task.TaskID)
 }
 
 func TestImageSubmitRoutesRejectTokenBeforeReadingBody(t *testing.T) {
@@ -119,7 +128,7 @@ func TestImageSubmitRoutesRejectTokenBeforeReadingBody(t *testing.T) {
 	SetRelayRouter(engine)
 	const bodySize = 1 << 20
 	body := strings.NewReader(strings.Repeat("x", bodySize))
-	request := httptest.NewRequest(http.MethodPost, "/v1/images/generations", body)
+	request := httptest.NewRequest(http.MethodPost, "/v1/jobs", body)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer sk-"+token.Key)
 	request.Header.Set("Idempotency-Key", "must-not-be-parsed")
@@ -136,7 +145,7 @@ func TestLegacyImageSubmitRoutesAreNotRegistered(t *testing.T) {
 	engine := gin.New()
 	SetRelayRouter(engine)
 
-	for _, path := range []string{"/v1/images/edits", "/v1/edits", "/v1/images/variations"} {
+	for _, path := range []string{"/v1/images/generations", "/v1/images/edits", "/v1/edits", "/v1/images/variations"} {
 		t.Run(path, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"gpt-image-2"}`))
 			request.Header.Set("Content-Type", "application/json")

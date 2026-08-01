@@ -382,7 +382,7 @@ func TestImageEditAliasesSubmitMultipartAsDurableAsyncTasks(t *testing.T) {
 			assert.True(t, c.GetBool(image_stream.ContextKeyAsyncImageSubmitted))
 			var task model.Task
 			require.NoError(t, model.DB.Where("platform = ?", constant.TaskPlatformOpenAIImage).First(&task).Error)
-			assert.Equal(t, "/v1/images/generations/"+task.TaskID, recorder.Header().Get("Location"))
+			assert.Equal(t, "/v1/jobs/"+task.TaskID, recorder.Header().Get("Location"))
 			var checkpoint struct {
 				Executor        string                                  `json:"executor"`
 				RelayMode       int                                     `json:"relay_mode"`

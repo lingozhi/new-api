@@ -528,7 +528,7 @@ export function buildAsyncImageSample(
       'POLL_DEADLINE=$(( $(date +%s) + POLL_TIMEOUT_SECONDS ))',
       '',
       '# The submit endpoint returns HTTP/1.1 202 Accepted',
-      '# Location: /v1/images/generations/task_0123456789abcdef0123456789abcdef',
+      '# Location: /v1/jobs/task_0123456789abcdef0123456789abcdef',
       '# Retry-After: 2',
       '# {"task_id":"task_0123456789abcdef0123456789abcdef","object":"image.generation.task","status":"queued","progress":"0%","created_at":1710000000}',
       '',

@@ -64,7 +64,7 @@ func TestDistributeRejectsUnsupportedVerifiedImageVariantAsInvalidRequest(t *tes
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(
 		http.MethodPost,
-		"/v1/images/generations",
+		"/v1/jobs",
 		strings.NewReader(`{"model":"gpt-image-2","prompt":"draw a cube","size":"1024x1024","n":1}`),
 	)
 	ctx.Request.Header.Set("Content-Type", "application/json")

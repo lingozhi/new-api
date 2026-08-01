@@ -66,7 +66,11 @@ func Path2RelayMode(path string) int {
 		relayMode = RelayModeEmbeddings
 	} else if strings.HasPrefix(path, "/v1/moderations") {
 		relayMode = RelayModeModerations
+	} else if strings.HasPrefix(path, "/v1/jobs") {
+		relayMode = RelayModeImagesGenerations
 	} else if strings.HasPrefix(path, "/v1/images/generations") {
+		// Stored async checkpoints and provider routes can still contain the
+		// OpenAI-compatible upstream path during rolling upgrades.
 		relayMode = RelayModeImagesGenerations
 	} else if strings.HasPrefix(path, "/v1/images/edits") {
 		relayMode = RelayModeImagesEdits

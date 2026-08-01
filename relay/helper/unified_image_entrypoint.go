@@ -14,7 +14,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-const unifiedImageGenerationEndpoint = "POST /v1/images/generations"
+const unifiedImageGenerationEndpoint = "POST /v1/jobs"
 
 // ValidateUnifiedImageEntryPoint prevents synchronous image generation from
 // leaking through text, Responses, or native Gemini relay surfaces. A preflight

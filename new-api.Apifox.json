@@ -1312,7 +1312,7 @@
                         }
                       ]
                     },
-                    "description": "```\nPOST https://api.opwan.ai/v1beta/models/{model}:generateContent\n```\nGoogle 原生 GenerateContent 非图片格式，可用于文本及模型允许的音频输出。此入口不允许图片输出；生图模型或 `responseModalities` 包含 `IMAGE` 时返回 400，请改用 `POST /v1/images/generations`。",
+                    "description": "```\nPOST https://api.opwan.ai/v1beta/models/{model}:generateContent\n```\nGoogle 原生 GenerateContent 非图片格式，可用于文本及模型允许的音频输出。此入口不允许图片输出；生图模型或 `responseModalities` 包含 `IMAGE` 时返回 400，请改用 `POST /v1/jobs`。",
                     "tags": [
                       "文字（Chat）/gemini-3-pro"
                     ],
@@ -1456,7 +1456,7 @@
                         }
                       ]
                     },
-                    "description": "```\nPOST https://api.opwan.ai/v1/chat/completions\n```\n\nOpenAI 兼容的文本/音频入口。图片输出模型或 `modalities` 包含 `image` 时返回 400；所有生图统一使用 `POST /v1/images/generations`。",
+                    "description": "```\nPOST https://api.opwan.ai/v1/chat/completions\n```\n\nOpenAI 兼容的文本/音频入口。图片输出模型或 `modalities` 包含 `image` 时返回 400；所有生图统一使用 `POST /v1/jobs`。",
                     "tags": [
                       "文字（Chat）/通用"
                     ],
@@ -1563,7 +1563,7 @@
                         }
                       ]
                     },
-                    "description": "```\nPOST https://api.opwan.ai/v1/responses\n```\n\nOpenAI Responses 文本入口。`image_generation` 工具和图片输出模型会返回 400；所有生图统一使用 `POST /v1/images/generations`。",
+                    "description": "```\nPOST https://api.opwan.ai/v1/responses\n```\n\nOpenAI Responses 文本入口。`image_generation` 工具和图片输出模型会返回 400；所有生图统一使用 `POST /v1/jobs`。",
                     "tags": [
                       "文字（Chat）/通用"
                     ],
@@ -1671,7 +1671,7 @@
                   "api": {
                     "id": "452168131",
                     "method": "post",
-                    "path": "/v1/images/generations",
+                    "path": "/v1/jobs",
                     "parameters": {
                       "path": [],
                       "query": [],
@@ -1768,7 +1768,7 @@
                         }
                       ]
                     },
-                    "description": "```\nPOST https://api.opwan.ai/v1/images/generations\n```\n\n唯一图片提交接口。`model` 填具体模型名；`input.image_input`/`input.input_urls` 有参考图时执行图生图，否则执行文生图。接口始终异步返回 202，可轮询 `GET /v1/images/generations/{task_id}` 或使用 `webhook_url`。",
+                    "description": "```\nPOST https://api.opwan.ai/v1/jobs\n```\n\n唯一图片提交接口。`model` 填具体模型名；`input.image_input`/`input.input_urls` 有参考图时执行图生图，否则执行文生图。接口始终异步返回 202，可轮询 `GET /v1/jobs/{task_id}` 或使用 `webhook_url`。",
                     "tags": [
                       "图像（Images）/统一异步接口"
                     ],
@@ -1802,7 +1802,7 @@
                   "api": {
                     "id": "452168142",
                     "method": "get",
-                    "path": "/v1/images/generations/{task_id}",
+                    "path": "/v1/jobs/{task_id}",
                     "parameters": {
                       "path": [
                         {
@@ -4052,7 +4052,7 @@
               "properties": {
                 "model": {
                   "type": "string",
-                  "description": "文本或音频模型 ID；生图模型请改用 POST /v1/images/generations",
+                  "description": "文本或音频模型 ID；生图模型请改用 POST /v1/jobs",
                   "examples": [
                     "gpt-4"
                   ]
@@ -4203,7 +4203,7 @@
                 },
                 "modalities": {
                   "type": "array",
-                  "description": "此接口不支持 image 输出；图片生成请使用 POST /v1/images/generations",
+                  "description": "此接口不支持 image 输出；图片生成请使用 POST /v1/jobs",
                   "items": {
                     "type": "string",
                     "enum": [
@@ -4536,7 +4536,7 @@
               "properties": {
                 "model": {
                   "type": "string",
-                  "description": "文本模型 ID；生图模型请改用 POST /v1/images/generations"
+                  "description": "文本模型 ID；生图模型请改用 POST /v1/jobs"
                 },
                 "input": {
                   "description": "输入内容，可以是字符串或消息数组",
@@ -4571,7 +4571,7 @@
                 },
                 "tools": {
                   "type": "array",
-                  "description": "不支持 image_generation 工具；图片生成请使用 POST /v1/images/generations",
+                  "description": "不支持 image_generation 工具；图片生成请使用 POST /v1/jobs",
                   "items": {
                     "type": "object",
                     "properties": {},

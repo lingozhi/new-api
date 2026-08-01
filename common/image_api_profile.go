@@ -12,8 +12,8 @@ const (
 	MaxImageInputURLs         = 16
 	MaxGeminiImageInputURLs   = 14
 	MaxImagePromptCharacters  = 20000
-	ImageGenerationEndpoint   = "/v1/images/generations"
-	ImageGenerationPollPath   = "/v1/images/generations/{task_id}"
+	ImageGenerationEndpoint   = "/v1/jobs"
+	ImageGenerationPollPath   = "/v1/jobs/{task_id}"
 	ImageResultDeliveryOSSURL = "oss_url"
 )
 

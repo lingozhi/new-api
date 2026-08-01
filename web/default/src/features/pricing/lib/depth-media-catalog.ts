@@ -105,9 +105,9 @@ function mediaProfile(
 ): ModelApiProfile {
   return {
     kind: 'media',
-    endpoint: '/v1/jobs',
+    endpoint: '/v1/media/jobs',
     async: true,
-    poll_endpoint: '/v1/jobs/{task_id}',
+    poll_endpoint: '/v1/media/jobs/{task_id}',
     webhook: true,
     result_delivery: 'oss_url',
     operations: [operation],
@@ -541,7 +541,7 @@ export function buildDepthMediaAiIntegrationGuide(
     baseUrl,
     apiKeyEnv: context.apiKeyEnv,
     modelName: context.selectedModel.model_name || '',
-    endpointPath: '/v1/jobs',
+    endpointPath: '/v1/media/jobs',
   })
 
   return [
@@ -551,8 +551,8 @@ export function buildDepthMediaAiIntegrationGuide(
     '',
     '## Contract',
     `- Base URL: ${baseUrl}`,
-    `- Submit: POST ${baseUrl}/v1/jobs`,
-    `- Poll: GET ${baseUrl}/v1/jobs/{task_id}`,
+    `- Submit: POST ${baseUrl}/v1/media/jobs`,
+    `- Poll: GET ${baseUrl}/v1/media/jobs/{task_id}`,
     `- Authentication: Authorization: Bearer $${context.apiKeyEnv}`,
     '- Content-Type: application/json',
     '- Submit response: HTTP 202 with task_id',

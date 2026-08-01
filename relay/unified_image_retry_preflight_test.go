@@ -105,7 +105,7 @@ func TestRelayHandlersRejectRetryChannelImageOverrideBeforeConversion(t *testing
 			require.NotNil(t, apiErr)
 			assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode)
 			assert.Equal(t, types.ErrorCodeInvalidRequest, apiErr.GetErrorCode())
-			assert.Contains(t, apiErr.Error(), "POST /v1/images/generations")
+			assert.Contains(t, apiErr.Error(), "POST /v1/jobs")
 		})
 	}
 }

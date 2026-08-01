@@ -111,6 +111,7 @@ const (
 	advancedCustomEndpointPathClaudeMessages         = "/v1/messages"
 	advancedCustomEndpointPathJinaRerank             = "/v1/rerank"
 	advancedCustomEndpointPathImageGeneration        = "/v1/images/generations"
+	advancedCustomPublicImageJobPath                 = "/v1/jobs"
 	advancedCustomEndpointPathEmbeddings             = "/v1/embeddings"
 )
 
@@ -193,7 +194,7 @@ func advancedCustomEndpointTypeFromIncomingPath(incomingPath string) (constant.E
 		return constant.EndpointTypeAnthropic, true
 	case advancedCustomEndpointPathJinaRerank:
 		return constant.EndpointTypeJinaRerank, true
-	case advancedCustomEndpointPathImageGeneration:
+	case advancedCustomEndpointPathImageGeneration, advancedCustomPublicImageJobPath:
 		return constant.EndpointTypeImageGeneration, true
 	case advancedCustomEndpointPathEmbeddings:
 		return constant.EndpointTypeEmbeddings, true
@@ -262,9 +263,11 @@ func matchAdvancedCustomIncomingPath(configuredPath string, requestPath string) 
 	}
 	if strings.Contains(configuredPath, ":generateContent") {
 		streamPath := strings.Replace(configuredPath, ":generateContent", ":streamGenerateContent", 1)
-		return matchAdvancedCustomIncomingPathTemplate(streamPath, requestPath)
+		if matchAdvancedCustomIncomingPathTemplate(streamPath, requestPath) {
+			return true
+		}
 	}
-	return false
+	return requestPath == advancedCustomPublicImageJobPath && configuredPath == advancedCustomEndpointPathImageGeneration
 }
 
 func matchAdvancedCustomIncomingPathTemplate(configuredPath string, requestPath string) bool {
