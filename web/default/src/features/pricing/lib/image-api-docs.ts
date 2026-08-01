@@ -71,8 +71,223 @@ export const GPT_IMAGE_2_UNAVAILABLE_EXACT_4K_SIZES = [
   { aspectRatio: '9:21', size: '1728x4032' },
 ] as const
 
+const GPT_IMAGE_2_ASPECT_RATIOS = [
+  'auto',
+  '1:1',
+  '3:2',
+  '2:3',
+  '4:3',
+  '3:4',
+  '5:4',
+  '4:5',
+  '16:9',
+  '9:16',
+  '2:1',
+  '1:2',
+  '3:1',
+  '1:3',
+  '21:9',
+  '9:21',
+] as const
+
+const GPT_IMAGE_2_DOCUMENTED_COMBINATIONS = [
+  { resolution: '1K', aspect_ratio: '1:1', size: '1024x1024' },
+  { resolution: '1K', aspect_ratio: '16:9', size: '1536x864' },
+  { resolution: '1K', aspect_ratio: '9:16', size: '864x1536' },
+  { resolution: '1K', aspect_ratio: '3:4', size: '1024x1360' },
+  { resolution: '1K', aspect_ratio: '4:3', size: '1360x1024' },
+  { resolution: '1K', aspect_ratio: '3:2', size: '1536x1024' },
+  { resolution: '1K', aspect_ratio: '2:3', size: '1024x1536' },
+  { resolution: '1K', aspect_ratio: '5:4', size: '1280x1024' },
+  { resolution: '1K', aspect_ratio: '4:5', size: '1024x1280' },
+  { resolution: '1K', aspect_ratio: '2:1', size: '1536x768' },
+  { resolution: '1K', aspect_ratio: '1:2', size: '768x1536' },
+  { resolution: '1K', aspect_ratio: '3:1', size: '1536x512' },
+  { resolution: '1K', aspect_ratio: '1:3', size: '512x1536' },
+  { resolution: '1K', aspect_ratio: '21:9', size: '1792x768' },
+  { resolution: '1K', aspect_ratio: '9:21', size: '768x1792' },
+  { resolution: '2K', aspect_ratio: '1:1', size: '1440x1440' },
+  { resolution: '2K', aspect_ratio: '16:9', size: '2048x1152' },
+  { resolution: '2K', aspect_ratio: '9:16', size: '1152x2048' },
+  { resolution: '2K', aspect_ratio: '3:4', size: '1248x1664' },
+  { resolution: '2K', aspect_ratio: '4:3', size: '1664x1248' },
+  { resolution: '2K', aspect_ratio: '3:2', size: '1920x1280' },
+  { resolution: '2K', aspect_ratio: '2:3', size: '1280x1920' },
+  { resolution: '2K', aspect_ratio: '5:4', size: '1600x1280' },
+  { resolution: '2K', aspect_ratio: '4:5', size: '1280x1600' },
+  { resolution: '2K', aspect_ratio: '2:1', size: '2048x1024' },
+  { resolution: '2K', aspect_ratio: '1:2', size: '1024x2048' },
+  { resolution: '2K', aspect_ratio: '3:1', size: '1920x640' },
+  { resolution: '2K', aspect_ratio: '1:3', size: '640x1920' },
+  { resolution: '2K', aspect_ratio: '21:9', size: '2016x864' },
+  { resolution: '2K', aspect_ratio: '9:21', size: '864x2016' },
+  ...GPT_IMAGE_2_VERIFIED_4K_SIZES.map((item) => ({
+    resolution: '4K',
+    aspect_ratio: item.aspectRatio,
+    size: item.size,
+  })),
+] as const
+
 export function isGPTImage2Model(modelName: string): boolean {
   return modelName.trim().toLowerCase().startsWith('gpt-image-2')
+}
+
+export function withGPTImage2DocumentedParameters(
+  modelName: string,
+  profile: ModelApiProfile
+): ModelApiProfile {
+  if (!isGPTImage2Model(modelName)) return profile
+
+  const existing = new Map(
+    profile.parameters.map((parameter) => [parameter.name, parameter])
+  )
+  const parameter = (
+    name: string,
+    documented: ModelApiProfile['parameters'][number]
+  ): ModelApiProfile['parameters'][number] => ({
+    ...documented,
+    ...existing.get(name),
+    enum_values: documented.enum_values,
+  })
+  const documentedNames = new Set([
+    'prompt',
+    'image_input',
+    'aspect_ratio',
+    'resolution',
+    'size',
+    'quality',
+    'n',
+    'output_format',
+    'output_compression',
+    'background',
+    'moderation',
+    'response_format',
+    'webhook_url',
+    'webhook_secret',
+  ])
+  const providerParameters = profile.parameters.filter(
+    (item) => !documentedNames.has(item.name)
+  )
+  const sizes = [
+    'auto',
+    ...new Set(
+      GPT_IMAGE_2_DOCUMENTED_COMBINATIONS.map((combination) => combination.size)
+    ),
+  ]
+
+  return {
+    ...profile,
+    parameters: [
+      parameter('prompt', {
+        name: 'prompt',
+        type: 'string',
+        required: true,
+        max: 20000,
+        description: 'Text description of the image to generate.',
+      }),
+      parameter('image_input', {
+        name: 'image_input',
+        type: 'array',
+        max_items: 16,
+        description: 'Reference image URLs for image editing or guidance.',
+      }),
+      parameter('aspect_ratio', {
+        name: 'aspect_ratio',
+        type: 'enum',
+        default: 'auto',
+        enum_values: [...GPT_IMAGE_2_ASPECT_RATIOS],
+        description: 'Aspect ratio of the generated image.',
+      }),
+      parameter('resolution', {
+        name: 'resolution',
+        type: 'enum',
+        default: '1K',
+        enum_values: ['1K', '2K', '4K'],
+        description: 'Resolution tier of the generated image.',
+      }),
+      parameter('size', {
+        name: 'size',
+        type: 'enum',
+        default: 'auto',
+        enum_values: sizes,
+        description: 'Exact output size alias for aspect_ratio and resolution.',
+      }),
+      parameter('quality', {
+        name: 'quality',
+        type: 'enum',
+        default: 'auto',
+        enum_values: ['auto', 'low', 'medium', 'high'],
+        description: 'Generation quality preset.',
+      }),
+      parameter('n', {
+        name: 'n',
+        type: 'integer',
+        default: 1,
+        min: 1,
+        max: 1,
+        description: 'Number of images to generate.',
+      }),
+      parameter('output_format', {
+        name: 'output_format',
+        type: 'enum',
+        default: 'png',
+        enum_values: ['png', 'jpeg', 'webp'],
+        description: 'Generated image file format.',
+      }),
+      parameter('output_compression', {
+        name: 'output_compression',
+        type: 'integer',
+        min: 0,
+        max: 100,
+        description: 'Compression level for JPEG or WebP output.',
+      }),
+      parameter('background', {
+        name: 'background',
+        type: 'enum',
+        default: 'auto',
+        enum_values: ['auto', 'opaque', 'transparent'],
+        description: 'Background treatment for the generated image.',
+      }),
+      parameter('moderation', {
+        name: 'moderation',
+        type: 'enum',
+        default: 'low',
+        enum_values: ['auto', 'low'],
+        description: 'Safety moderation level applied by the image model.',
+      }),
+      ...providerParameters,
+      parameter('response_format', {
+        name: 'response_format',
+        type: 'enum',
+        default: 'url',
+        enum_values: ['url'],
+        description: 'Completed tasks return durable object-storage URLs.',
+      }),
+      parameter('webhook_url', {
+        name: 'webhook_url',
+        type: 'string',
+        description:
+          'Optional URL that receives task completion notifications.',
+      }),
+      parameter('webhook_secret', {
+        name: 'webhook_secret',
+        type: 'string',
+        description: 'Optional secret used to sign webhook deliveries.',
+      }),
+    ],
+    constraints: [
+      {
+        type: 'allowed_combinations',
+        fields: ['operation', 'resolution', 'aspect_ratio', 'size'],
+        combinations: GPT_IMAGE_2_DOCUMENTED_COMBINATIONS.map(
+          (combination) => ({
+            operation: profile.operations?.[0] || 'generation',
+            ...combination,
+          })
+        ),
+      },
+    ],
+  }
 }
 
 function formatImageGuideParameter(

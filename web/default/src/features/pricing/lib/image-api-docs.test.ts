@@ -27,6 +27,7 @@ import {
   GPT_IMAGE_2_VERIFIED_4K_SIZES,
   IMAGE_SAMPLE_LANGUAGES,
   STANDARD_SAMPLE_LANGUAGES,
+  withGPTImage2DocumentedParameters,
 } from './image-api-docs'
 
 const profile: ModelApiProfile = {
@@ -78,6 +79,84 @@ const editProfile: ModelApiProfile = {
 }
 
 describe('async image API samples', () => {
+  test('expands the GPT Image 2 parameter table with every documented option', () => {
+    const documented = withGPTImage2DocumentedParameters('gpt-image-2', {
+      ...profile,
+      operations: ['generation'],
+      parameters: [
+        { name: 'prompt', type: 'string', required: true, max: 20000 },
+        {
+          name: 'size',
+          type: 'enum',
+          default: 'auto',
+          enum_values: ['auto'],
+        },
+        { name: 'n', type: 'integer', default: 1, min: 1, max: 1 },
+        {
+          name: 'response_format',
+          type: 'enum',
+          default: 'url',
+          enum_values: ['url'],
+        },
+        { name: 'webhook_url', type: 'string' },
+        { name: 'webhook_secret', type: 'string' },
+      ],
+      constraints: [
+        {
+          type: 'allowed_combinations',
+          fields: ['operation', 'size'],
+          combinations: [{ operation: 'generation', size: 'auto' }],
+        },
+      ],
+    })
+
+    const byName = new Map(
+      documented.parameters.map((parameter) => [parameter.name, parameter])
+    )
+    assert.deepEqual(byName.get('aspect_ratio')?.enum_values, [
+      'auto',
+      '1:1',
+      '3:2',
+      '2:3',
+      '4:3',
+      '3:4',
+      '5:4',
+      '4:5',
+      '16:9',
+      '9:16',
+      '2:1',
+      '1:2',
+      '3:1',
+      '1:3',
+      '21:9',
+      '9:21',
+    ])
+    assert.deepEqual(byName.get('resolution')?.enum_values, ['1K', '2K', '4K'])
+    assert.ok(byName.get('size')?.enum_values?.includes('3840x2160'))
+    assert.deepEqual(byName.get('quality')?.enum_values, [
+      'auto',
+      'low',
+      'medium',
+      'high',
+    ])
+    assert.deepEqual(byName.get('output_format')?.enum_values, [
+      'png',
+      'jpeg',
+      'webp',
+    ])
+    assert.deepEqual(byName.get('background')?.enum_values, [
+      'auto',
+      'opaque',
+      'transparent',
+    ])
+    assert.deepEqual(byName.get('moderation')?.enum_values, ['auto', 'low'])
+    assert.equal(byName.get('output_compression')?.min, 0)
+    assert.equal(byName.get('output_compression')?.max, 100)
+    assert.equal(byName.get('image_input')?.max_items, 16)
+    assert.equal(byName.get('n')?.max, 1)
+    assert.equal(documented.constraints?.[0]?.combinations.length, 35)
+  })
+
   test('generates a self-contained GPT Image 2 AI integration guide', () => {
     const guideProfile: ModelApiProfile = {
       ...profile,

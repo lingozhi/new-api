@@ -53,12 +53,10 @@ import {
 import {
   buildAsyncImageSample,
   buildImageAiIntegrationGuide,
-  GPT_IMAGE_2_UNAVAILABLE_EXACT_4K_SIZES,
-  GPT_IMAGE_2_VERIFIED_4K_SIZES,
   IMAGE_SAMPLE_LANGUAGES,
-  isGPTImage2Model,
   STANDARD_SAMPLE_LANGUAGES,
   type ImageSampleLanguage,
+  withGPTImage2DocumentedParameters,
 } from '../lib/image-api-docs'
 import {
   buildRateLimits,
@@ -598,10 +596,6 @@ function CodeSamplesSection(props: {
         </div>
       )}
 
-      {isGPTImage2Model(props.model.model_name || '') && (
-        <GPTImage2FourKCompatibilityNotice />
-      )}
-
       <div className='flex flex-wrap items-center gap-2'>
         {props.model.api_profile ? (
           <Badge variant='outline'>
@@ -665,51 +659,6 @@ function CodeSamplesSection(props: {
         <WebhookContractNotice profileKind={props.model.api_profile.kind} />
       )}
     </section>
-  )
-}
-
-function GPTImage2FourKCompatibilityNotice() {
-  const { t } = useTranslation()
-
-  return (
-    <aside className='border-border/60 bg-muted/20 mt-4 rounded-lg border p-3'>
-      <h4 className='text-foreground text-xs font-semibold'>
-        {t('Verified 4K output sizes')}
-      </h4>
-      <p className='text-muted-foreground mt-1 text-xs leading-relaxed'>
-        {t(
-          'Only the following five GPT Image 2 sizes have been verified as exact 4K output.'
-        )}
-      </p>
-      <div className='mt-2 flex flex-wrap gap-1.5'>
-        {GPT_IMAGE_2_VERIFIED_4K_SIZES.map((item) => (
-          <code
-            key={item.aspectRatio}
-            className='bg-background rounded border px-2 py-1 font-mono text-xs'
-          >
-            {item.aspectRatio} · {item.size}
-          </code>
-        ))}
-      </div>
-      <p className='text-muted-foreground mt-3 text-xs leading-relaxed'>
-        {t(
-          'The following requested sizes are not available as exact 4K output and are downscaled by the upstream provider.'
-        )}
-      </p>
-      <div className='mt-2 flex flex-wrap gap-1.5'>
-        {GPT_IMAGE_2_UNAVAILABLE_EXACT_4K_SIZES.map((item) => (
-          <code
-            key={item.aspectRatio}
-            className='rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1 font-mono text-xs text-amber-700 dark:text-amber-300'
-          >
-            {item.aspectRatio} · {item.size}
-          </code>
-        ))}
-      </div>
-      <p className='text-muted-foreground mt-2 text-xs leading-relaxed'>
-        {t('These aspect ratios remain available at verified 1K and 2K sizes.')}
-      </p>
-    </aside>
   )
 }
 
@@ -781,14 +730,21 @@ function WebhookContractNotice(props: {
 
 function SupportedParametersSection(props: { model: PricingModel }) {
   const { t } = useTranslation()
+  const displayProfile = useMemo(() => {
+    if (!props.model.api_profile) return undefined
+    return withGPTImage2DocumentedParameters(
+      props.model.model_name || '',
+      props.model.api_profile
+    )
+  }, [props.model.api_profile, props.model.model_name])
   const params = useMemo(() => {
-    if (props.model.api_profile) {
-      return props.model.api_profile.parameters.map((parameter) =>
-        profileParameterForDisplay(parameter, props.model.api_profile?.kind)
+    if (displayProfile) {
+      return displayProfile.parameters.map((parameter) =>
+        profileParameterForDisplay(parameter, displayProfile.kind)
       )
     }
     return buildSupportedParameters(props.model)
-  }, [props.model])
+  }, [displayProfile, props.model])
 
   if (params.length === 0) return null
 
@@ -851,7 +807,7 @@ function SupportedParametersSection(props: { model: PricingModel }) {
           },
         ]}
       />
-      <ApiProfileConstraints profile={props.model.api_profile} />
+      <ApiProfileConstraints profile={displayProfile} />
     </section>
   )
 }
