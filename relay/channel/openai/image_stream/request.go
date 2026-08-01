@@ -84,11 +84,18 @@ func gptImageSizeFromUnifiedOptions(req *dto.ImageRequest, model string) (string
 		return "", errors.New("image request is required")
 	}
 	capabilities := common.ImageModelCapabilitiesForModel(model)
+	responsesCapabilities := capabilities
+	if capabilities.Family == common.ImageModelFamilyGPTImage2 {
+		// Supplier-compatible public aliases expose a broader native
+		// aspect-ratio matrix. The Responses image_generation tool still uses
+		// the smaller, pixel-size based GPT Image 2 contract.
+		responsesCapabilities = common.ImageModelCapabilitiesForModel("gpt-image-2")
+	}
 	frozenRequirement, hasFrozenRequirement := req.ImageSelectionRequirement()
 	if req.Size != "" {
 		size := strings.TrimSpace(req.Size)
 		if capabilities.Family == common.ImageModelFamilyGPTImage2 {
-			if capabilities.SupportsSize(size) {
+			if responsesCapabilities.SupportsSize(size) {
 				return size, nil
 			}
 			return "", fmt.Errorf("size %q is not supported by model %s; use one of the 15 official sizes or auto", size, model)
@@ -162,7 +169,7 @@ func gptImageSizeFromUnifiedOptions(req *dto.ImageRequest, model string) (string
 		}
 		return "", fmt.Errorf("aspect_ratio %s is not supported by model %s", aspectRatio, model)
 	}
-	size, ok := capabilities.SizeFor(resolution, aspectRatio)
+	size, ok := responsesCapabilities.SizeFor(resolution, aspectRatio)
 	if ok {
 		return size, nil
 	}

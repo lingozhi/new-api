@@ -48,11 +48,11 @@ func TestNanoBanana2ImageAPIProfileMatchesRuntimeCapabilities(t *testing.T) {
 }
 
 func TestGPTImage2ProfileAndValidatorShareCombinationMatrix(t *testing.T) {
-	capabilities := ImageModelCapabilitiesForModel("gpt-image-2-image-to-image")
-	profile := ImageAPIProfileForModel("gpt-image-2-image-to-image")
+	capabilities := ImageModelCapabilitiesForModel("gpt-image-2")
+	profile := ImageAPIProfileForModel("gpt-image-2")
 
 	assert.Equal(t, ImageModelFamilyGPTImage2, capabilities.Family)
-	assert.Equal(t, []string{"edit"}, profile.Operations)
+	assert.Equal(t, []string{"generation"}, profile.Operations)
 	require.Len(t, profile.Constraints, 1)
 	assert.Equal(t, "allowed_combinations", profile.Constraints[0].Type)
 	assert.Equal(t, []string{"resolution", "aspect_ratio", "size"}, profile.Constraints[0].Fields)
@@ -97,10 +97,14 @@ func TestGPTImage2SupplierAliasesPublishExactParameterMatrix(t *testing.T) {
 			assert.NotContains(t, parameterNames(profile.Parameters), "background")
 			assert.NotContains(t, parameterNames(profile.Parameters), "moderation")
 
-			imageInput := imageAPIParameterByName(t, profile, "image_input")
-			assert.Equal(t, tt.requiresImageInput, imageInput.Required)
-			require.NotNil(t, imageInput.MaxItems)
-			assert.Equal(t, MaxImageInputURLs, *imageInput.MaxItems)
+			if tt.requiresImageInput {
+				imageInput := imageAPIParameterByName(t, profile, "image_input")
+				assert.True(t, imageInput.Required)
+				require.NotNil(t, imageInput.MaxItems)
+				assert.Equal(t, MaxImageInputURLs, *imageInput.MaxItems)
+			} else {
+				assert.NotContains(t, parameterNames(profile.Parameters), "image_input")
+			}
 
 			require.Len(t, profile.Constraints, 1)
 			assert.Equal(t, []string{"resolution", "aspect_ratio"}, profile.Constraints[0].Fields)

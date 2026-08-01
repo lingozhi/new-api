@@ -1622,6 +1622,9 @@ func validateAsyncImageModelInput(originModel, upstreamModel string, req *dto.Im
 	hasInputSources := len(imageURLs) > 0 || (len(knownInputSources) > 0 && knownInputSources[0])
 	for _, model := range models {
 		model = strings.TrimSpace(strings.TrimPrefix(strings.ToLower(model), "models/"))
+		if model == "gpt-image-2-text-to-image" && hasInputSources {
+			return fmt.Errorf("model %s does not accept input_urls", model)
+		}
 		if strings.HasSuffix(model, "-image-to-image") && !hasInputSources {
 			return errors.New("input_urls is required for image-to-image models")
 		}

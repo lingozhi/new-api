@@ -121,6 +121,18 @@ var (
 		"4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9",
 		"2:1", "1:2", "3:1", "1:3", "9:21",
 	}
+	gptImage2SupplierAspectRatios = []string{
+		"auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5",
+		"16:9", "9:16", "2:1", "1:2", "3:1", "1:3", "21:9", "9:21",
+	}
+	gptImage2SupplierTextVariants = gptImage2SupplierAllowedCombinations(map[string]map[string]struct{}{
+		"2K": {"auto": {}, "5:4": {}, "4:5": {}, "3:1": {}, "1:3": {}, "9:21": {}},
+		"4K": {"auto": {}, "1:1": {}, "5:4": {}, "4:5": {}, "3:1": {}, "1:3": {}, "9:21": {}},
+	})
+	gptImage2SupplierEditVariants = gptImage2SupplierAllowedCombinations(map[string]map[string]struct{}{
+		"2K": {"auto": {}, "5:4": {}, "4:5": {}},
+		"4K": {"auto": {}, "1:1": {}, "5:4": {}, "4:5": {}},
+	})
 	miniMaxImageAspectRatios = []string{
 		"1:1", "16:9", "9:16", "3:2", "2:3", "4:3", "3:4", "21:9",
 	}
@@ -151,6 +163,19 @@ var (
 		{Resolution: "1K", AspectRatio: "2:3", Size: "1024x1536"},
 	}
 )
+
+func gptImage2SupplierAllowedCombinations(unsupported map[string]map[string]struct{}) []ImageSizeCombination {
+	combinations := make([]ImageSizeCombination, 0, len(gptImage2SupplierAspectRatios)*3)
+	for _, resolution := range []string{"1K", "2K", "4K"} {
+		for _, aspectRatio := range gptImage2SupplierAspectRatios {
+			if _, blocked := unsupported[resolution][aspectRatio]; blocked {
+				continue
+			}
+			combinations = append(combinations, ImageSizeCombination{Resolution: resolution, AspectRatio: aspectRatio})
+		}
+	}
+	return combinations
+}
 
 func normalizeImageModelName(model string) string {
 	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
@@ -203,6 +228,24 @@ func ImageModelCapabilitiesForModel(model string) ImageModelCapabilities {
 			MaxOutputImages:    4,
 			DefaultAspectRatio: "1:1", DefaultResolution: "1K",
 			HasAspectRatioParameter: true, HasResolutionParameter: true,
+		}
+	case normalized == "gpt-image-2-text-to-image":
+		return ImageModelCapabilities{
+			Family: ImageModelFamilyGPTImage2, Operations: []string{"generation"},
+			AspectRatios: append([]string(nil), gptImage2SupplierAspectRatios...),
+			Resolutions:  []string{"1K", "2K", "4K"}, MaxOutputImages: 1,
+			DefaultAspectRatio: "auto", DefaultResolution: "1K",
+			ResolutionAspectVariants: append([]ImageSizeCombination(nil), gptImage2SupplierTextVariants...),
+			HasAspectRatioParameter:  true, HasResolutionParameter: true,
+		}
+	case normalized == "gpt-image-2-image-to-image":
+		return ImageModelCapabilities{
+			Family: ImageModelFamilyGPTImage2, Operations: []string{"edit"},
+			AspectRatios: append([]string(nil), gptImage2SupplierAspectRatios...),
+			Resolutions:  []string{"1K", "2K", "4K"}, MaxReferenceImages: MaxImageInputURLs, MaxOutputImages: 1,
+			DefaultAspectRatio: "auto", DefaultResolution: "1K",
+			ResolutionAspectVariants: append([]ImageSizeCombination(nil), gptImage2SupplierEditVariants...),
+			HasAspectRatioParameter:  true, HasResolutionParameter: true, ReferenceImagesRequired: true,
 		}
 	case strings.HasPrefix(normalized, "gpt-image-2"):
 		return ImageModelCapabilities{

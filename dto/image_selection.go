@@ -183,6 +183,9 @@ func resolveImageSelectionRequirement(request *ImageRequest, model string, opera
 			requirement.Resolution = "1K"
 		}
 	}
+	if applyModelDefaults && requirement.AspectRatio == "" && len(capabilities.AspectRatios) > 0 {
+		requirement.AspectRatio = strings.ToLower(strings.TrimSpace(capabilities.DefaultAspectRatio))
+	}
 
 	if applyModelDefaults && len(capabilities.ResolutionAspectVariants) > 0 && (hasResolution || hasAspectRatio) {
 		if requirement.Resolution == "" {
@@ -204,6 +207,23 @@ func resolveImageSelectionRequirement(request *ImageRequest, model string, opera
 				)
 			}
 			requirement.Size = size
+		}
+	}
+	if applyModelDefaults && requirement.Resolution != "" && requirement.AspectRatio != "" && len(capabilities.ResolutionAspectVariants) > 0 {
+		combinationSupported := false
+		for _, variant := range capabilities.ResolutionAspectVariants {
+			if variant.Resolution == requirement.Resolution && variant.AspectRatio == requirement.AspectRatio {
+				combinationSupported = true
+				break
+			}
+		}
+		if !combinationSupported {
+			return ImageSelectionRequirement{}, fmt.Errorf(
+				"aspect_ratio %s with resolution %s is not supported by model %s",
+				requirement.AspectRatio,
+				requirement.Resolution,
+				model,
+			)
 		}
 	}
 
