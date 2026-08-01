@@ -195,14 +195,17 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	responseId := helper.GetResponseID(c)
 	createAt := time.Now().Unix()
 	state, err := relayconvert.NewResponseStreamState(types.RelayFormatOpenAIResponses, info.RelayFormat, relayconvert.ResponseStreamOptions{
-		ID:      responseId,
-		Model:   info.UpstreamModelName,
-		Created: createAt,
+		ID:           responseId,
+		Model:        info.UpstreamModelName,
+		Created:      createAt,
+		IncludeUsage: info.RelayFormat == types.RelayFormatClaude,
 	})
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
 	streamErr := (*types.NewAPIError)(nil)
+	seenTerminal := false
+	seenVisibleOutput := false
 
 	if info.RelayFormat == types.RelayFormatClaude && info.ClaudeConvertInfo == nil {
 		info.ClaudeConvertInfo = &relaycommon.ClaudeConvertInfo{LastMessagesType: relaycommon.LastMessageTypeNone}
@@ -276,7 +279,8 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		var streamResp dto.ResponsesStreamResponse
 		if err := common.UnmarshalJsonStr(data, &streamResp); err != nil {
 			logger.LogError(c, "failed to unmarshal responses stream event: "+err.Error())
-			sr.Error(err)
+			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			sr.Stop(streamErr)
 			return
 		}
 
@@ -293,6 +297,29 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			return
 		}
 
+		if responsesBridgeEventHasVisibleOutput(&streamResp) {
+			seenVisibleOutput = true
+		}
+		isTerminal := streamResp.Type == "response.completed" ||
+			streamResp.Type == "response.done" ||
+			streamResp.Type == "response.incomplete"
+		if isTerminal {
+			seenTerminal = true
+		}
+		rejectEmptyTerminal := info.RelayFormat == types.RelayFormatClaude || streamResp.Type == "response.incomplete"
+		if isTerminal && rejectEmptyTerminal && !seenVisibleOutput {
+			streamErr = types.NewOpenAIError(
+				fmt.Errorf("responses stream terminal event contained no output text or tool call"),
+				types.ErrorCodeBadResponse,
+				http.StatusInternalServerError,
+			)
+			sr.Stop(streamErr)
+			return
+		}
+		if isTerminal && (state.Usage() == nil || state.Usage().TotalTokens == 0) {
+			state.SetUsage(service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens()))
+		}
+
 		results, err := relayconvert.ConvertStreamResponseChunk(c, info, state, &streamResp)
 		if err != nil {
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
@@ -305,21 +332,45 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 				return
 			}
 		}
+		if isTerminal {
+			sr.Done()
+		}
 	})
 
+	if streamErr == nil && !seenTerminal {
+		streamErr = types.NewOpenAIError(
+			fmt.Errorf("responses stream ended without a terminal event"),
+			types.ErrorCodeBadResponse,
+			http.StatusInternalServerError,
+		)
+		if info.StreamStatus != nil {
+			info.StreamStatus.OverrideEndReasonIfNoProtocolTerminal(
+				relaycommon.StreamEndReasonUpstreamFailed,
+				streamErr,
+				"responses_bridge_missing_terminal",
+			)
+			info.StreamStatus.RecordError(streamErr.Error())
+		}
+	}
 	if streamErr != nil {
+		if c.Writer.Written() {
+			usage := responsesBridgeStreamUsage(c, info, state)
+			if err := writeResponsesBridgeStreamError(c, info, streamErr); err != nil {
+				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			}
+			if info.StreamStatus != nil {
+				info.StreamStatus.SetProtocolTerminalEndReasonWithSource(
+					relaycommon.StreamEndReasonUpstreamFailed,
+					streamErr,
+					"responses_bridge_error",
+				)
+			}
+			return usage, nil
+		}
 		return nil, streamErr
 	}
 
-	usage := state.Usage()
-	if usage == nil || usage.TotalTokens == 0 {
-		usage = service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens())
-		state.SetUsage(usage)
-	}
-
-	if info.RelayFormat == types.RelayFormatClaude && info.ClaudeConvertInfo != nil {
-		info.ClaudeConvertInfo.Usage = usage
-	}
+	usage := responsesBridgeStreamUsage(c, info, state)
 	finalResults, err := relayconvert.FinalizeStreamResponse(c, info, state)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
@@ -339,4 +390,83 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		helper.Done(c)
 	}
 	return usage, nil
+}
+
+func responsesBridgeEventHasVisibleOutput(event *dto.ResponsesStreamResponse) bool {
+	if event == nil {
+		return false
+	}
+	if event.Type == "response.output_text.delta" && event.Delta != "" {
+		return true
+	}
+	if responsesBridgeOutputIsVisible(event.Item, event.OutputIndex != nil) {
+		return true
+	}
+	for i := range event.Output {
+		if responsesBridgeOutputIsVisible(&event.Output[i], false) {
+			return true
+		}
+	}
+	if event.Response != nil {
+		for i := range event.Response.Output {
+			if responsesBridgeOutputIsVisible(&event.Response.Output[i], false) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func responsesBridgeOutputIsVisible(output *dto.ResponsesOutput, hasOutputIndex bool) bool {
+	if output == nil {
+		return false
+	}
+	switch output.Type {
+	case "function_call", "custom_tool_call":
+		return strings.TrimSpace(output.Name) != "" &&
+			(hasOutputIndex || strings.TrimSpace(output.ID) != "" || strings.TrimSpace(output.CallId) != "")
+	case "message":
+		for _, content := range output.Content {
+			if content.Type == "output_text" && content.Text != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func responsesBridgeStreamUsage(c *gin.Context, info *relaycommon.RelayInfo, state *relayconvert.ResponseStreamState) *dto.Usage {
+	usage := state.Usage()
+	if usage == nil || usage.TotalTokens == 0 {
+		usage = service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+		state.SetUsage(usage)
+	}
+	if info.RelayFormat == types.RelayFormatClaude && info.ClaudeConvertInfo != nil {
+		info.ClaudeConvertInfo.Usage = usage
+	}
+	return usage
+}
+
+func writeResponsesBridgeStreamError(c *gin.Context, info *relaycommon.RelayInfo, streamErr *types.NewAPIError) error {
+	if info.RelayFormat == types.RelayFormatClaude {
+		claudeErr := streamErr.ToClaudeError()
+		claudeErr.Type = "api_error"
+		response := dto.ClaudeResponse{
+			Type:  "error",
+			Error: claudeErr,
+		}
+		data, err := common.Marshal(response)
+		if err != nil {
+			return err
+		}
+		return helper.ClaudeChunkData(c, response, string(data))
+	}
+
+	if err := helper.ObjectData(c, map[string]any{"error": streamErr.ToOpenAIError()}); err != nil {
+		return err
+	}
+	if info.RelayFormat == types.RelayFormatOpenAI {
+		helper.Done(c)
+	}
+	return nil
 }

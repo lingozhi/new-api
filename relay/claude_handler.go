@@ -30,6 +30,63 @@ func applyClaudeResponsesEffort(claudeRequest *dto.ClaudeRequest, openAIRequest 
 	}
 }
 
+func requiresClaudeResponsesCompatibility(info *relaycommon.RelayInfo, request *dto.ClaudeRequest) bool {
+	if info == nil || request == nil {
+		return false
+	}
+
+	model := strings.TrimSpace(info.OriginModelName)
+	if model == "" {
+		model = strings.TrimSpace(request.Model)
+	}
+	effort := strings.ToLower(strings.TrimSpace(request.GetEfforts()))
+	// Match the public request model, which survives provider model mapping in
+	// OriginModelName. The only repository alias is -openai-compact, and that is
+	// reserved for /v1/responses/compact rather than Claude Messages traffic.
+	return strings.EqualFold(model, "gpt-5.6-luna") &&
+		len(request.GetTools()) > 0 &&
+		effort != "" && effort != "none"
+}
+
+func shouldClaudeRequestUseResponses(info *relaycommon.RelayInfo, request *dto.ClaudeRequest) bool {
+	if info == nil || request == nil {
+		return false
+	}
+	if requiresClaudeResponsesCompatibility(info, request) {
+		return true
+	}
+
+	model := strings.TrimSpace(info.OriginModelName)
+	if model == "" {
+		model = strings.TrimSpace(request.Model)
+	}
+
+	channelID, channelType := 0, 0
+	if info.ChannelMeta != nil {
+		channelID = info.ChannelId
+		channelType = info.ChannelType
+	}
+	return service.ShouldChatCompletionsUseResponsesGlobal(channelID, channelType, model)
+}
+
+func shouldRouteClaudeRequestViaResponses(
+	info *relaycommon.RelayInfo,
+	request *dto.ClaudeRequest,
+	globalPassThrough bool,
+	channelPassThrough bool,
+) bool {
+	// This exact request shape is rejected by Luna's Chat Completions endpoint.
+	// Compatibility therefore outranks pass-through configuration; all other
+	// models preserve the existing operator-controlled routing behavior.
+	if requiresClaudeResponsesCompatibility(info, request) {
+		return true
+	}
+	if globalPassThrough || channelPassThrough {
+		return false
+	}
+	return shouldClaudeRequestUseResponses(info, request)
+}
+
 func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 
 	info.InitChannelMeta(c)
@@ -147,9 +204,12 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		}
 	}
 
-	if !model_setting.GetGlobalSettings().PassThroughRequestEnabled &&
-		!info.ChannelSetting.PassThroughBodyEnabled &&
-		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
+	if shouldRouteClaudeRequestViaResponses(
+		info,
+		request,
+		model_setting.GetGlobalSettings().PassThroughRequestEnabled,
+		info.ChannelSetting.PassThroughBodyEnabled,
+	) {
 		result, convErr := service.ConvertRequest(c, info, types.RelayFormatOpenAI, request)
 		if convErr != nil {
 			return types.NewError(convErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -161,6 +221,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		applyClaudeResponsesEffort(request, openAIRequest)
 
 		usage, newApiErr := chatCompletionsViaResponses(c, info, adaptor, openAIRequest)
+		service.ObserveStreamChannelQualityForRequest(c, info)
 		if newApiErr != nil {
 			return newApiErr
 		}
