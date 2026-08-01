@@ -100,6 +100,7 @@ describe('async image API samples', () => {
       baseUrl: 'https://api.opwan.ai',
       apiKeyEnv: 'OPWAN_API_KEY',
       modelName: 'gpt-image-2',
+      endpointPath: '/v1/images/generations',
       profile: guideProfile,
     })
 
