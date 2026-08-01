@@ -1,7 +1,9 @@
 package types
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -23,7 +25,11 @@ func TestProviderTaskPollingRetryErrorCarriesRetryAfterThroughNewAPIError(t *tes
 
 func TestSetMaskedProviderMessagePreservesPollingMetadataWithoutRawCause(t *testing.T) {
 	cause := errors.New("provider still generating with a sensitive credential")
-	apiErr := NewError(NewProviderTaskPollingRetryError(cause, 17*time.Second), ErrorCodeBadResponse)
+	apiErr := NewErrorWithStatusCode(
+		NewProviderTaskPollingRetryError(cause, 17*time.Second),
+		ErrorCodeBadResponse,
+		http.StatusAccepted,
+	)
 
 	apiErr.SetMaskedProviderMessage("provider still generating with ***")
 
@@ -34,6 +40,10 @@ func TestSetMaskedProviderMessagePreservesPollingMetadataWithoutRawCause(t *test
 	retryAfter, ok := ProviderTaskPollingRetryAfter(apiErr)
 	require.True(t, ok)
 	assert.Equal(t, 17*time.Second, retryAfter)
+	assert.Equal(t, "provider still generating with ***", apiErr.ToOpenAIError().Message)
+	encoded, err := json.Marshal(apiErr)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "sensitive credential")
 }
 
 func TestSetMaskedProviderMessagePreservesUnsafeResubmissionWithoutRawCause(t *testing.T) {
@@ -45,6 +55,19 @@ func TestSetMaskedProviderMessagePreservesUnsafeResubmissionWithoutRawCause(t *t
 	assert.Equal(t, "accepted provider failure with ***", apiErr.Error())
 	assert.ErrorIs(t, apiErr, ErrProviderTaskUnsafeToResubmit)
 	assert.NotErrorIs(t, apiErr, cause)
+}
+
+func TestSetMaskedProviderMessagePreservesPollingSentinelWithoutInventingDelay(t *testing.T) {
+	cause := errors.New("transient provider poll failure with a sensitive credential")
+	apiErr := NewError(errors.Join(ErrProviderTaskPollingRetryable, cause), ErrorCodeBadResponse)
+
+	apiErr.SetMaskedProviderMessage("transient provider poll failure with ***")
+
+	assert.Equal(t, "transient provider poll failure with ***", apiErr.Error())
+	assert.ErrorIs(t, apiErr, ErrProviderTaskPollingRetryable)
+	assert.NotErrorIs(t, apiErr, cause)
+	_, hasRetryAfter := ProviderTaskPollingRetryAfter(apiErr)
+	assert.False(t, hasRetryAfter)
 }
 
 func TestSetMessageInitializesMissingError(t *testing.T) {
