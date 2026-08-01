@@ -45,6 +45,10 @@ func TestResolveModel(t *testing.T) {
 		{name: "upscale fidelity", operation: "upscale", quality: "fidelity", scale: 4, want: ModelUpscaleFidelity4X},
 		{name: "upscale sharp", operation: "upscale", quality: "sharp", scale: 4, want: ModelUpscaleSharp4X},
 		{name: "subtitle removal", operation: "remove_subtitles", quality: "quality", want: ModelSubtitleRemove},
+		{name: "video upscale 2x", operation: "video_upscale", quality: "quality", scale: 2, want: ModelVideoUpscaleQuality2X},
+		{name: "video upscale 4x", operation: "video_upscale", quality: "quality", scale: 4, want: ModelVideoUpscaleQuality4X},
+		{name: "video background fast", operation: "remove_video_background", quality: "fast", want: ModelVideoBackgroundFast},
+		{name: "video background quality", operation: "remove_video_background", quality: "quality", want: ModelVideoBackgroundQuality},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -205,6 +209,16 @@ func TestTaskAdaptorValidatesDepthAndMediaRequests(t *testing.T) {
 			body:      `{"model":"background-remove-quality","image":"https://cdn.example.com/input.png","metadata":{"operation":"remove_background","quality":"fast"}}`,
 			wantError: true,
 		},
+		{
+			name:       "video upscale",
+			body:       `{"model":"video-upscale-quality-2x","image":"https://cdn.example.com/input.mp4","metadata":{"operation":"video_upscale","quality":"quality","scale":2,"format":"mp4"}}`,
+			wantAction: ActionMedia,
+		},
+		{
+			name:       "video background removal",
+			body:       `{"model":"video-background-remove-quality","image":"https://cdn.example.com/input.mp4","metadata":{"operation":"remove_video_background","quality":"quality","format":"webm"}}`,
+			wantAction: ActionMedia,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -356,6 +370,14 @@ func TestTaskAdaptorEstimatesMaximumDepthVideoDuration(t *testing.T) {
 	subtitleInfo := newTestRelayInfo("https://modal.example.com", "key", ActionMedia)
 	subtitleInfo.OriginModelName = ModelSubtitleRemove
 	assert.Equal(t, map[string]float64{"seconds": 600}, adaptor.EstimateBilling(c, subtitleInfo))
+
+	videoUpscaleInfo := newTestRelayInfo("https://modal.example.com", "key", ActionMedia)
+	videoUpscaleInfo.OriginModelName = ModelVideoUpscaleQuality2X
+	assert.Equal(t, map[string]float64{"seconds": 600}, adaptor.EstimateBilling(c, videoUpscaleInfo))
+
+	videoBackgroundInfo := newTestRelayInfo("https://modal.example.com", "key", ActionMedia)
+	videoBackgroundInfo.OriginModelName = ModelVideoBackgroundQuality
+	assert.Equal(t, map[string]float64{"seconds": 600}, adaptor.EstimateBilling(c, videoBackgroundInfo))
 }
 
 func TestTaskAdaptorReconcilesDepthVideoToActualDuration(t *testing.T) {
@@ -444,4 +466,25 @@ func TestTaskAdaptorReconcilesSubtitleRemovalToActualDuration(t *testing.T) {
 	})
 
 	assert.Equal(t, 40000, quota)
+}
+
+func TestTaskAdaptorReconcilesVideoUpscaleToActualDuration(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	task := &model.Task{
+		Action: ActionMedia,
+		Data: []byte(`{"id":"job_1","status":"completed","progress":100,"fps":24,"frames":73}`),
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice:      0.03,
+				GroupRatio:      1,
+				OriginModelName: ModelVideoUpscaleQuality2X,
+			},
+		},
+	}
+
+	quota := adaptor.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+	})
+
+	assert.Equal(t, 90000, quota)
 }
