@@ -260,15 +260,20 @@ func (s *ResponsesToChatStreamState) ensureToolForEvent(event *dto.ResponsesStre
 	if event == nil || event.Item == nil {
 		return nil
 	}
-	key := s.keyForEvent(event)
-	if key == "" {
-		key = fallbackToolKey(event.Item.ID, event.Item.CallId, event.OutputIndex)
+	tool := s.findToolForEvent(event)
+	key := ""
+	if tool != nil {
+		key = tool.Key
+	} else {
+		key = s.keyForEvent(event)
+		if key == "" {
+			key = fallbackToolKey(event.Item.ID, event.Item.CallId, event.OutputIndex)
+		}
+		if key == "" {
+			return nil
+		}
+		tool = s.toolByKey[key]
 	}
-	if key == "" {
-		return nil
-	}
-
-	tool := s.toolByKey[key]
 	if tool == nil {
 		tool = &responsesStreamTool{Key: key, Index: s.nextToolIndex}
 		s.nextToolIndex++
@@ -317,6 +322,16 @@ func (s *ResponsesToChatStreamState) findToolForEvent(event *dto.ResponsesStream
 		}
 	}
 	if event.Item != nil {
+		if itemID := strings.TrimSpace(event.Item.ID); itemID != "" {
+			if key := s.itemIDToKey[itemID]; key != "" {
+				return s.toolByKey[key]
+			}
+		}
+		if callID := strings.TrimSpace(event.Item.CallId); callID != "" {
+			if key := s.callIDToKey[callID]; key != "" {
+				return s.toolByKey[key]
+			}
+		}
 		if key := s.keyForEvent(event); key != "" {
 			return s.toolByKey[key]
 		}

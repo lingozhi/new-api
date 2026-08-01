@@ -1,6 +1,8 @@
 package oairesponses
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/dto"
@@ -279,6 +281,131 @@ func TestResponsesStreamEventToChatChunksUsesTerminalDoneOutput(t *testing.T) {
 	assert.Equal(t, `{"q":"x"}`, tool.Function.Arguments)
 	require.NotNil(t, chunks[3].Choices[0].FinishReason)
 	assert.Equal(t, "tool_calls", *chunks[3].Choices[0].FinishReason)
+}
+
+func TestResponsesStreamEventToChatChunksDoesNotReplayToolFromTerminalOutput(t *testing.T) {
+	state := newTestResponsesStreamState()
+	outputIndex := 0
+
+	var chunks []dto.ChatCompletionsStreamResponse
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventOutputItemAdded,
+		OutputIndex: &outputIndex,
+		Item: &dto.ResponsesOutput{
+			Type:   responsesOutputTypeFunctionCall,
+			ID:     "fc_1",
+			CallId: "call_1",
+			Name:   "Skill",
+		},
+	})...)
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventFunctionArgsDelta,
+		OutputIndex: &outputIndex,
+		ItemID:      "fc_1",
+		Delta:       `{"skill":"opone-canvas-agent:drama-director"}`,
+	})...)
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type: responsesEventCompleted,
+		Response: &dto.OpenAIResponsesResponse{
+			Status: []byte(`"completed"`),
+			Output: []dto.ResponsesOutput{
+				{
+					Type:      responsesOutputTypeFunctionCall,
+					ID:        "fc_1",
+					CallId:    "call_1",
+					Name:      "Skill",
+					Arguments: []byte(`{"skill":"opone-canvas-agent:drama-director"}`),
+				},
+			},
+		},
+	})...)
+
+	var toolNameChunks int
+	var arguments strings.Builder
+	for _, chunk := range chunks {
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		for _, toolCall := range chunk.Choices[0].Delta.ToolCalls {
+			if toolCall.Function.Name != "" {
+				toolNameChunks++
+			}
+			arguments.WriteString(toolCall.Function.Arguments)
+		}
+	}
+
+	assert.Equal(t, 1, toolNameChunks)
+	assert.Equal(t, `{"skill":"opone-canvas-agent:drama-director"}`, arguments.String())
+}
+
+func TestResponsesStreamEventToChatChunksPreservesDistinctParallelTools(t *testing.T) {
+	state := newTestResponsesStreamState()
+	var chunks []dto.ChatCompletionsStreamResponse
+	outputs := make([]dto.ResponsesOutput, 0, 2)
+	argumentsByIndex := []string{`{"view":"canvas"}`, `{"kind":"image"}`}
+
+	for index, name := range []string{"canvas_read", "asset_list"} {
+		itemID := fmt.Sprintf("fc_%d", index)
+		callID := fmt.Sprintf("call_%d", index)
+		chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+			Type:        responsesEventOutputItemAdded,
+			OutputIndex: &index,
+			Item: &dto.ResponsesOutput{
+				Type:   responsesOutputTypeFunctionCall,
+				ID:     itemID,
+				CallId: callID,
+				Name:   name,
+			},
+		})...)
+		outputs = append(outputs, dto.ResponsesOutput{
+			Type:      responsesOutputTypeFunctionCall,
+			ID:        itemID,
+			CallId:    callID,
+			Name:      name,
+			Arguments: []byte(argumentsByIndex[index]),
+		})
+	}
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type: responsesEventCompleted,
+		Response: &dto.OpenAIResponsesResponse{
+			Status: []byte(`"completed"`),
+			Output: outputs,
+		},
+	})...)
+
+	type observedTool struct {
+		id        string
+		name      string
+		arguments string
+	}
+	observedByIndex := make(map[int]observedTool, 2)
+	toolStarts := 0
+	for _, chunk := range chunks {
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		for _, toolCall := range chunk.Choices[0].Delta.ToolCalls {
+			require.NotNil(t, toolCall.Index)
+			observed := observedByIndex[*toolCall.Index]
+			if observed.id == "" {
+				observed.id = toolCall.ID
+			} else {
+				assert.Equal(t, observed.id, toolCall.ID)
+			}
+			if toolCall.Function.Name != "" {
+				toolStarts++
+				observed.name = toolCall.Function.Name
+			}
+			observed.arguments += toolCall.Function.Arguments
+			observedByIndex[*toolCall.Index] = observed
+		}
+	}
+
+	assert.Equal(t, 2, toolStarts)
+	assert.Equal(t, map[int]observedTool{
+		0: {id: "call_0", name: "canvas_read", arguments: `{"view":"canvas"}`},
+		1: {id: "call_1", name: "asset_list", arguments: `{"kind":"image"}`},
+	}, observedByIndex)
 }
 
 func TestFinalizeResponsesToChatStreamFlushesPendingDeltaOnlyArguments(t *testing.T) {
