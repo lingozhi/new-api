@@ -21,19 +21,30 @@ func TestProviderTaskPollingRetryErrorCarriesRetryAfterThroughNewAPIError(t *tes
 	assert.ErrorIs(t, apiErr, cause)
 }
 
-func TestSetMessagePreservesProviderTaskPollingMetadata(t *testing.T) {
+func TestSetMaskedProviderMessagePreservesPollingMetadataWithoutRawCause(t *testing.T) {
 	cause := errors.New("provider still generating with a sensitive credential")
 	apiErr := NewError(NewProviderTaskPollingRetryError(cause, 17*time.Second), ErrorCodeBadResponse)
 
-	apiErr.SetMessage("provider still generating with ***")
+	apiErr.SetMaskedProviderMessage("provider still generating with ***")
 
 	assert.Equal(t, "provider still generating with ***", apiErr.Error())
 	assert.NotContains(t, apiErr.Error(), "sensitive credential")
 	assert.ErrorIs(t, apiErr, ErrProviderTaskPollingRetryable)
-	assert.ErrorIs(t, apiErr, cause)
+	assert.NotErrorIs(t, apiErr, cause)
 	retryAfter, ok := ProviderTaskPollingRetryAfter(apiErr)
 	require.True(t, ok)
 	assert.Equal(t, 17*time.Second, retryAfter)
+}
+
+func TestSetMaskedProviderMessagePreservesUnsafeResubmissionWithoutRawCause(t *testing.T) {
+	cause := errors.New("accepted provider failure with a sensitive credential")
+	apiErr := NewError(NewProviderTaskUnsafeToResubmitError(cause), ErrorCodeBadResponse)
+
+	apiErr.SetMaskedProviderMessage("accepted provider failure with ***")
+
+	assert.Equal(t, "accepted provider failure with ***", apiErr.Error())
+	assert.ErrorIs(t, apiErr, ErrProviderTaskUnsafeToResubmit)
+	assert.NotErrorIs(t, apiErr, cause)
 }
 
 func TestSetMessageInitializesMissingError(t *testing.T) {
