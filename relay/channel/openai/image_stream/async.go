@@ -2998,6 +2998,7 @@ func switchRejectedAsyncImageChannel(ctx context.Context, task *model.Task, payl
 		if !compatibleAsyncImageFailoverChannel(failedChannel, candidate, task, payload) {
 			continue
 		}
+		targetProtocol, targetUpstreamPath, _ := asyncImageFailoverRoute(candidate, task, payload)
 
 		key, keyIndex, keyErr := candidate.GetNextEnabledKey()
 		if keyErr != nil {
@@ -3018,7 +3019,16 @@ func switchRejectedAsyncImageChannel(ctx context.Context, task *model.Task, payl
 		nextPayload.ExecutionDestinationHash = destinationHash
 		nextPayload.ExecutionDestinationStored = true
 		nextPayload.AttemptedChannelIDs = append(append([]int(nil), payload.AttemptedChannelIDs...), candidate.Id)
-		if nextPayload.PreparedRequest != nil {
+		nextPayload.ImageRoutingProtocol = targetProtocol
+		nextPayload.ImageRoutingUpstreamPath = targetUpstreamPath
+		if nextPayload.Executor == AsyncImageExecutorResponses && targetProtocol == dto.ImageRoutingProtocolImagesGenerations {
+			prepared, prepareErr := prepareOpenAIImageFailoverRequest(candidate, &nextPayload, destinationHash)
+			if prepareErr != nil {
+				return false, prepareErr
+			}
+			nextPayload.Executor = AsyncImageExecutorAdaptor
+			nextPayload.PreparedRequest = prepared
+		} else if nextPayload.PreparedRequest != nil {
 			prepared := *nextPayload.PreparedRequest
 			apiType, _ := common.ChannelType2APIType(candidate.Type)
 			prepared.APIType = apiType
@@ -3059,6 +3069,10 @@ func switchRejectedAsyncImageChannel(ctx context.Context, task *model.Task, payl
 		nextPrivate := task.PrivateData
 		nextPrivate.ChannelKeyHash = common.GenerateHMAC(key)
 		nextPrivate.ChannelMultiKeyIndex = keyIndex
+		if nextPrivate.BillingContext != nil && nextPrivate.BillingContext.ImageRequest != nil {
+			nextPrivate.BillingContext.ImageRequest.Protocol = targetProtocol
+			nextPrivate.BillingContext.ImageRequest.UpstreamPath = targetUpstreamPath
+		}
 		switched, switchErr := task.SwitchRejectedImageProviderChannel(candidate.Id, nextPrivate, storedCheckpoint, common.MaskSensitiveInfo(lastError))
 		if switchErr != nil || !switched {
 			return switched, switchErr
@@ -3092,16 +3106,90 @@ func compatibleAsyncImageFailoverChannel(failed, candidate *model.Channel, task 
 			return false
 		}
 	}
+	protocol, upstreamPath, ok := asyncImageFailoverRoute(candidate, task, payload)
+	if !ok {
+		return false
+	}
+	if protocol == payload.ImageRoutingProtocol && upstreamPath == payload.ImageRoutingUpstreamPath {
+		return true
+	}
+	return payload.Executor == AsyncImageExecutorResponses &&
+		payload.RelayMode == relayconstant.RelayModeImagesGenerations &&
+		protocol == dto.ImageRoutingProtocolImagesGenerations &&
+		candidate.Type == constant.ChannelTypeOpenAI &&
+		len(payload.InputObjectKeys) == 0 && payload.MaskObjectKey == "" &&
+		len(payload.RequestExtra) == 0 &&
+		len(candidate.GetParamOverride()) == 0 && len(candidate.GetHeaderOverride()) == 0 &&
+		(candidate.OpenAIOrganization == nil || strings.TrimSpace(*candidate.OpenAIOrganization) == "")
+}
+
+func asyncImageFailoverRoute(candidate *model.Channel, task *model.Task, payload *asyncImageTaskPayload) (dto.ImageRoutingProtocol, string, bool) {
 	settings := candidate.GetOtherSettings()
 	if settings.ImageRouting == nil {
-		return payload.ImageRoutingProtocol == "" && payload.ImageRoutingUpstreamPath == ""
+		return payload.ImageRoutingProtocol, payload.ImageRoutingUpstreamPath, payload.ImageRoutingProtocol == "" && payload.ImageRoutingUpstreamPath == ""
 	}
 	profile, ok := settings.ImageRouting.ProfileForModel(task.Properties.OriginModelName)
 	if !ok || profile == nil || payload.ImageRequirement == nil || !settings.ImageRouting.Supports(task.Properties.OriginModelName, *payload.ImageRequirement) {
-		return false
+		return "", "", false
 	}
 	protocol, upstreamPath, ok := profile.RouteForOperation(payload.ImageRequirement.Operation)
-	return ok && protocol == payload.ImageRoutingProtocol && upstreamPath == payload.ImageRoutingUpstreamPath
+	return protocol, upstreamPath, ok
+}
+
+func prepareOpenAIImageFailoverRequest(candidate *model.Channel, payload *asyncImageTaskPayload, destinationHash string) (*PreparedAsyncImageRequest, error) {
+	if candidate == nil || payload == nil || payload.Request == nil {
+		return nil, errors.New("image failover request state is required")
+	}
+	providerRequest := *payload.Request
+	providerRequest.Async = nil
+	providerRequest.WebhookURL = ""
+	providerRequest.WebhookSecret = ""
+	providerRequest.Stream = nil
+	providerRequest.ResponseFormat = "url"
+	body, err := marshalAsyncImageBillingSnapshotRequest(&providerRequest)
+	if err != nil {
+		return nil, err
+	}
+	body, err = SanitizeAsyncImageRequestBody(body)
+	if err != nil {
+		return nil, err
+	}
+	overrideHash, err := AsyncImageExecutionOverrideFingerprint(candidate.GetParamOverride(), candidate.GetHeaderOverride())
+	if err != nil {
+		return nil, err
+	}
+	channelSetting := candidate.GetSetting()
+	channelSetting.Proxy = ""
+	channelSetting.SystemPrompt = ""
+	channelSetting.SystemPromptOverride = false
+	channelOtherSettings := candidate.GetOtherSettings()
+	channelOtherSettings.AdvancedCustom = nil
+	outputCount := uint(1)
+	if payload.ImageRequirement != nil && payload.ImageRequirement.N > 0 {
+		outputCount = payload.ImageRequirement.N
+	}
+	apiType, _ := common.ChannelType2APIType(candidate.Type)
+	return &PreparedAsyncImageRequest{
+		Body:                       body,
+		OutputCount:                outputCount,
+		RelayMode:                  payload.RelayMode,
+		ContentType:                "application/json",
+		RequestURLPath:             asyncImageHealthPath(*payload),
+		ChannelBaseURL:             candidate.GetBaseURL(),
+		ExecutionDestinationHash:   destinationHash,
+		ExecutionDestinationStored: true,
+		APIType:                    apiType,
+		ChannelType:                candidate.Type,
+		ChannelCreateTime:          candidate.CreatedTime,
+		ConfigurationStored:        true,
+		APIVersion:                 candidate.Other,
+		ExecutionOverrideHash:      overrideHash,
+		ExecutionOverrideStored:    true,
+		ChannelSetting:             &channelSetting,
+		ChannelOtherSettings:       &channelOtherSettings,
+		ImageRoutingProtocol:       payload.ImageRoutingProtocol,
+		ImageRoutingUpstreamPath:   payload.ImageRoutingUpstreamPath,
+	}, nil
 }
 
 func imageTaskChannelKey(channel *model.Channel, private model.TaskPrivateData) (string, error) {
