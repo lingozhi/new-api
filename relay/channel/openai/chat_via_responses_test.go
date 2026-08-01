@@ -87,6 +87,194 @@ func TestOaiResponsesToChatStreamHandlerConvertsSSEOrderAndUsage(t *testing.T) {
 	)
 }
 
+func TestOaiResponsesToChatStreamHandlerRejectsMissingTerminalBeforeStreaming(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "EOF"},
+		{name: "bare done", body: "data: [DONE]\n\n"},
+		{name: "malformed event", body: "data: {not-json}\n\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, recorder, resp, info := newResponsesChatTestContext(t, tt.body, true)
+			info.RelayFormat = types.RelayFormatClaude
+
+			usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+			require.Nil(t, usage)
+			require.NotNil(t, apiErr)
+			require.Equal(t, types.ErrorCodeBadResponse, apiErr.GetErrorCode())
+			require.Empty(t, recorder.Body.String())
+		})
+	}
+}
+
+func TestOaiResponsesToChatStreamHandlerEmitsClaudeErrorWhenTerminalIsMissingAfterStart(t *testing.T) {
+	body := `data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}` + "\n\n"
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	got := recorder.Body.String()
+	require.Contains(t, got, "event: message_start")
+	require.Contains(t, got, "event: error")
+	require.Contains(t, got, `"type":"error"`)
+	require.NotContains(t, got, "event: message_stop")
+}
+
+func TestOaiResponsesToChatStreamHandlerEmitsClaudeErrorOnParseInterruptionAfterStart(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {not-json}`,
+		``,
+	}, "\n\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	got := recorder.Body.String()
+	require.Contains(t, got, "event: message_start")
+	require.Contains(t, got, "event: error")
+	require.NotContains(t, got, "event: message_stop")
+}
+
+func TestOaiResponsesToChatStreamHandlerRejectsEmptyIncompleteAsClaudeStreamError(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {"type":"response.incomplete","response":{"id":"resp_1","model":"gpt-test","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}`,
+		``,
+	}, "\n\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	got := recorder.Body.String()
+	require.Contains(t, got, "event: message_start")
+	require.Contains(t, got, "event: error")
+	require.NotContains(t, got, "event: message_stop")
+}
+
+func TestOaiResponsesToChatStreamHandlerRejectsReasoningOnlyCompletedAsClaudeStreamError(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {"type":"response.reasoning_summary_text.delta","delta":"internal reasoning only"}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}`,
+		``,
+	}, "\n\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	got := recorder.Body.String()
+	require.Contains(t, got, "event: content_block_start")
+	require.Contains(t, got, `"type":"thinking"`)
+	require.Contains(t, got, "event: error")
+	require.NotContains(t, got, "event: message_stop")
+}
+
+func TestOaiResponsesToChatStreamHandlerRejectsMalformedToolOnlyCompletedAsClaudeStreamError(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","output":[{"type":"function_call","arguments":"{}"}]}}`,
+		``,
+	}, "\n\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	got := recorder.Body.String()
+	require.Contains(t, got, "event: error")
+	require.NotContains(t, got, "event: message_stop")
+}
+
+func TestOaiResponsesToChatStreamHandlerAllowsIncompleteWithToolCall(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {"type":"response.incomplete","response":{"id":"resp_1","model":"gpt-test","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"canvas_read","arguments":"{}"}],"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}`,
+		``,
+	}, "\n\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	got := recorder.Body.String()
+	require.Contains(t, got, "event: content_block_start")
+	require.Contains(t, got, `"name":"canvas_read"`)
+	require.Contains(t, got, "event: message_stop")
+	require.NotContains(t, got, "event: error")
+}
+
+func TestOaiResponsesToChatStreamHandlerCompletesClaudeStreamWithoutUpstreamUsage(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {"type":"response.output_text.delta","delta":"hello"}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed"}}`,
+		``,
+	}, "\n\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	got := recorder.Body.String()
+	require.Contains(t, got, `"type":"text_delta","text":"hello"`)
+	require.Contains(t, got, "event: message_delta")
+	require.Contains(t, got, "event: message_stop")
+	require.NotContains(t, got, "event: error")
+	messageDelta := got[strings.Index(got, "event: message_delta"):]
+	require.Regexp(t, `"output_tokens":[1-9][0-9]*`, messageDelta)
+}
+
+func TestOaiResponsesToChatStreamHandlerEmitsClaudeErrorOnTimeoutWithoutTerminal(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 1
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close() })
+	c, recorder, resp, info := newResponsesChatTestContext(t, "", true)
+	resp.Body = reader
+	info.RelayFormat = types.RelayFormatClaude
+	written := make(chan error, 1)
+	go func() {
+		_, err := io.WriteString(writer, `data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`+"\n\n")
+		written <- err
+	}()
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.NoError(t, <-written)
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	got := recorder.Body.String()
+	require.Contains(t, got, "event: message_start")
+	require.Contains(t, got, "event: error")
+	require.NotContains(t, got, "event: message_stop")
+}
+
 func TestOaiResponsesToChatBufferedStreamHandlerReturnsJSONFromSSE(t *testing.T) {
 	oldMode := gin.Mode()
 	gin.SetMode(gin.TestMode)
