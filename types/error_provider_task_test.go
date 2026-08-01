@@ -70,6 +70,42 @@ func TestSetMaskedProviderMessagePreservesPollingSentinelWithoutInventingDelay(t
 	assert.False(t, hasRetryAfter)
 }
 
+func TestSetMaskedProviderMessageSanitizesTypedRelayErrors(t *testing.T) {
+	const rawSecret = "sensitive-provider-credential"
+	tests := []struct {
+		name       string
+		apiErr     *NewAPIError
+		clientText func(*NewAPIError) string
+	}{
+		{
+			name: "openai",
+			apiErr: WithOpenAIError(OpenAIError{
+				Message:  "provider failed with " + rawSecret,
+				Type:     "upstream_error",
+				Code:     "bad_response",
+				Metadata: json.RawMessage(`{"credential":"` + rawSecret + `"}`),
+			}, http.StatusBadGateway),
+			clientText: func(apiErr *NewAPIError) string { return apiErr.ToOpenAIError().Message },
+		},
+		{
+			name:       "claude",
+			apiErr:     WithClaudeError(ClaudeError{Message: "provider failed with " + rawSecret, Type: "upstream_error"}, http.StatusBadGateway),
+			clientText: func(apiErr *NewAPIError) string { return apiErr.ToClaudeError().Message },
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			test.apiErr.SetMaskedProviderMessage("provider failed with ***")
+
+			assert.Equal(t, "provider failed with ***", test.clientText(test.apiErr))
+			encoded, err := json.Marshal(test.apiErr)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded), rawSecret)
+		})
+	}
+}
+
 func TestSetMessageInitializesMissingError(t *testing.T) {
 	apiErr := &NewAPIError{}
 

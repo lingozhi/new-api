@@ -56,6 +56,28 @@ type ProviderTaskPollingRetryError struct {
 	retryAfter time.Duration
 }
 
+type providerTaskPollingMarkerError struct {
+	cause error
+}
+
+func (e *providerTaskPollingMarkerError) Error() string {
+	if e == nil || e.cause == nil {
+		return ErrProviderTaskPollingRetryable.Error()
+	}
+	return e.cause.Error()
+}
+
+func (e *providerTaskPollingMarkerError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func (e *providerTaskPollingMarkerError) Is(target error) bool {
+	return target == ErrProviderTaskPollingRetryable
+}
+
 func NewProviderTaskPollingRetryError(cause error, retryAfter time.Duration) error {
 	if retryAfter < 0 {
 		retryAfter = 0
@@ -280,17 +302,31 @@ func (e *NewAPIError) SetMessage(message string) {
 // provider cause is intentionally discarded so masked credentials cannot remain
 // reachable through errors.Unwrap.
 func (e *NewAPIError) SetMaskedProviderMessage(message string) {
-	retryAfter, pollingRetry := ProviderTaskPollingRetryAfter(e)
+	pollingRetry := errors.Is(e, ErrProviderTaskPollingRetryable)
+	retryAfter, hasRetryAfter := ProviderTaskPollingRetryAfter(e)
 	unsafeToResubmit := IsProviderTaskUnsafeToResubmit(e)
 
 	var masked error = errors.New(message)
 	if pollingRetry {
-		masked = NewProviderTaskPollingRetryError(masked, retryAfter)
+		if hasRetryAfter {
+			masked = NewProviderTaskPollingRetryError(masked, retryAfter)
+		} else {
+			masked = &providerTaskPollingMarkerError{cause: masked}
+		}
 	}
 	if unsafeToResubmit {
 		masked = NewProviderTaskUnsafeToResubmitError(masked)
 	}
 	e.Err = masked
+	e.Metadata = nil
+	switch e.errorType {
+	case ErrorTypeOpenAIError:
+		e.RelayError = OpenAIError{Message: message, Type: string(e.errorCode), Code: e.errorCode}
+	case ErrorTypeClaudeError:
+		e.RelayError = ClaudeError{Message: message, Type: string(e.errorCode)}
+	default:
+		e.RelayError = nil
+	}
 }
 
 func (e *NewAPIError) ToOpenAIError() OpenAIError {
