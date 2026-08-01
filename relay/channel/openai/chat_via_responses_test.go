@@ -220,6 +220,7 @@ func TestOaiResponsesToChatStreamHandlerEmitsClaudeErrorWhenTerminalIsMissingAft
 	require.Nil(t, apiErr)
 	require.NotNil(t, usage)
 	require.Zero(t, usage.TotalTokens)
+	require.True(t, info.UpstreamEmptyResponse)
 	got := recorder.Body.String()
 	require.Contains(t, got, "event: message_start")
 	require.Contains(t, got, "event: error")
@@ -241,6 +242,7 @@ func TestOaiResponsesToChatStreamHandlerRejectsWhitespaceOnlyCompletedForOpenAI(
 	require.Nil(t, apiErr)
 	require.NotNil(t, usage)
 	require.Zero(t, usage.TotalTokens)
+	require.True(t, info.UpstreamEmptyResponse)
 	got := recorder.Body.String()
 	require.Contains(t, got, `"error"`)
 	require.NotContains(t, got, `"finish_reason":"stop"`)
@@ -280,8 +282,30 @@ func TestOaiResponsesToChatStreamHandlerEmitsClaudeErrorOnParseInterruptionAfter
 
 	require.Nil(t, apiErr)
 	require.NotNil(t, usage)
+	require.True(t, info.UpstreamEmptyResponse)
 	got := recorder.Body.String()
 	require.Contains(t, got, "event: message_start")
+	require.Contains(t, got, "event: error")
+	require.NotContains(t, got, "event: message_stop")
+}
+
+func TestOaiResponsesToChatStreamHandlerKeepsVisiblePartialOutputBillableOnInterruption(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {"type":"response.output_text.delta","delta":"partial answer"}`,
+		`data: {not-json}`,
+		``,
+	}, "\n\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.False(t, info.UpstreamEmptyResponse)
+	got := recorder.Body.String()
+	require.Contains(t, got, `"type":"text_delta","text":"partial answer"`)
 	require.Contains(t, got, "event: error")
 	require.NotContains(t, got, "event: message_stop")
 }

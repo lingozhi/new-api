@@ -375,6 +375,12 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	}
 	if streamErr != nil {
 		if c.Writer.Written() {
+			if !seenVisibleOutput {
+				// The HTTP stream was already committed, so return a zero usage to
+				// finish the handler while carrying the existing explicit empty-
+				// response contract into settlement and channel-health accounting.
+				info.UpstreamEmptyResponse = true
+			}
 			usage := responsesBridgeNonBillableUsage(info)
 			if seenVisibleOutput {
 				usage = responsesBridgeStreamUsage(c, info, state)

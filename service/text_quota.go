@@ -347,6 +347,16 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 }
 
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
+	if relayInfo != nil && relayInfo.UpstreamEmptyResponse {
+		// The bridge has already emitted an error terminal to the client. Settle
+		// at zero so fixed-price, tiered, and tool-call pricing cannot charge for
+		// output that was never delivered, while still refunding any pre-consume.
+		if err := SettleBilling(ctx, relayInfo, 0); err != nil {
+			logger.LogError(ctx, "error settling non-billable response: "+err.Error())
+		}
+		return
+	}
+
 	originUsage := usage
 	billingUsage := effectiveBillingUsage(usage)
 	if usage == nil {
