@@ -55,8 +55,13 @@ type GeneralOpenAIRequest struct {
 	ParallelTooCalls    *bool             `json:"parallel_tool_calls,omitempty"`
 	Tools               []ToolCallRequest `json:"tools,omitempty"`
 	ToolChoice          any               `json:"tool_choice,omitempty"`
-	FunctionCall        json.RawMessage   `json:"function_call,omitempty"`
-	User                json.RawMessage   `json:"user,omitempty"`
+	// Responses-only fields are restored after the relay's Chat JSON override
+	// round-trip and never leak into a Chat Completions upstream payload.
+	ResponsesTools        []json.RawMessage `json:"-"`
+	ResponsesToolChoice   json.RawMessage   `json:"-"`
+	ResponsesMaxToolCalls *uint             `json:"-"`
+	FunctionCall          json.RawMessage   `json:"function_call,omitempty"`
+	User                  json.RawMessage   `json:"user,omitempty"`
 	// ServiceTier specifies upstream service level and may affect billing.
 	// This field is filtered by default and can be enabled via channel setting allow_service_tier.
 	ServiceTier json.RawMessage `json:"service_tier,omitempty"`

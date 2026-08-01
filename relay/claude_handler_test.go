@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -49,6 +50,210 @@ func TestApplyClaudeResponsesEffortKeepsExistingValueWhenMissing(t *testing.T) {
 	assert.Equal(t, "high", openAIRequest.ReasoningEffort)
 }
 
+func TestClaudeLunaResponsesCompatibilityPreservesRequestControls(t *testing.T) {
+	maxTokens := uint(32000)
+	stream := true
+	temperature := 0.2
+	topP := 0.8
+	claudeRequest := &dto.ClaudeRequest{
+		Model:       "gpt-5.6-luna",
+		System:      "You are the canvas agent.",
+		Messages:    []dto.ClaudeMessage{{Role: "user", Content: "Build a scene."}},
+		MaxTokens:   &maxTokens,
+		Stream:      &stream,
+		Temperature: &temperature,
+		TopP:        &topP,
+		Tools: []any{
+			dto.Tool{
+				Name:        "canvas_read",
+				Description: "Read the current canvas",
+				InputSchema: map[string]any{
+					"type":       "object",
+					"properties": map[string]any{},
+				},
+			},
+			dto.ClaudeWebSearchTool{
+				Type:    "web_search_20250305",
+				Name:    "web_search",
+				MaxUses: 3,
+				UserLocation: &dto.ClaudeWebSearchUserLocation{
+					Type:     "approximate",
+					Timezone: "Asia/Singapore",
+					Country:  "SG",
+					City:     "Singapore",
+				},
+			},
+		},
+		ToolChoice: dto.ClaudeToolChoice{
+			Type:                   "tool",
+			Name:                   "canvas_read",
+			DisableParallelToolUse: true,
+		},
+		Metadata:     json.RawMessage(`{"user_id":"canvas-agent"}`),
+		OutputConfig: json.RawMessage(`{"effort":"max"}`),
+	}
+
+	chatRequest, err := service.ClaudeToOpenAIResponsesRequest(*claudeRequest, &relaycommon.RelayInfo{})
+	require.NoError(t, err)
+	applyClaudeResponsesEffort(claudeRequest, chatRequest)
+	chatJSON, err := common.Marshal(chatRequest)
+	require.NoError(t, err)
+	assert.NotContains(t, string(chatJSON), "web_search")
+	assert.NotContains(t, string(chatJSON), "max_tool_calls")
+	chatJSON, err = materializeResponsesOnlyRequestFields(chatJSON, chatRequest)
+	require.NoError(t, err)
+	chatJSON, err = relaycommon.RemoveDisabledFields(chatJSON, dto.ChannelOtherSettings{}, false)
+	require.NoError(t, err)
+	assert.Contains(t, string(chatJSON), "web_search")
+	assert.Contains(t, string(chatJSON), "max_tool_calls")
+	roundTrippedChatRequest, err := parseChatRequestForResponses(chatJSON)
+	require.NoError(t, err)
+
+	responsesResult, err := service.ConvertRequestVia(
+		nil,
+		&relaycommon.RelayInfo{},
+		roundTrippedChatRequest,
+		types.RelayFormatOpenAI,
+		types.RelayFormatOpenAIResponses,
+	)
+	require.NoError(t, err)
+	responsesRequest, ok := responsesResult.Value.(*dto.OpenAIResponsesRequest)
+	require.True(t, ok)
+
+	assert.Equal(t, "gpt-5.6-luna", responsesRequest.Model)
+	require.NotNil(t, responsesRequest.MaxOutputTokens)
+	require.NotNil(t, responsesRequest.Stream)
+	require.NotNil(t, responsesRequest.Temperature)
+	require.NotNil(t, responsesRequest.TopP)
+	assert.Equal(t, maxTokens, *responsesRequest.MaxOutputTokens)
+	assert.Equal(t, stream, *responsesRequest.Stream)
+	assert.Equal(t, temperature, *responsesRequest.Temperature)
+	assert.Equal(t, topP, *responsesRequest.TopP)
+	assert.JSONEq(t, `"You are the canvas agent."`, string(responsesRequest.Instructions))
+	assert.JSONEq(t, `[{"role":"user","content":"Build a scene."}]`, string(responsesRequest.Input))
+	assert.JSONEq(t, `[{
+		"type":"function",
+		"name":"canvas_read",
+		"description":"Read the current canvas",
+		"parameters":{"type":"object","properties":{}}
+	},{
+		"type":"web_search",
+		"user_location":{
+			"type":"approximate",
+			"timezone":"Asia/Singapore",
+			"country":"SG",
+			"city":"Singapore"
+		}
+	}]`, string(responsesRequest.Tools))
+	require.NotNil(t, responsesRequest.MaxToolCalls)
+	assert.Equal(t, uint(3), *responsesRequest.MaxToolCalls)
+	assert.JSONEq(t, `{"type":"function","name":"canvas_read"}`, string(responsesRequest.ToolChoice))
+	assert.JSONEq(t, `false`, string(responsesRequest.ParallelToolCalls))
+	assert.JSONEq(t, `{"user_id":"canvas-agent"}`, string(responsesRequest.Metadata))
+	require.NotNil(t, responsesRequest.Reasoning)
+	assert.Equal(t, "max", responsesRequest.Reasoning.Effort)
+}
+
+func TestClaudeLunaResponsesCompatibilityRejectsMalformedTools(t *testing.T) {
+	_, err := service.ConvertRequest(
+		nil,
+		&relaycommon.RelayInfo{},
+		types.RelayFormatOpenAI,
+		&dto.ClaudeRequest{
+			Model: "gpt-5.6-luna",
+			Tools: make(chan int),
+		},
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tools")
+}
+
+func TestClaudeLunaResponsesCompatibilityPreservesNativeWebSearchChoice(t *testing.T) {
+	chatRequest, err := service.ClaudeToOpenAIResponsesRequest(
+		dto.ClaudeRequest{
+			Model: "gpt-5.6-luna",
+			Tools: []any{dto.ClaudeWebSearchTool{
+				Type: "web_search_20250305",
+				Name: "web_search",
+			}},
+			ToolChoice: dto.ClaudeToolChoice{
+				Type: "tool",
+				Name: "web_search",
+			},
+		},
+		&relaycommon.RelayInfo{},
+	)
+	require.NoError(t, err)
+	assert.Nil(t, chatRequest.ToolChoice)
+	assert.JSONEq(t, `{"type":"web_search"}`, string(chatRequest.ResponsesToolChoice))
+}
+
+func TestClaudeLunaResponsesCompatibilityHonorsToolDisableOverride(t *testing.T) {
+	chatRequest, err := service.ClaudeToOpenAIResponsesRequest(
+		dto.ClaudeRequest{
+			Model: "gpt-5.6-luna",
+			Tools: []any{dto.ClaudeWebSearchTool{
+				Type:    "web_search_20250305",
+				Name:    "web_search",
+				MaxUses: 3,
+			}},
+			ToolChoice: dto.ClaudeToolChoice{Type: "tool", Name: "web_search"},
+		},
+		&relaycommon.RelayInfo{},
+	)
+	require.NoError(t, err)
+	chatJSON, err := common.Marshal(chatRequest)
+	require.NoError(t, err)
+	chatJSON, err = materializeResponsesOnlyRequestFields(chatJSON, chatRequest)
+	require.NoError(t, err)
+	chatJSON, err = relaycommon.ApplyParamOverride(chatJSON, map[string]any{
+		"tools":       []any{},
+		"tool_choice": "none",
+	}, nil)
+	require.NoError(t, err)
+	overridden, err := parseChatRequestForResponses(chatJSON)
+	require.NoError(t, err)
+	assert.Empty(t, overridden.ResponsesTools)
+	assert.Empty(t, overridden.ResponsesToolChoice)
+	assert.Equal(t, "none", overridden.ToolChoice)
+}
+
+func TestClaudeChatCompatibilityRejectsServerWebSearch(t *testing.T) {
+	_, err := service.ConvertRequest(
+		nil,
+		&relaycommon.RelayInfo{},
+		types.RelayFormatOpenAI,
+		&dto.ClaudeRequest{
+			Model: "other-openai-chat-model",
+			Tools: []any{dto.ClaudeWebSearchTool{
+				Type: "web_search_20250305",
+				Name: "web_search",
+			}},
+		},
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires an OpenAI Responses route")
+}
+
+func TestClaudeLunaResponsesCompatibilityRejectsUnknownServerTool(t *testing.T) {
+	_, err := service.ConvertRequest(
+		nil,
+		&relaycommon.RelayInfo{},
+		types.RelayFormatOpenAI,
+		&dto.ClaudeRequest{
+			Model: "gpt-5.6-luna",
+			Tools: []any{map[string]any{
+				"type": "computer_20250124",
+				"name": "computer",
+			}},
+		},
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported Claude server tool type")
+}
+
 func TestShouldClaudeRequestUseResponsesForcesLunaToolReasoningWhenPolicyDisabled(t *testing.T) {
 	settings := model_setting.GetGlobalSettings()
 	originalPolicy := settings.ChatCompletionsToResponsesPolicy
@@ -68,6 +273,30 @@ func TestShouldClaudeRequestUseResponsesForcesLunaToolReasoningWhenPolicyDisable
 	}
 
 	assert.True(t, shouldClaudeRequestUseResponses(info, request))
+}
+
+func TestShouldClaudeRequestUseResponsesForcesLunaNativeWebSearchWithoutEffort(t *testing.T) {
+	settings := model_setting.GetGlobalSettings()
+	originalPolicy := settings.ChatCompletionsToResponsesPolicy
+	settings.ChatCompletionsToResponsesPolicy = model_setting.ChatCompletionsToResponsesPolicy{Enabled: false}
+	t.Cleanup(func() {
+		settings.ChatCompletionsToResponsesPolicy = originalPolicy
+	})
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.6-luna",
+		ChannelMeta:     &relaycommon.ChannelMeta{},
+	}
+	request := &dto.ClaudeRequest{
+		Model: "provider-luna-upstream-alias",
+		Tools: []any{dto.ClaudeWebSearchTool{
+			Type: "web_search_20250305",
+			Name: "web_search",
+		}},
+	}
+
+	assert.True(t, shouldClaudeRequestUseResponses(info, request))
+	assert.True(t, shouldRouteClaudeRequestViaResponses(info, request, true, true))
 }
 
 func TestShouldClaudeRequestUseResponsesDoesNotForceOtherRequests(t *testing.T) {

@@ -16,6 +16,10 @@ func ClaudeMessagesRequestToOpenAIChat(claudeRequest dto.ClaudeRequest, info *re
 	return claudemessages.ClaudeMessagesRequestToOpenAIChat(claudeRequest, info)
 }
 
+func ClaudeMessagesRequestToOpenAIResponsesChat(claudeRequest dto.ClaudeRequest, info *relaycommon.RelayInfo) (*dto.GeneralOpenAIRequest, error) {
+	return claudemessages.ClaudeMessagesRequestToOpenAIResponsesChat(claudeRequest, info)
+}
+
 func OpenAIChatRequestToClaudeMessages(c *gin.Context, textRequest dto.GeneralOpenAIRequest) (*dto.ClaudeRequest, error) {
 	return oaichat.OpenAIChatRequestToClaudeMessages(c, textRequest)
 }

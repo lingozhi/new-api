@@ -45,7 +45,27 @@ func requiresClaudeResponsesCompatibility(info *relaycommon.RelayInfo, request *
 	// reserved for /v1/responses/compact rather than Claude Messages traffic.
 	return strings.EqualFold(model, "gpt-5.6-luna") &&
 		len(request.GetTools()) > 0 &&
-		effort != "" && effort != "none"
+		((effort != "" && effort != "none") || hasClaudeResponsesNativeTool(request.Tools))
+}
+
+func hasClaudeResponsesNativeTool(tools any) bool {
+	encoded, err := common.Marshal(tools)
+	if err != nil {
+		return false
+	}
+	var rawTools []json.RawMessage
+	if err := common.Unmarshal(encoded, &rawTools); err != nil {
+		return false
+	}
+	for _, rawTool := range rawTools {
+		var identity struct {
+			Type string `json:"type"`
+		}
+		if common.Unmarshal(rawTool, &identity) == nil && identity.Type == "web_search_20250305" {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldClaudeRequestUseResponses(info *relaycommon.RelayInfo, request *dto.ClaudeRequest) bool {
@@ -210,13 +230,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		model_setting.GetGlobalSettings().PassThroughRequestEnabled,
 		info.ChannelSetting.PassThroughBodyEnabled,
 	) {
-		result, convErr := service.ConvertRequest(c, info, types.RelayFormatOpenAI, request)
+		openAIRequest, convErr := service.ClaudeToOpenAIResponsesRequest(*request, info)
 		if convErr != nil {
 			return types.NewError(convErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-		openAIRequest, ok := result.Value.(*dto.GeneralOpenAIRequest)
-		if !ok {
-			return types.NewError(fmt.Errorf("expected OpenAI chat completions request, got %T", result.Value), types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
 		applyClaudeResponsesEffort(request, openAIRequest)
 

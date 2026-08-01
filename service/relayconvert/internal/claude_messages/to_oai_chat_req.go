@@ -1,6 +1,7 @@
 package claudemessages
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -25,9 +26,18 @@ type openRouterRequestReasoning struct {
 }
 
 func ClaudeMessagesRequestToOpenAIChat(claudeRequest dto.ClaudeRequest, info *relaycommon.RelayInfo) (*dto.GeneralOpenAIRequest, error) {
+	return claudeMessagesRequestToOpenAIChat(claudeRequest, info, false)
+}
+
+func ClaudeMessagesRequestToOpenAIResponsesChat(claudeRequest dto.ClaudeRequest, info *relaycommon.RelayInfo) (*dto.GeneralOpenAIRequest, error) {
+	return claudeMessagesRequestToOpenAIChat(claudeRequest, info, true)
+}
+
+func claudeMessagesRequestToOpenAIChat(claudeRequest dto.ClaudeRequest, info *relaycommon.RelayInfo, allowResponsesTools bool) (*dto.GeneralOpenAIRequest, error) {
 	openAIRequest := dto.GeneralOpenAIRequest{
 		Model:       claudeRequest.Model,
 		Temperature: claudeRequest.Temperature,
+		Metadata:    claudeRequest.Metadata,
 	}
 	if claudeRequest.MaxTokens != nil {
 		openAIRequest.MaxTokens = common.GetPointer(*claudeRequest.MaxTokens)
@@ -80,20 +90,54 @@ func ClaudeMessagesRequestToOpenAIChat(claudeRequest dto.ClaudeRequest, info *re
 		openAIRequest.Stop = claudeRequest.StopSequences
 	}
 
-	tools, _ := common.Any2Type[[]dto.Tool](claudeRequest.Tools)
-	openAITools := make([]dto.ToolCallRequest, 0)
-	for _, claudeTool := range tools {
-		openAITool := dto.ToolCallRequest{
-			Type: "function",
-			Function: dto.FunctionRequest{
-				Name:        claudeTool.Name,
-				Description: claudeTool.Description,
-				Parameters:  claudeTool.InputSchema,
-			},
-		}
-		openAITools = append(openAITools, openAITool)
+	openAITools, responsesTools, nativeToolTypes, maxToolCalls, err := convertClaudeTools(claudeRequest.Tools, allowResponsesTools)
+	if err != nil {
+		return nil, err
 	}
 	openAIRequest.Tools = openAITools
+	openAIRequest.ResponsesTools = responsesTools
+	openAIRequest.ResponsesMaxToolCalls = maxToolCalls
+
+	if claudeRequest.ToolChoice != nil {
+		var claudeToolChoice dto.ClaudeToolChoice
+		switch value := claudeRequest.ToolChoice.(type) {
+		case string:
+			claudeToolChoice.Type = value
+		default:
+			claudeToolChoice, err = common.Any2Type[dto.ClaudeToolChoice](value)
+			if err != nil {
+				return nil, fmt.Errorf("failed to convert Claude tool_choice: %w", err)
+			}
+		}
+
+		switch strings.ToLower(strings.TrimSpace(claudeToolChoice.Type)) {
+		case "auto", "none":
+			openAIRequest.ToolChoice = strings.ToLower(strings.TrimSpace(claudeToolChoice.Type))
+		case "any":
+			openAIRequest.ToolChoice = "required"
+		case "tool":
+			name := strings.TrimSpace(claudeToolChoice.Name)
+			if name == "" {
+				return nil, fmt.Errorf("Claude tool_choice type tool requires a name")
+			}
+			if nativeType, ok := nativeToolTypes[name]; ok {
+				openAIRequest.ResponsesToolChoice, err = common.Marshal(map[string]any{"type": nativeType})
+				if err != nil {
+					return nil, fmt.Errorf("failed to convert Claude tool_choice: %w", err)
+				}
+			} else {
+				openAIRequest.ToolChoice = map[string]any{
+					"type": "function",
+					"function": map[string]any{
+						"name": name,
+					},
+				}
+			}
+		default:
+			return nil, fmt.Errorf("unsupported Claude tool_choice type %q", claudeToolChoice.Type)
+		}
+		openAIRequest.ParallelTooCalls = common.GetPointer(!claudeToolChoice.DisableParallelToolUse)
+	}
 
 	openAIMessages := make([]dto.Message, 0)
 	if claudeRequest.System != nil {
@@ -210,6 +254,106 @@ func ClaudeMessagesRequestToOpenAIChat(claudeRequest dto.ClaudeRequest, info *re
 
 	openAIRequest.Messages = openAIMessages
 	return &openAIRequest, nil
+}
+
+func convertClaudeTools(tools any, allowResponsesTools bool) ([]dto.ToolCallRequest, []json.RawMessage, map[string]string, *uint, error) {
+	if tools == nil {
+		return nil, nil, nil, nil, nil
+	}
+
+	encoded, err := common.Marshal(tools)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to convert Claude tools: %w", err)
+	}
+	var rawTools []json.RawMessage
+	if err := common.Unmarshal(encoded, &rawTools); err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("failed to convert Claude tools: %w", err)
+	}
+
+	converted := make([]dto.ToolCallRequest, 0, len(rawTools))
+	responsesTools := make([]json.RawMessage, 0, 1)
+	nativeToolTypes := make(map[string]string)
+	var maxToolCalls *uint
+	for index, rawTool := range rawTools {
+		var identity struct {
+			Type string `json:"type"`
+			Name string `json:"name"`
+		}
+		if err := common.Unmarshal(rawTool, &identity); err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("failed to convert Claude tool %d: %w", index, err)
+		}
+
+		toolType := strings.TrimSpace(identity.Type)
+		switch toolType {
+		case "", "custom":
+			var claudeTool dto.Tool
+			if err := common.Unmarshal(rawTool, &claudeTool); err != nil {
+				return nil, nil, nil, nil, fmt.Errorf("failed to convert Claude tool %d: %w", index, err)
+			}
+			if strings.TrimSpace(claudeTool.Name) == "" || claudeTool.InputSchema == nil {
+				return nil, nil, nil, nil, fmt.Errorf("Claude tool %d requires name and input_schema", index)
+			}
+			converted = append(converted, dto.ToolCallRequest{
+				Type: "function",
+				Function: dto.FunctionRequest{
+					Name:        claudeTool.Name,
+					Description: claudeTool.Description,
+					Parameters:  claudeTool.InputSchema,
+				},
+			})
+		case "web_search_20250305":
+			if !allowResponsesTools {
+				return nil, nil, nil, nil, fmt.Errorf("Claude server tool %q requires an OpenAI Responses route", toolType)
+			}
+			if _, exists := nativeToolTypes["web_search"]; exists {
+				return nil, nil, nil, nil, fmt.Errorf("Claude request contains multiple web_search server tools")
+			}
+			var webSearch dto.ClaudeWebSearchTool
+			if err := common.Unmarshal(rawTool, &webSearch); err != nil {
+				return nil, nil, nil, nil, fmt.Errorf("failed to convert Claude web_search tool: %w", err)
+			}
+			if webSearch.Name != "web_search" {
+				return nil, nil, nil, nil, fmt.Errorf("Claude web_search server tool requires name web_search")
+			}
+
+			responsesTool := map[string]any{"type": "web_search"}
+			if location := webSearch.UserLocation; location != nil {
+				if location.Type != "" && location.Type != "approximate" {
+					return nil, nil, nil, nil, fmt.Errorf("unsupported Claude web_search user_location type %q", location.Type)
+				}
+				userLocation := map[string]any{"type": "approximate"}
+				if location.Timezone != "" {
+					userLocation["timezone"] = location.Timezone
+				}
+				if location.Country != "" {
+					userLocation["country"] = location.Country
+				}
+				if location.Region != "" {
+					userLocation["region"] = location.Region
+				}
+				if location.City != "" {
+					userLocation["city"] = location.City
+				}
+				if len(userLocation) > 0 {
+					responsesTool["user_location"] = userLocation
+				}
+			}
+			responsesToolJSON, err := common.Marshal(responsesTool)
+			if err != nil {
+				return nil, nil, nil, nil, fmt.Errorf("failed to convert Claude web_search tool: %w", err)
+			}
+			responsesTools = append(responsesTools, responsesToolJSON)
+			nativeToolTypes[webSearch.Name] = "web_search"
+			if webSearch.MaxUses > 0 {
+				limit := uint(webSearch.MaxUses)
+				maxToolCalls = &limit
+			}
+		default:
+			return nil, nil, nil, nil, fmt.Errorf("unsupported Claude server tool type %q", toolType)
+		}
+	}
+
+	return converted, responsesTools, nativeToolTypes, maxToolCalls, nil
 }
 
 func requestToJSONString(v interface{}) string {

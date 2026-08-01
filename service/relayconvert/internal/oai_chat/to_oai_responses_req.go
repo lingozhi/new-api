@@ -286,8 +286,8 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 	}
 
 	var toolsRaw json.RawMessage
-	if req.Tools != nil {
-		tools := make([]map[string]any, 0, len(req.Tools))
+	if req.Tools != nil || len(req.ResponsesTools) > 0 {
+		tools := make([]map[string]any, 0, len(req.Tools)+len(req.ResponsesTools))
 		for _, tool := range req.Tools {
 			switch tool.Type {
 			case "function":
@@ -309,11 +309,23 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 				tools = append(tools, m)
 			}
 		}
+		for _, rawTool := range req.ResponsesTools {
+			var nativeTool map[string]any
+			if err := common.Unmarshal(rawTool, &nativeTool); err != nil {
+				return nil, fmt.Errorf("invalid Responses-native tool: %w", err)
+			}
+			if strings.TrimSpace(common.Interface2String(nativeTool["type"])) == "" {
+				return nil, errors.New("Responses-native tool is missing type")
+			}
+			tools = append(tools, nativeTool)
+		}
 		toolsRaw, _ = common.Marshal(tools)
 	}
 
 	var toolChoiceRaw json.RawMessage
-	if req.ToolChoice != nil {
+	if len(req.ResponsesToolChoice) > 0 {
+		toolChoiceRaw = append(json.RawMessage(nil), req.ResponsesToolChoice...)
+	} else if req.ToolChoice != nil {
 		switch v := req.ToolChoice.(type) {
 		case string:
 			toolChoiceRaw, _ = common.Marshal(v)
@@ -386,6 +398,7 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		ParallelToolCalls: parallelToolCallsRaw,
 		Store:             req.Store,
 		Metadata:          req.Metadata,
+		MaxToolCalls:      req.ResponsesMaxToolCalls,
 	}
 	if req.MaxTokens != nil || req.MaxCompletionTokens != nil {
 		out.MaxOutputTokens = lo.ToPtr(maxOutputTokens)
