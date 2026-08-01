@@ -36,6 +36,14 @@ func TestSetMessagePreservesProviderTaskPollingMetadata(t *testing.T) {
 	assert.Equal(t, 17*time.Second, retryAfter)
 }
 
+func TestSetMessageInitializesMissingError(t *testing.T) {
+	apiErr := &NewAPIError{}
+
+	apiErr.SetMessage("masked provider error")
+
+	assert.EqualError(t, apiErr, "masked provider error")
+}
+
 func TestProviderTaskUnsafeToResubmitErrorSurvivesWrapping(t *testing.T) {
 	cause := errors.New("accepted task failed after possible billing")
 	apiErr := NewError(NewProviderTaskUnsafeToResubmitError(cause), ErrorCodeBadResponse)
