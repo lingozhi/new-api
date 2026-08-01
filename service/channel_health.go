@@ -32,6 +32,8 @@ func normalizeChannelHealthPath(requestPath string) string {
 		return "/v1/images/edits"
 	case strings.HasSuffix(path, "/v1/edits"):
 		return "/v1/images/edits"
+	case path == "/v1/jobs" || strings.HasPrefix(path, "/v1/jobs/"):
+		return "/v1/jobs"
 	case strings.Contains(path, "/audio/speech"):
 		return "/v1/audio/speech"
 	case strings.Contains(path, "/audio/transcriptions"):
@@ -167,7 +169,7 @@ func RecordChannelHealthOutcome(channelID int, modelName, requestPath string, re
 	}
 	healthKey := channelHealthKey(channelID, modelName, requestPath)
 	statusCode, localError := channelHealthOutcomeStatus(apiErr, relayInfo)
-	latencyNotApplicable := healthKey.Path == "/v1/images/generations" || healthKey.Path == "/v1/images/edits"
+	latencyNotApplicable := healthKey.Path == "/v1/images/generations" || healthKey.Path == "/v1/images/edits" || healthKey.Path == "/v1/jobs"
 	outcome := model.ChannelOutcome{
 		StatusCode:    statusCode,
 		SemanticError: semanticError,

@@ -304,15 +304,32 @@ func CooldownChannelForRetry(channelError types.ChannelError, err *types.NewAPIE
 // from routing before the durable task is switched. Authentication and access
 // failures are auto-disabled; transient capacity failures open a bounded
 // circuit so the channel can recover without operator intervention.
-func QuarantineAsyncImageChannel(channelError types.ChannelError, err *types.NewAPIError) {
+func ShouldQuarantineAsyncImageChannel(err *types.NewAPIError) bool {
 	if err == nil {
+		return false
+	}
+	statusCode := err.StatusCode
+	if err.UpstreamStatusCode != 0 {
+		statusCode = err.UpstreamStatusCode
+	}
+	if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden || statusCode == http.StatusNotFound || statusCode == http.StatusTooManyRequests || statusCode >= http.StatusInternalServerError {
+		return true
+	}
+	if IsUpstreamRelayServiceTransientError(err) || isCapabilityError(err) || isPersistentAccountError(err) || ShouldCooldownChannel(err) {
+		return true
+	}
+	return statusCode < http.StatusBadRequest || statusCode >= http.StatusInternalServerError
+}
+
+func QuarantineAsyncImageChannel(channelError types.ChannelError, err *types.NewAPIError) {
+	if !ShouldQuarantineAsyncImageChannel(err) {
 		return
 	}
 	statusCode := err.StatusCode
 	if err.UpstreamStatusCode != 0 {
 		statusCode = err.UpstreamStatusCode
 	}
-	if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+	if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden || isPersistentAccountError(err) {
 		reason := fmt.Sprintf("async_image_access_rejected status=%d code=%s error=%s", statusCode, err.GetErrorCode(), err.Error())
 		DisableChannel(channelError, reason)
 		cooldownChannelPersistentWithoutFallback(channelError.ChannelId, reason, ChannelCooldownDuration)

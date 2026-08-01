@@ -112,12 +112,12 @@ func TestAsyncImagePerformanceSampleRejectsIncompleteTask(t *testing.T) {
 }
 
 func TestAsyncImageHealthPathUsesPublicImageRoute(t *testing.T) {
-	assert.Equal(t, "/v1/images/generations", asyncImageHealthPath(asyncImageTaskPayload{
+	assert.Equal(t, "/v1/jobs", asyncImageHealthPath(asyncImageTaskPayload{
 		RelayMode:                relayconstant.RelayModeImagesGenerations,
 		ImageRoutingUpstreamPath: "/v1/responses",
 		PreparedRequest:          &PreparedAsyncImageRequest{RequestURLPath: "/v1beta/models/gemini:generateContent"},
 	}))
-	assert.Equal(t, "/v1/images/edits", asyncImageHealthPath(asyncImageTaskPayload{
+	assert.Equal(t, "/v1/jobs", asyncImageHealthPath(asyncImageTaskPayload{
 		RelayMode:                relayconstant.RelayModeImagesEdits,
 		ImageRoutingUpstreamPath: "/custom/images/generations",
 	}))
@@ -211,7 +211,11 @@ func TestSwitchRejectedAsyncImageChannelUsesHealthyCompatibleRoute(t *testing.T)
 	assert.Equal(t, dto.ImageRoutingProtocolImagesGenerations, payload.ImageRoutingProtocol)
 	require.NotNil(t, payload.PreparedRequest)
 	assert.Equal(t, healthy.CreatedTime, payload.PreparedRequest.ChannelCreateTime)
-	assert.Contains(t, string(payload.PreparedRequest.Body), `"response_format":"url"`)
+	assert.True(t, payload.PreparedRequest.DeferConversion)
+	assert.Empty(t, payload.PreparedRequest.Body)
+	assert.Equal(t, "/v1/jobs", payload.PreparedRequest.RequestURLPath)
+	assert.Equal(t, dto.ImageRoutingProtocolImagesGenerations, payload.PreparedRequest.ImageRoutingProtocol)
+	assert.Equal(t, "/v1/images/generations", payload.PreparedRequest.ImageRoutingUpstreamPath)
 	assert.True(t, payload.ExecutionDestinationStored)
 }
 
@@ -2740,6 +2744,44 @@ func TestLoadAsyncImageChannelRejectsExecutionDestinationDrift(t *testing.T) {
 	_, _, err = loadAsyncImageChannel(task, prepared, false)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "destination changed")
+}
+
+func TestLoadAsyncImageChannelNeverChangesKeyAfterProviderAcceptance(t *testing.T) {
+	setupAsyncImageSubmitTestDB(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}))
+	previousMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() { common.MemoryCacheEnabled = previousMemoryCacheEnabled })
+
+	baseURL := "https://images.example.com"
+	keys := "submitted-key,rotated-key"
+	channel := &model.Channel{
+		Type:        constant.ChannelTypeOpenAI,
+		Key:         keys,
+		Status:      common.ChannelStatusEnabled,
+		CreatedTime: 1700000275,
+		BaseURL:     &baseURL,
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+	task := &model.Task{
+		ChannelId: channel.Id,
+		PrivateData: model.TaskPrivateData{
+			ChannelKeyHash:       common.GenerateHMAC("removed-original-key"),
+			ChannelMultiKeyIndex: 0,
+		},
+	}
+	prepared := &PreparedAsyncImageRequest{
+		APIType:           constant.APITypeOpenAI,
+		ChannelType:       channel.Type,
+		ChannelCreateTime: channel.CreatedTime,
+		ChannelBaseURL:    baseURL,
+	}
+
+	_, key, err := loadAsyncImageChannel(task, prepared, true)
+
+	require.Error(t, err)
+	assert.Empty(t, key)
+	assert.Contains(t, err.Error(), "key changed after task submission")
 }
 
 func TestValidateAsyncImageExecutionDestinationProtectsResponsesExecutor(t *testing.T) {

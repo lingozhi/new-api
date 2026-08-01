@@ -1093,6 +1093,8 @@ func imageRoutingProtocolCompatibleWithChannel(protocol dto.ImageRoutingProtocol
 		return channelType == constant.ChannelTypeOpenAI
 	case dto.ImageRoutingProtocolGeminiGenerate, dto.ImageRoutingProtocolImagenPredict:
 		return channelType == constant.ChannelTypeGemini || channelType == constant.ChannelTypeVertexAi
+	case dto.ImageRoutingProtocolKIEJobs:
+		return channelType == constant.ChannelTypeAdvancedCustom
 	case dto.ImageRoutingProtocolImagesGenerations, dto.ImageRoutingProtocolImagesEdits:
 		apiType, known := common.ChannelType2APIType(channelType)
 		if !known {

@@ -30,6 +30,7 @@ const (
 	ImageRoutingProtocolResponsesSSE      ImageRoutingProtocol = "responses_sse"
 	ImageRoutingProtocolGeminiGenerate    ImageRoutingProtocol = "gemini_generate_content"
 	ImageRoutingProtocolImagenPredict     ImageRoutingProtocol = "imagen_predict"
+	ImageRoutingProtocolKIEJobs           ImageRoutingProtocol = "kie_jobs"
 	ImageRoutingProtocolAdapter           ImageRoutingProtocol = "adapter"
 )
 
@@ -566,8 +567,9 @@ func (profile *ImageRoutingProfile) validate(index int) error {
 		if protocol == ImageRoutingProtocolImagenPredict && operation != ImageOperationGeneration {
 			return fmt.Errorf("%s protocol imagen_predict is valid only for the generation operation", prefix)
 		}
-		if len(profile.Parameters) > 0 && protocol == ImageRoutingProtocolResponsesSSE {
-			return fmt.Errorf("%s.parameters are not supported by responses_sse routes", prefix)
+		if len(profile.Parameters) > 0 &&
+			(protocol == ImageRoutingProtocolResponsesSSE || protocol == ImageRoutingProtocolKIEJobs) {
+			return fmt.Errorf("%s.parameters are not supported by %s routes", prefix, protocol)
 		}
 		for _, parameter := range profile.OptionalParameters {
 			if !imageRoutingProtocolSupportsOptionalParameter(protocol, parameter) {
@@ -731,7 +733,7 @@ func imageRoutingProtocolSupportsOptionalParameter(protocol ImageRoutingProtocol
 	switch protocol {
 	case ImageRoutingProtocolResponsesSSE:
 		return parameter == "output_compression" || parameter == "background" || parameter == "moderation"
-	case ImageRoutingProtocolGeminiGenerate, ImageRoutingProtocolImagenPredict:
+	case ImageRoutingProtocolGeminiGenerate, ImageRoutingProtocolImagenPredict, ImageRoutingProtocolKIEJobs:
 		return false
 	case ImageRoutingProtocolImagesGenerations, ImageRoutingProtocolImagesEdits:
 		return true
@@ -869,6 +871,10 @@ func validateImageRoutingUpstreamPath(protocol ImageRoutingProtocol, path string
 	case ImageRoutingProtocolImagenPredict:
 		if !strings.Contains(path, "/models/") || !strings.HasSuffix(path, ":predict") {
 			return fmt.Errorf("must target an Imagen predict endpoint")
+		}
+	case ImageRoutingProtocolKIEJobs:
+		if !strings.HasSuffix(path, "/api/v1/jobs/createTask") {
+			return fmt.Errorf("must target a KIE jobs createTask endpoint")
 		}
 	case ImageRoutingProtocolAdapter:
 		return nil
@@ -1245,6 +1251,7 @@ func isImageRoutingProtocolAllowed(protocol ImageRoutingProtocol) bool {
 		ImageRoutingProtocolResponsesSSE,
 		ImageRoutingProtocolGeminiGenerate,
 		ImageRoutingProtocolImagenPredict,
+		ImageRoutingProtocolKIEJobs,
 		ImageRoutingProtocolAdapter:
 		return true
 	default:

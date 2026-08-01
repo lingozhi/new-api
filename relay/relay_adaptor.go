@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
 	"github.com/QuantumNous/new-api/relay/channel/ali"
@@ -20,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/jimeng"
 	"github.com/QuantumNous/new-api/relay/channel/jina"
+	"github.com/QuantumNous/new-api/relay/channel/kie"
 	"github.com/QuantumNous/new-api/relay/channel/minimax"
 	"github.com/QuantumNous/new-api/relay/channel/mistral"
 	"github.com/QuantumNous/new-api/relay/channel/mokaai"
@@ -49,6 +51,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/xunfei"
 	"github.com/QuantumNous/new-api/relay/channel/zhipu"
 	"github.com/QuantumNous/new-api/relay/channel/zhipu_4v"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 )
 
@@ -126,6 +129,20 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &advancedcustom.Adaptor{}
 	}
 	return nil
+}
+
+// GetImageAdaptor resolves provider-specific image protocols without creating
+// a new channel type. KIE jobs reuse Advanced Custom channel base URLs, keys,
+// routing profiles, and failover selection while using their native async
+// submit/poll contract.
+func GetImageAdaptor(info *relaycommon.RelayInfo) channel.Adaptor {
+	if info != nil && info.ImageRoutingProtocol == dto.ImageRoutingProtocolKIEJobs {
+		return &kie.Adaptor{}
+	}
+	if info == nil {
+		return nil
+	}
+	return GetAdaptor(info.ApiType)
 }
 
 func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {

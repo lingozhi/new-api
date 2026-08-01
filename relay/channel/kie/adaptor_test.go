@@ -3,13 +3,14 @@ package kie
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -152,7 +153,7 @@ func TestDoResponseResumesAcceptedTaskCheckpointWithoutSubmittingAgain(t *testin
 			info := kieTestRelayInfo(server.URL, relayconstant.RelayModeImagesGenerations, ModelGPTImage2TextToImage)
 			accepted := kieHTTPResponse(submitStatus, `{"code":200,"msg":"success","data":{"taskId":"kie-task-123"}}`)
 
-			usage, apiErr := (&Adaptor{wait: noWait}).DoResponse(c, accepted, info)
+			usage, apiErr := (&Adaptor{}).DoResponse(c, accepted, info)
 
 			require.Nil(t, apiErr)
 			require.NotNil(t, usage)
@@ -169,44 +170,34 @@ func TestDoResponseResumesAcceptedTaskCheckpointWithoutSubmittingAgain(t *testin
 	}
 }
 
-func TestDoResponseHonorsRetryAfterUntilKIESucceeds(t *testing.T) {
+func TestDoResponsePollsOnceAndReturnsTypedPendingRetry(t *testing.T) {
 	t.Parallel()
 
 	var pollCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		call := pollCalls.Add(1)
+		pollCalls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		if call == 1 {
-			w.Header().Set("Retry-After", "2")
-			_, _ = io.WriteString(w, `{"code":200,"data":{"taskId":"kie-task-retry","state":"generating"}}`)
-			return
-		}
-		_, _ = io.WriteString(w, `{"code":200,"data":{"taskId":"kie-task-retry","state":"success","resultJson":{"resultObject":{"resultUrls":["https://oss.example.com/final.webp"]}}}}`)
+		w.Header().Set("Retry-After", "90")
+		_, _ = io.WriteString(w, `{"code":200,"data":{"taskId":"kie-task-retry","state":"generating"}}`)
 	}))
 	t.Cleanup(server.Close)
 
-	var mu sync.Mutex
-	delays := make([]time.Duration, 0, 2)
-	adaptor := &Adaptor{wait: func(_ context.Context, delay time.Duration) error {
-		mu.Lock()
-		defer mu.Unlock()
-		delays = append(delays, delay)
-		return nil
-	}}
 	recorder := httptest.NewRecorder()
 	c := kieTestContextWithRecorder(context.Background(), recorder)
 	info := kieTestRelayInfo(server.URL, relayconstant.RelayModeImagesGenerations, ModelGPTImage2TextToImage)
 	accepted := kieHTTPResponse(http.StatusOK, `{"code":200,"data":{"taskId":"kie-task-retry"}}`)
-	accepted.Header.Set("Retry-After", "7")
 
-	_, apiErr := adaptor.DoResponse(c, accepted, info)
+	_, apiErr := (&Adaptor{}).DoResponse(c, accepted, info)
 
-	require.Nil(t, apiErr)
-	assert.Equal(t, int32(2), pollCalls.Load())
-	mu.Lock()
-	assert.Equal(t, []time.Duration{7 * time.Second, 2 * time.Second}, delays)
-	mu.Unlock()
-	assert.Contains(t, recorder.Body.String(), `"url":"https://oss.example.com/final.webp"`)
+	require.NotNil(t, apiErr)
+	assert.ErrorIs(t, apiErr, types.ErrProviderTaskPollingRetryable)
+	assert.Equal(t, http.StatusAccepted, apiErr.StatusCode, "normal pending is scheduling metadata, not a provider failure")
+	assert.Zero(t, apiErr.UpstreamStatusCode)
+	retryAfter, ok := types.ProviderTaskPollingRetryAfter(apiErr)
+	require.True(t, ok)
+	assert.Equal(t, time.Minute, retryAfter)
+	assert.Equal(t, int32(1), pollCalls.Load(), "one worker turn must issue at most one poll")
+	assert.Empty(t, recorder.Body.String())
 }
 
 func TestDoResponseReturnsKIEFailureAsTerminal(t *testing.T) {
@@ -222,11 +213,12 @@ func TestDoResponseReturnsKIEFailureAsTerminal(t *testing.T) {
 	info := kieTestRelayInfo(server.URL, relayconstant.RelayModeImagesGenerations, ModelGPTImage2TextToImage)
 	accepted := kieHTTPResponse(http.StatusOK, `{"code":200,"data":{"taskId":"kie-task-failed"}}`)
 
-	_, apiErr := (&Adaptor{wait: noWait}).DoResponse(c, accepted, info)
+	_, apiErr := (&Adaptor{}).DoResponse(c, accepted, info)
 
 	require.NotNil(t, apiErr)
 	assert.Contains(t, apiErr.Error(), "upstream generation failed")
-	assert.NotErrorIs(t, apiErr, types.ErrProviderTaskPollingRetryable, "terminal provider failure must be eligible for channel failover")
+	assert.NotErrorIs(t, apiErr, types.ErrProviderTaskPollingRetryable)
+	assert.ErrorIs(t, apiErr, types.ErrProviderTaskUnsafeToResubmit, "accepted terminal failure may already have been billed")
 }
 
 func TestDoResponseMarksInterruptedKIEPollingRecoverable(t *testing.T) {
@@ -242,22 +234,179 @@ func TestDoResponseMarksInterruptedKIEPollingRecoverable(t *testing.T) {
 	info := kieTestRelayInfo(server.URL, relayconstant.RelayModeImagesGenerations, ModelGPTImage2TextToImage)
 	accepted := kieHTTPResponse(http.StatusOK, `{"code":200,"data":{"taskId":"kie-task-recover"}}`)
 
-	_, apiErr := (&Adaptor{wait: noWait}).DoResponse(c, accepted, info)
+	_, apiErr := (&Adaptor{}).DoResponse(c, accepted, info)
 
 	require.NotNil(t, apiErr)
 	assert.ErrorIs(t, apiErr, types.ErrProviderTaskPollingRetryable)
 }
 
-func TestDefaultKIEPollPolicyUsesThirtySecondRequestsAndFifteenMinuteDeadline(t *testing.T) {
+func TestDefaultKIEPollPolicyUsesThirtySecondRequestWithoutLocalOverallDeadline(t *testing.T) {
 	t.Parallel()
 
 	policy := defaultPollPolicy()
 
 	assert.Equal(t, 30*time.Second, policy.requestTimeout)
-	assert.Equal(t, 15*time.Minute, policy.overallTimeout)
 }
 
-func noWait(context.Context, time.Duration) error { return nil }
+func TestRetryAfterDelayIsBoundedAndInvalidValuesUseDefault(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, time.August, 2, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name  string
+		value string
+		want  time.Duration
+	}{
+		{name: "missing", want: 2 * time.Second},
+		{name: "minimum", value: "1", want: time.Second},
+		{name: "clamped maximum", value: "999", want: time.Minute},
+		{name: "zero", value: "0", want: 2 * time.Second},
+		{name: "negative", value: "-1", want: 2 * time.Second},
+		{name: "integer overflow", value: "999999999999999999999999", want: 2 * time.Second},
+		{name: "invalid", value: "later", want: 2 * time.Second},
+		{name: "past date", value: now.Add(-time.Minute).Format(http.TimeFormat), want: 2 * time.Second},
+		{name: "future date clamped", value: now.Add(5 * time.Minute).Format(http.TimeFormat), want: time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			header := make(http.Header)
+			if tt.value != "" {
+				header.Set("Retry-After", tt.value)
+			}
+			assert.Equal(t, tt.want, retryAfterDelay(header, now))
+		})
+	}
+}
+
+func TestPollAppliesResolvedHeaderOverridesWithoutLeakingRawChannelKey(t *testing.T) {
+	t.Parallel()
+
+	requestHeaders := make(chan http.Header, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestHeaders <- r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"code":200,"data":{"taskId":"kie-task-auth","state":"success","resultJson":{"resultUrls":["https://oss.example.com/auth.png"]}}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	info := kieTestRelayInfo(server.URL, relayconstant.RelayModeImagesGenerations, ModelGPTImage2TextToImage)
+	info.HeadersOverride = map[string]any{
+		"Authorization": "Bearer advanced-custom-secret",
+		"X-KIE-Tenant":  "tenant-a",
+	}
+	c := kieTestContextWithRecorder(context.Background(), httptest.NewRecorder())
+	accepted := kieHTTPResponse(http.StatusAccepted, `{"code":200,"data":{"taskId":"kie-task-auth"}}`)
+
+	_, apiErr := (&Adaptor{}).DoResponse(c, accepted, info)
+	require.Nil(t, apiErr)
+
+	headers := <-requestHeaders
+	assert.Equal(t, "Bearer advanced-custom-secret", headers.Get("Authorization"))
+	assert.Equal(t, "tenant-a", headers.Get("X-KIE-Tenant"))
+	assert.NotContains(t, strings.Join(headers.Values("Authorization"), " "), "kie-secret")
+}
+
+func TestSubmitBusinessEnvelopePreservesDefinitiveAndRetryStatuses(t *testing.T) {
+	t.Parallel()
+
+	tests := []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusUnprocessableEntity, http.StatusTooManyRequests, http.StatusInternalServerError}
+	for _, code := range tests {
+		t.Run(http.StatusText(code), func(t *testing.T) {
+			accepted := kieHTTPResponse(http.StatusOK, `{"code":`+strconv.Itoa(code)+`,"msg":"classified failure","data":null}`)
+			_, apiErr := (&Adaptor{}).DoResponse(kieTestContext(context.Background()), accepted, kieTestRelayInfo("https://api.kie.ai", relayconstant.RelayModeImagesGenerations, ModelGPTImage2TextToImage))
+			require.NotNil(t, apiErr)
+			assert.Equal(t, code, apiErr.StatusCode)
+			assert.NotErrorIs(t, apiErr, types.ErrProviderTaskUnsafeToResubmit, "submit rejection has no accepted task id")
+		})
+	}
+}
+
+func TestPollBusinessEnvelopeClassifiesRetryAndCredentialFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		code           int
+		wantRetry      bool
+		wantUnsafe     bool
+		wantRetryAfter time.Duration
+	}{
+		{name: "rate limited", code: http.StatusTooManyRequests, wantRetry: true, wantRetryAfter: 3 * time.Second},
+		{name: "upstream unavailable", code: http.StatusServiceUnavailable, wantRetry: true, wantRetryAfter: 3 * time.Second},
+		{name: "credential failure", code: http.StatusUnauthorized, wantUnsafe: true},
+		{name: "invalid accepted task", code: http.StatusUnprocessableEntity, wantUnsafe: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Retry-After", "3")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"code":`+strconv.Itoa(tt.code)+`,"msg":"poll classified failure","data":null}`)
+			}))
+			t.Cleanup(server.Close)
+
+			accepted := kieHTTPResponse(http.StatusAccepted, `{"code":200,"data":{"taskId":"kie-task-envelope"}}`)
+			_, apiErr := (&Adaptor{}).DoResponse(kieTestContext(context.Background()), accepted, kieTestRelayInfo(server.URL, relayconstant.RelayModeImagesGenerations, ModelGPTImage2TextToImage))
+			require.NotNil(t, apiErr)
+			assert.Equal(t, tt.code, apiErr.StatusCode)
+			assert.Equal(t, tt.wantRetry, errors.Is(apiErr, types.ErrProviderTaskPollingRetryable))
+			assert.Equal(t, tt.wantUnsafe, errors.Is(apiErr, types.ErrProviderTaskUnsafeToResubmit))
+			if tt.wantRetry {
+				delay, ok := types.ProviderTaskPollingRetryAfter(apiErr)
+				require.True(t, ok)
+				assert.Equal(t, tt.wantRetryAfter, delay)
+			}
+		})
+	}
+}
+
+func TestDecodeCreateTaskIDRejectsUnsafeOrUnboundedIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		taskID string
+		ok     bool
+	}{
+		{name: "uuid style", taskID: "task_01J.ABC:def-123", ok: true},
+		{name: "max length", taskID: strings.Repeat("a", 256), ok: true},
+		{name: "too long", taskID: strings.Repeat("a", 257)},
+		{name: "slash", taskID: "task/123"},
+		{name: "space", taskID: "task 123"},
+		{name: "unicode", taskID: "task-图片"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"code":200,"data":{"taskId":"` + tt.taskID + `"}}`)
+			got, apiErr := decodeCreateTaskID(body)
+			if tt.ok {
+				require.Nil(t, apiErr)
+				assert.Equal(t, tt.taskID, got)
+				return
+			}
+			require.NotNil(t, apiErr)
+			assert.Empty(t, got)
+		})
+	}
+}
+
+func TestDoResponseRejectsMultipleResultURLs(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"code":200,"data":{"taskId":"kie-task-multi","state":"success","resultJson":{"resultUrls":["https://oss.example.com/one.png","https://oss.example.com/two.png"]}}}`)
+	}))
+	t.Cleanup(server.Close)
+
+	accepted := kieHTTPResponse(http.StatusAccepted, `{"code":200,"data":{"taskId":"kie-task-multi"}}`)
+	_, apiErr := (&Adaptor{}).DoResponse(kieTestContext(context.Background()), accepted, kieTestRelayInfo(server.URL, relayconstant.RelayModeImagesGenerations, ModelGPTImage2TextToImage))
+
+	require.NotNil(t, apiErr)
+	assert.Contains(t, apiErr.Error(), "exactly one image URL")
+	assert.ErrorIs(t, apiErr, types.ErrProviderTaskUnsafeToResubmit)
+}
 
 func kieTestRelayInfo(baseURL string, relayMode int, upstreamModel string) *relaycommon.RelayInfo {
 	return &relaycommon.RelayInfo{

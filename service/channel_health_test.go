@@ -557,6 +557,18 @@ func TestRecordChannelHealthOutcomeDoesNotScoreImageCompletionLatency(t *testing
 				}
 			},
 		},
+		{
+			name:        "unified async image job",
+			channelID:   9001444,
+			modelName:   "test-async-image-jobs-latency",
+			requestPath: "/v1/jobs/task_123",
+			relayInfo: func(start time.Time) *relaycommon.RelayInfo {
+				return &relaycommon.RelayInfo{
+					StartTime:         start,
+					FirstResponseTime: start.Add(15 * time.Minute),
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

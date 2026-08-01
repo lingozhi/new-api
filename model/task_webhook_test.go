@@ -465,3 +465,31 @@ func TestImageTaskUnexpectedWorkerRetryIsDueGatedAndResetByKnownRetry(t *testing
 	assert.Zero(t, task.WorkerNextRetryAt)
 	assert.Empty(t, task.WorkerError)
 }
+
+func TestImageTaskPendingProviderPollDoesNotConsumeFailureRetryBudget(t *testing.T) {
+	truncateTables(t)
+	now := common.GetTimestamp()
+	task := &Task{
+		TaskID:           "task_pending_provider_poll",
+		Platform:         constant.TaskPlatformOpenAIImage,
+		ChannelId:        116,
+		Status:           TaskStatusInProgress,
+		Attempt:          4,
+		Progress:         "40%",
+		ProviderAttempts: 5,
+		CheckpointData:   []byte(`{"provider_response_stored":true,"provider_deadline_at":1893456000}`),
+	}
+	require.NoError(t, DB.Create(task).Error)
+
+	scheduled, err := task.MarkImageProviderPoll(now+30, "provider task is still pending")
+
+	require.NoError(t, err)
+	require.True(t, scheduled)
+	var stored Task
+	require.NoError(t, DB.First(&stored, task.ID).Error)
+	assert.Equal(t, TaskStatus(TaskStatusNotStart), stored.Status)
+	assert.Equal(t, "40%", stored.Progress)
+	assert.Equal(t, 5, stored.ProviderAttempts)
+	assert.Equal(t, now+30, stored.ProviderNextRetryAt)
+	assert.JSONEq(t, string(task.CheckpointData), string(stored.CheckpointData))
+}

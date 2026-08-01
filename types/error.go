@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 )
@@ -40,7 +41,94 @@ type ErrorCode string
 // ErrProviderTaskPollingRetryable marks a transient failure while continuing
 // an already accepted upstream task. Async workers must retry from their
 // stored provider response instead of submitting a new generation.
-var ErrProviderTaskPollingRetryable = errors.New("provider task polling is retryable")
+var (
+	ErrProviderTaskPollingRetryable = errors.New("provider task polling is retryable")
+	// ErrProviderTaskUnsafeToResubmit marks an accepted upstream task whose
+	// billing/outcome is known or ambiguous. Callers may keep polling or fail the
+	// logical task, but must not submit the same work to another provider.
+	ErrProviderTaskUnsafeToResubmit = errors.New("provider task is unsafe to resubmit")
+)
+
+// ProviderTaskPollingRetryError carries an upstream-requested delay without
+// forcing provider adaptors to sleep inside a worker turn.
+type ProviderTaskPollingRetryError struct {
+	cause      error
+	retryAfter time.Duration
+}
+
+func NewProviderTaskPollingRetryError(cause error, retryAfter time.Duration) error {
+	if retryAfter < 0 {
+		retryAfter = 0
+	}
+	return &ProviderTaskPollingRetryError{cause: cause, retryAfter: retryAfter}
+}
+
+func (e *ProviderTaskPollingRetryError) Error() string {
+	if e == nil || e.cause == nil {
+		return ErrProviderTaskPollingRetryable.Error()
+	}
+	return e.cause.Error()
+}
+
+func (e *ProviderTaskPollingRetryError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func (e *ProviderTaskPollingRetryError) Is(target error) bool {
+	return target == ErrProviderTaskPollingRetryable
+}
+
+func (e *ProviderTaskPollingRetryError) RetryAfter() time.Duration {
+	if e == nil {
+		return 0
+	}
+	return e.retryAfter
+}
+
+// ProviderTaskPollingRetryAfter extracts the delay even when the provider
+// error is wrapped in a NewAPIError.
+func ProviderTaskPollingRetryAfter(err error) (time.Duration, bool) {
+	var retryErr *ProviderTaskPollingRetryError
+	if !errors.As(err, &retryErr) {
+		return 0, false
+	}
+	return retryErr.RetryAfter(), true
+}
+
+// ProviderTaskUnsafeToResubmitError preserves the underlying provider reason
+// while exposing the cross-provider resubmission safety decision to workers.
+type ProviderTaskUnsafeToResubmitError struct {
+	cause error
+}
+
+func NewProviderTaskUnsafeToResubmitError(cause error) error {
+	return &ProviderTaskUnsafeToResubmitError{cause: cause}
+}
+
+func (e *ProviderTaskUnsafeToResubmitError) Error() string {
+	if e == nil || e.cause == nil {
+		return ErrProviderTaskUnsafeToResubmit.Error()
+	}
+	return e.cause.Error()
+}
+
+func (e *ProviderTaskUnsafeToResubmitError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
+func (e *ProviderTaskUnsafeToResubmitError) Is(target error) bool {
+	return target == ErrProviderTaskUnsafeToResubmit
+}
+
+func IsProviderTaskUnsafeToResubmit(err error) bool {
+	return errors.Is(err, ErrProviderTaskUnsafeToResubmit)
+}
 
 const (
 	ErrorCodeInvalidRequest         ErrorCode = "invalid_request"

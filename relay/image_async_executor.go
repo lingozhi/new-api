@@ -200,7 +200,7 @@ func executeGenericImageAdaptor(ctx context.Context, input *image_stream.Generic
 	populateGenericImageContext(c, info, request)
 	providerErrorSecrets := genericImageProviderErrorSecrets(info, c)
 
-	adaptor := GetAdaptor(info.ApiType)
+	adaptor := GetImageAdaptor(info)
 	if adaptor == nil {
 		return nil, types.NewError(fmt.Errorf("invalid api type: %d", info.ApiType), types.ErrorCodeInvalidApiType, types.ErrOptionWithSkipRetry())
 	}
@@ -328,9 +328,11 @@ func executeGenericImageAdaptor(ctx context.Context, input *image_stream.Generic
 	}
 	defer service.CloseResponseBodyGracefully(httpResponse)
 	if httpResponse.StatusCode != http.StatusOK {
+		acceptedKIEJob := httpResponse.StatusCode == http.StatusAccepted &&
+			info.ImageRoutingProtocol == dto.ImageRoutingProtocolKIEJobs
 		if httpResponse.StatusCode == http.StatusCreated && info.ApiType == constant.APITypeReplicate {
 			httpResponse.StatusCode = http.StatusOK
-		} else {
+		} else if !acceptedKIEJob {
 			responseBody, readErr := io.ReadAll(io.LimitReader(httpResponse.Body, maxGenericImageErrorResponseBytes+1))
 			service.CloseResponseBodyGracefully(httpResponse)
 			if readErr != nil {
