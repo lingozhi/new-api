@@ -328,8 +328,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		if isTerminal {
 			seenTerminal = true
 		}
-		rejectEmptyTerminal := info.RelayFormat == types.RelayFormatClaude || streamResp.Type == "response.incomplete"
-		if isTerminal && rejectEmptyTerminal && !seenVisibleOutput {
+		if isTerminal && !seenVisibleOutput {
 			streamErr = types.NewOpenAIError(
 				fmt.Errorf("responses stream terminal event contained no output text or tool call"),
 				types.ErrorCodeBadResponse,
@@ -376,7 +375,10 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	}
 	if streamErr != nil {
 		if c.Writer.Written() {
-			usage := responsesBridgeStreamUsage(c, info, state)
+			usage := responsesBridgeNonBillableUsage(info)
+			if seenVisibleOutput {
+				usage = responsesBridgeStreamUsage(c, info, state)
+			}
 			if err := writeResponsesBridgeStreamError(c, info, streamErr); err != nil {
 				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 			}
@@ -418,7 +420,8 @@ func responsesBridgeEventHasVisibleOutput(event *dto.ResponsesStreamResponse) bo
 	if event == nil {
 		return false
 	}
-	if event.Type == "response.output_text.delta" && event.Delta != "" {
+	if (event.Type == "response.output_text.delta" || event.Type == "response.refusal.delta") &&
+		strings.TrimSpace(event.Delta) != "" {
 		return true
 	}
 	if responsesBridgeOutputIsVisible(event.Item, event.OutputIndex != nil) {
@@ -454,12 +457,23 @@ func responsesBridgeOutputIsVisible(output *dto.ResponsesOutput, hasOutputIndex 
 			(hasOutputIndex || strings.TrimSpace(output.ID) != "" || strings.TrimSpace(output.CallId) != "")
 	case "message":
 		for _, content := range output.Content {
-			if content.Type == "output_text" && content.Text != "" {
+			if content.Type == "output_text" && strings.TrimSpace(content.Text) != "" {
+				return true
+			}
+			if content.Type == "refusal" && strings.TrimSpace(content.Refusal) != "" {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func responsesBridgeNonBillableUsage(info *relaycommon.RelayInfo) *dto.Usage {
+	semantic := dto.BillingUsageSemanticOpenAI
+	if info != nil && info.RelayFormat == types.RelayFormatClaude {
+		semantic = dto.BillingUsageSemanticAnthropic
+	}
+	return &dto.Usage{UsageSemantic: semantic}
 }
 
 func responsesBridgeStreamUsage(c *gin.Context, info *relaycommon.RelayInfo, state *relayconvert.ResponseStreamState) *dto.Usage {

@@ -84,8 +84,10 @@ func ResponsesStreamEventToChatChunks(event *dto.ResponsesStreamResponse, state 
 			state.needsReasoningSummaryBreak = true
 		}
 		return nil, nil
-	case responsesEventOutputTextDelta:
+	case responsesEventOutputTextDelta, responsesEventRefusalDelta:
 		return state.textDelta(event.Delta), nil
+	case responsesEventRefusalDone:
+		return nil, nil
 	case responsesEventOutputItemAdded, responsesEventOutputItemDone:
 		if event.Item == nil || !isResponsesToolOutputType(event.Item.Type) {
 			return nil, nil
@@ -174,6 +176,8 @@ func (s *ResponsesToChatStreamState) terminalOutputChunks(response *dto.OpenAIRe
 			for _, c := range out.Content {
 				if c.Type == "output_text" && c.Text != "" {
 					text.WriteString(c.Text)
+				} else if c.Type == "refusal" && c.Refusal != "" {
+					text.WriteString(c.Refusal)
 				}
 			}
 			chunks = append(chunks, s.textDelta(text.String())...)
