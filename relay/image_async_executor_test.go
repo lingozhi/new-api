@@ -100,6 +100,56 @@ func TestGenericImageExecutorPreservesExtraAndAppliesParamOverride(t *testing.T)
 	require.Contains(t, request.Extra, "negative_prompt")
 }
 
+func TestGenericImageExecutorPreservesKIEPollingMarkerAfterMasking(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/jobs/createTask":
+			w.WriteHeader(http.StatusAccepted)
+			_, err := w.Write([]byte(`{"code":200,"data":{"taskId":"kie-pending-task"}}`))
+			require.NoError(t, err)
+		case "/api/v1/jobs/recordInfo":
+			assert.Equal(t, "kie-pending-task", r.URL.Query().Get("taskId"))
+			w.Header().Set("Retry-After", "7")
+			_, err := w.Write([]byte(`{"code":200,"data":{"taskId":"kie-pending-task","state":"generating"}}`))
+			require.NoError(t, err)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	request := &dto.ImageRequest{Model: "gpt-image-2", Prompt: "draw a blue sphere"}
+	info := &relaycommon.RelayInfo{
+		RelayMode:            relayconstant.RelayModeImagesGenerations,
+		RelayFormat:          types.RelayFormatOpenAIImage,
+		OriginModelName:      request.Model,
+		ImageRoutingProtocol: dto.ImageRoutingProtocolKIEJobs,
+		RequestURLPath:       "/v1/jobs",
+		RequestHeaders:       map[string]string{"Content-Type": "application/json"},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeAdvancedCustom,
+			ChannelBaseUrl:    server.URL,
+			ApiType:           constant.APITypeAdvancedCustom,
+			ApiKey:            "provider-secret",
+			UpstreamModelName: request.Model,
+		},
+	}
+
+	_, apiErr := image_stream.ExecuteGenericImageAdaptor(context.Background(), &image_stream.GenericImageExecutionRequest{
+		RelayInfo:    info,
+		ImageRequest: request,
+	})
+
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusAccepted, apiErr.StatusCode)
+	assert.ErrorIs(t, apiErr, types.ErrProviderTaskPollingRetryable)
+	retryAfter, ok := types.ProviderTaskPollingRetryAfter(apiErr)
+	assert.True(t, ok)
+	assert.Equal(t, 7*time.Second, retryAfter)
+	assert.NotContains(t, apiErr.Error(), "provider-secret")
+}
+
 func TestGenericImageExecutorAcquiresOutputLeaseAfterResponseHeadersBeforeBodyRead(t *testing.T) {
 	requestArrived := make(chan struct{})
 	allowHeaders := make(chan struct{})

@@ -411,7 +411,7 @@ func executeGenericImageAdaptor(ctx context.Context, input *image_stream.Generic
 	usageValue, apiErr := adaptor.DoResponse(c, httpResponse, info)
 	if apiErr != nil {
 		service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
-		apiErr.SetMessage(maskGenericImageProviderError(apiErr.Error(), providerErrorSecrets...))
+		apiErr.SetMaskedProviderMessage(maskGenericImageProviderError(apiErr.Error(), providerErrorSecrets...))
 		return nil, apiErr
 	}
 	if responseWriter.err != nil {
