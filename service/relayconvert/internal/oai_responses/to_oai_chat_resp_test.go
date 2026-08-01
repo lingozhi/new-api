@@ -408,6 +408,228 @@ func TestResponsesStreamEventToChatChunksPreservesDistinctParallelTools(t *testi
 	}, observedByIndex)
 }
 
+func TestResponsesStreamEventToChatChunksBuffersAndTransformsMatchedToolArguments(t *testing.T) {
+	state := newTestResponsesStreamState()
+	state.ToolArgumentsTransform = func(toolName string, arguments string) (string, bool) {
+		if toolName != "Read" {
+			return arguments, false
+		}
+		return strings.Replace(arguments, `,"pages":""`, "", 1), true
+	}
+	outputIndex := 0
+
+	var chunks []dto.ChatCompletionsStreamResponse
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:  responsesEventOutputTextDelta,
+		Delta: "before tool",
+	})...)
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventOutputItemAdded,
+		OutputIndex: &outputIndex,
+		Item: &dto.ResponsesOutput{
+			Type:   responsesOutputTypeFunctionCall,
+			ID:     "fc_read",
+			CallId: "call_read",
+			Name:   "Read",
+		},
+	})...)
+
+	firstDelta := mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventFunctionArgsDelta,
+		OutputIndex: &outputIndex,
+		ItemID:      "fc_read",
+		Delta:       `{"file_path":"/tmp/sentinel.png"`,
+	})
+	secondDelta := mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventFunctionArgsDelta,
+		OutputIndex: &outputIndex,
+		ItemID:      "fc_read",
+		Delta:       `,"pages":""}`,
+	})
+	require.Empty(t, firstDelta)
+	require.Empty(t, secondDelta)
+
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventFunctionArgsDone,
+		OutputIndex: &outputIndex,
+		ItemID:      "fc_read",
+	})...)
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type: responsesEventCompleted,
+		Response: &dto.OpenAIResponsesResponse{
+			Status: []byte(`"completed"`),
+			Output: []dto.ResponsesOutput{
+				{
+					Type:      responsesOutputTypeFunctionCall,
+					ID:        "fc_read",
+					CallId:    "call_read",
+					Name:      "Read",
+					Arguments: []byte(`{"file_path":"/tmp/sentinel.png","pages":""}`),
+				},
+			},
+		},
+	})...)
+
+	var text strings.Builder
+	var arguments strings.Builder
+	toolNameChunks := 0
+	for _, chunk := range chunks {
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		text.WriteString(chunk.Choices[0].Delta.GetContentString())
+		for _, toolCall := range chunk.Choices[0].Delta.ToolCalls {
+			arguments.WriteString(toolCall.Function.Arguments)
+			if toolCall.Function.Name != "" {
+				toolNameChunks++
+			}
+		}
+	}
+
+	assert.Equal(t, "before tool", text.String())
+	assert.Equal(t, 1, toolNameChunks)
+	assert.Equal(t, `{"file_path":"/tmp/sentinel.png"}`, arguments.String())
+}
+
+func TestResponsesStreamEventToChatChunksBuffersArgumentsUntilLateToolNameArrives(t *testing.T) {
+	state := newTestResponsesStreamState()
+	state.ToolArgumentsTransform = func(toolName string, arguments string) (string, bool) {
+		if toolName != "Read" {
+			return arguments, false
+		}
+		return `{"safe":true}`, true
+	}
+	outputIndex := 0
+
+	require.Empty(t, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventFunctionArgsDelta,
+		OutputIndex: &outputIndex,
+		ItemID:      "fc_read",
+		Delta:       `{"file_path":"/tmp/sentinel.png"`,
+	}))
+	mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventOutputItemAdded,
+		OutputIndex: &outputIndex,
+		Item: &dto.ResponsesOutput{
+			Type:   responsesOutputTypeFunctionCall,
+			ID:     "fc_read",
+			CallId: "call_read",
+		},
+	})
+	require.Empty(t, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventFunctionArgsDelta,
+		OutputIndex: &outputIndex,
+		ItemID:      "fc_read",
+		Delta:       `,"pages":""}`,
+	}))
+	require.Empty(t, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventFunctionArgsDone,
+		OutputIndex: &outputIndex,
+		ItemID:      "fc_read",
+	}))
+
+	chunks := mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventOutputItemDone,
+		OutputIndex: &outputIndex,
+		ItemID:      "fc_read",
+		Item: &dto.ResponsesOutput{
+			Type:      responsesOutputTypeFunctionCall,
+			ID:        "fc_read",
+			CallId:    "call_read",
+			Name:      "Read",
+			Arguments: []byte(`{"file_path":"/tmp/sentinel.png","pages":""}`),
+		},
+	})
+	require.Len(t, chunks, 1)
+	assert.Equal(t, "Read", chunks[0].Choices[0].Delta.ToolCalls[0].Function.Name)
+	assert.Equal(t, `{"safe":true}`, chunks[0].Choices[0].Delta.ToolCalls[0].Function.Arguments)
+}
+
+func TestResponsesStreamEventToChatChunksOnlyBuffersMatchedParallelTool(t *testing.T) {
+	state := newTestResponsesStreamState()
+	state.ToolArgumentsTransform = func(toolName string, arguments string) (string, bool) {
+		if toolName != "Read" {
+			return arguments, false
+		}
+		return `{"normalized":true}`, true
+	}
+	readIndex := 0
+	lookupIndex := 1
+
+	for index, item := range []dto.ResponsesOutput{
+		{Type: responsesOutputTypeFunctionCall, ID: "fc_read", CallId: "call_read", Name: "Read"},
+		{Type: responsesOutputTypeFunctionCall, ID: "fc_lookup", CallId: "call_lookup", Name: "lookup"},
+	} {
+		outputIndex := index
+		mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+			Type:        responsesEventOutputItemAdded,
+			OutputIndex: &outputIndex,
+			Item:        &item,
+		})
+	}
+
+	readDelta := mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventFunctionArgsDelta,
+		OutputIndex: &readIndex,
+		Delta:       `{"pages":""}`,
+	})
+	lookupDelta := mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventFunctionArgsDelta,
+		OutputIndex: &lookupIndex,
+		Delta:       `{"q":"x"}`,
+	})
+	require.Empty(t, readDelta)
+	require.Len(t, lookupDelta, 1)
+	assert.Equal(t, `{"q":"x"}`, lookupDelta[0].Choices[0].Delta.ToolCalls[0].Function.Arguments)
+
+	readDone := mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventOutputItemDone,
+		OutputIndex: &readIndex,
+		Item: &dto.ResponsesOutput{
+			Type:      responsesOutputTypeFunctionCall,
+			ID:        "fc_read",
+			CallId:    "call_read",
+			Name:      "Read",
+			Arguments: []byte(`{"pages":""}`),
+		},
+	})
+	require.Len(t, readDone, 1)
+	assert.Equal(t, `{"normalized":true}`, readDone[0].Choices[0].Delta.ToolCalls[0].Function.Arguments)
+}
+
+func TestFinalizeResponsesToChatStreamTransformsMatchedToolWithoutDoneEvent(t *testing.T) {
+	state := newTestResponsesStreamState()
+	state.ToolArgumentsTransform = func(toolName string, arguments string) (string, bool) {
+		if toolName != "Read" {
+			return arguments, false
+		}
+		return `{"finalized":true}`, true
+	}
+	outputIndex := 0
+
+	mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventOutputItemAdded,
+		OutputIndex: &outputIndex,
+		Item: &dto.ResponsesOutput{
+			Type:   responsesOutputTypeFunctionCall,
+			ID:     "fc_read",
+			CallId: "call_read",
+			Name:   "Read",
+		},
+	})
+	require.Empty(t, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventFunctionArgsDelta,
+		OutputIndex: &outputIndex,
+		Delta:       `{"pages":""}`,
+	}))
+
+	chunks := FinalizeResponsesToChatStream(state)
+	require.Len(t, chunks, 2)
+	assert.Equal(t, `{"finalized":true}`, chunks[0].Choices[0].Delta.ToolCalls[0].Function.Arguments)
+	require.NotNil(t, chunks[1].Choices[0].FinishReason)
+	assert.Equal(t, "tool_calls", *chunks[1].Choices[0].FinishReason)
+}
+
 func TestFinalizeResponsesToChatStreamFlushesPendingDeltaOnlyArguments(t *testing.T) {
 	state := newTestResponsesStreamState()
 	outputIndex := 2
