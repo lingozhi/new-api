@@ -41,6 +41,17 @@ func ClaudeToOpenAIRequest(claudeRequest dto.ClaudeRequest, info *relaycommon.Re
 	return openAIRequest, nil
 }
 
+func ClaudeToOpenAIResponsesRequest(claudeRequest dto.ClaudeRequest, info *relaycommon.RelayInfo) (*dto.GeneralOpenAIRequest, error) {
+	request, err := relayconvert.ClaudeMessagesRequestToOpenAIResponsesChat(claudeRequest, info)
+	if err != nil {
+		return nil, err
+	}
+	if info != nil {
+		info.AppendRequestConversion(types.RelayFormatOpenAI)
+	}
+	return request, nil
+}
+
 func GeminiToOpenAIRequest(geminiRequest *dto.GeminiChatRequest, info *relaycommon.RelayInfo) (*dto.GeneralOpenAIRequest, error) {
 	result, err := ConvertRequest(nil, info, types.RelayFormatOpenAI, geminiRequest)
 	if err != nil {

@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -76,6 +77,10 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
+	chatJSON, err = materializeResponsesOnlyRequestFields(chatJSON, request)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
 
 	chatJSON, err = relaycommon.RemoveDisabledFields(chatJSON, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
 	if err != nil {
@@ -92,12 +97,12 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 
-	var overriddenChatReq dto.GeneralOpenAIRequest
-	if err := common.Unmarshal(chatJSON, &overriddenChatReq); err != nil {
+	overriddenChatReq, err := parseChatRequestForResponses(chatJSON)
+	if err != nil {
 		return nil, types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid, types.ErrOptionWithSkipRetry())
 	}
 
-	result, err := service.ConvertRequestVia(c, info, &overriddenChatReq, types.RelayFormatOpenAI, types.RelayFormatOpenAIResponses)
+	result, err := service.ConvertRequestVia(c, info, overriddenChatReq, types.RelayFormatOpenAI, types.RelayFormatOpenAIResponses)
 	if err != nil {
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
@@ -188,6 +193,112 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 		return nil, newApiErr
 	}
 	return usage, nil
+}
+
+func materializeResponsesOnlyRequestFields(chatJSON []byte, request *dto.GeneralOpenAIRequest) ([]byte, error) {
+	if request == nil || (len(request.ResponsesTools) == 0 && len(request.ResponsesToolChoice) == 0 && request.ResponsesMaxToolCalls == nil) {
+		return chatJSON, nil
+	}
+
+	var body map[string]json.RawMessage
+	if err := common.Unmarshal(chatJSON, &body); err != nil {
+		return nil, err
+	}
+	if len(request.ResponsesTools) > 0 {
+		var tools []json.RawMessage
+		if rawTools, ok := body["tools"]; ok {
+			if err := common.Unmarshal(rawTools, &tools); err != nil {
+				return nil, fmt.Errorf("invalid intermediate tools: %w", err)
+			}
+		}
+		tools = append(tools, request.ResponsesTools...)
+		encodedTools, err := common.Marshal(tools)
+		if err != nil {
+			return nil, err
+		}
+		body["tools"] = encodedTools
+	}
+	if len(request.ResponsesToolChoice) > 0 {
+		body["tool_choice"] = append(json.RawMessage(nil), request.ResponsesToolChoice...)
+	}
+	if request.ResponsesMaxToolCalls != nil {
+		encodedLimit, err := common.Marshal(*request.ResponsesMaxToolCalls)
+		if err != nil {
+			return nil, err
+		}
+		body["max_tool_calls"] = encodedLimit
+	}
+	return common.Marshal(body)
+}
+
+func parseChatRequestForResponses(chatJSON []byte) (*dto.GeneralOpenAIRequest, error) {
+	var body map[string]json.RawMessage
+	if err := common.Unmarshal(chatJSON, &body); err != nil {
+		return nil, err
+	}
+
+	responsesTools := make([]json.RawMessage, 0)
+	if rawTools, ok := body["tools"]; ok {
+		var tools []json.RawMessage
+		if err := common.Unmarshal(rawTools, &tools); err != nil {
+			return nil, fmt.Errorf("invalid overridden tools: %w", err)
+		}
+		chatTools := make([]json.RawMessage, 0, len(tools))
+		for _, rawTool := range tools {
+			var identity struct {
+				Type string `json:"type"`
+			}
+			if err := common.Unmarshal(rawTool, &identity); err != nil {
+				return nil, fmt.Errorf("invalid overridden tool: %w", err)
+			}
+			if identity.Type == "function" {
+				chatTools = append(chatTools, rawTool)
+			} else {
+				responsesTools = append(responsesTools, rawTool)
+			}
+		}
+		encodedTools, err := common.Marshal(chatTools)
+		if err != nil {
+			return nil, err
+		}
+		body["tools"] = encodedTools
+	}
+
+	var responsesToolChoice json.RawMessage
+	if rawChoice, ok := body["tool_choice"]; ok && len(rawChoice) > 0 && string(rawChoice) != "null" {
+		var identity struct {
+			Type string `json:"type"`
+		}
+		if common.Unmarshal(rawChoice, &identity) == nil && identity.Type != "" && identity.Type != "function" {
+			responsesToolChoice = append(json.RawMessage(nil), rawChoice...)
+			delete(body, "tool_choice")
+		}
+	}
+
+	var responsesMaxToolCalls *uint
+	if rawLimit, ok := body["max_tool_calls"]; ok {
+		if string(rawLimit) != "null" {
+			var limit uint
+			if err := common.Unmarshal(rawLimit, &limit); err != nil {
+				return nil, fmt.Errorf("invalid max_tool_calls: %w", err)
+			}
+			responsesMaxToolCalls = &limit
+		}
+		delete(body, "max_tool_calls")
+	}
+
+	cleanedJSON, err := common.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	var request dto.GeneralOpenAIRequest
+	if err := common.Unmarshal(cleanedJSON, &request); err != nil {
+		return nil, err
+	}
+	request.ResponsesTools = responsesTools
+	request.ResponsesToolChoice = responsesToolChoice
+	request.ResponsesMaxToolCalls = responsesMaxToolCalls
+	return &request, nil
 }
 
 func isResponsesEventStreamContentType(contentType string) bool {
