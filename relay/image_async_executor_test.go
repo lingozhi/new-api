@@ -142,6 +142,7 @@ func TestGenericImageExecutorPreservesKIEPollingMarkerAfterMasking(t *testing.T)
 	})
 
 	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusAccepted, apiErr.StatusCode)
 	assert.ErrorIs(t, apiErr, types.ErrProviderTaskPollingRetryable)
 	retryAfter, ok := types.ProviderTaskPollingRetryAfter(apiErr)
 	assert.True(t, ok)

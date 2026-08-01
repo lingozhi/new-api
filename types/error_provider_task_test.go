@@ -21,6 +21,21 @@ func TestProviderTaskPollingRetryErrorCarriesRetryAfterThroughNewAPIError(t *tes
 	assert.ErrorIs(t, apiErr, cause)
 }
 
+func TestSetMessagePreservesProviderTaskPollingMetadata(t *testing.T) {
+	cause := errors.New("provider still generating with a sensitive credential")
+	apiErr := NewError(NewProviderTaskPollingRetryError(cause, 17*time.Second), ErrorCodeBadResponse)
+
+	apiErr.SetMessage("provider still generating with ***")
+
+	assert.Equal(t, "provider still generating with ***", apiErr.Error())
+	assert.NotContains(t, apiErr.Error(), "sensitive credential")
+	assert.ErrorIs(t, apiErr, ErrProviderTaskPollingRetryable)
+	assert.ErrorIs(t, apiErr, cause)
+	retryAfter, ok := ProviderTaskPollingRetryAfter(apiErr)
+	require.True(t, ok)
+	assert.Equal(t, 17*time.Second, retryAfter)
+}
+
 func TestProviderTaskUnsafeToResubmitErrorSurvivesWrapping(t *testing.T) {
 	cause := errors.New("accepted task failed after possible billing")
 	apiErr := NewError(NewProviderTaskUnsafeToResubmitError(cause), ErrorCodeBadResponse)
