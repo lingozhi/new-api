@@ -72,6 +72,11 @@ func TestChannelHealthOutcomeStatusScoresEmptyUpstreamAsFailure(t *testing.T) {
 	}
 }
 
+func TestChannelHealthPathNormalizesPublicAsyncImageJobsRoute(t *testing.T) {
+	assert.Equal(t, "/v1/jobs", ChannelHealthPath("/v1/jobs"))
+	assert.Equal(t, "/v1/jobs", ChannelHealthPath("/v1/jobs/task_123?include=result"))
+}
+
 // TestRecordChannelHealthOutcomeCountsEmptyUpstreamResponse verifies the
 // end-to-end effect: repeated 200-but-empty upstream responses (no apiErr, only
 // the UpstreamEmptyResponse flag) open the channel circuit, so a channel that
