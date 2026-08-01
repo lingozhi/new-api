@@ -50,6 +50,42 @@ func TestImageRequestUnmarshalUnifiedInputNormalizesFields(t *testing.T) {
 	assert.Contains(t, string(encoded), `"prompt":"a lighthouse at dusk"`)
 }
 
+func TestImageRequestAcceptsGPTImage2SupplierRequestShapes(t *testing.T) {
+	t.Run("text to image", func(t *testing.T) {
+		var request ImageRequest
+		require.NoError(t, common.Unmarshal([]byte(`{
+			"model":"gpt-image-2-text-to-image",
+			"callBackUrl":"https://example.com/callback",
+			"input":{"prompt":"a poster","aspect_ratio":"21:9","resolution":"4K"}
+		}`), &request))
+
+		assert.Equal(t, "gpt-image-2-text-to-image", request.Model)
+		assert.Equal(t, "a poster", request.Prompt)
+		assert.Equal(t, "https://example.com/callback", request.WebhookURL)
+		assert.JSONEq(t, `"21:9"`, string(request.Extra["aspect_ratio"]))
+		assert.JSONEq(t, `"4K"`, string(request.Extra["resolution"]))
+	})
+
+	t.Run("image to image with sixteen inputs", func(t *testing.T) {
+		inputURLs := make([]string, MaxUnifiedImageInputURLs)
+		for index := range inputURLs {
+			inputURLs[index] = fmt.Sprintf("https://example.com/%d.png", index)
+		}
+		encodedURLs, err := common.Marshal(inputURLs)
+		require.NoError(t, err)
+		body := fmt.Sprintf(`{
+			"model":"gpt-image-2-image-to-image",
+			"input":{"prompt":"restyle","input_urls":%s,"aspect_ratio":"1:2","resolution":"2K"}
+		}`, encodedURLs)
+
+		var request ImageRequest
+		require.NoError(t, common.Unmarshal([]byte(body), &request))
+		urls, err := request.ImageInputURLs()
+		require.NoError(t, err)
+		assert.Equal(t, inputURLs, urls)
+	})
+}
+
 func TestImageRequestUnmarshalUnifiedInputAcceptsEquivalentDuplicateValues(t *testing.T) {
 	var request ImageRequest
 	require.NoError(t, common.Unmarshal([]byte(`{

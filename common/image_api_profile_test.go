@@ -67,6 +67,50 @@ func TestGPTImage2ProfileAndValidatorShareCombinationMatrix(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestGPTImage2SupplierAliasesPublishExactParameterMatrix(t *testing.T) {
+	tests := []struct {
+		model              string
+		operation          string
+		requiresImageInput bool
+		combinationCount   int
+	}{
+		{model: "gpt-image-2-text-to-image", operation: "generation", combinationCount: 35},
+		{model: "gpt-image-2-image-to-image", operation: "edit", requiresImageInput: true, combinationCount: 41},
+	}
+	wantAspectRatios := []string{
+		"auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5",
+		"16:9", "9:16", "2:1", "1:2", "3:1", "1:3", "21:9", "9:21",
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			profile := ImageAPIProfileForModel(tt.model)
+
+			assert.Equal(t, []string{tt.operation}, profile.Operations)
+			assert.Equal(t, wantAspectRatios, imageAPIParameterByName(t, profile, "aspect_ratio").EnumValues)
+			assert.Equal(t, "auto", imageAPIParameterByName(t, profile, "aspect_ratio").Default)
+			assert.Equal(t, []string{"1K", "2K", "4K"}, imageAPIParameterByName(t, profile, "resolution").EnumValues)
+			assert.Equal(t, "1K", imageAPIParameterByName(t, profile, "resolution").Default)
+			assert.NotContains(t, parameterNames(profile.Parameters), "size")
+			assert.NotContains(t, parameterNames(profile.Parameters), "quality")
+			assert.NotContains(t, parameterNames(profile.Parameters), "output_format")
+			assert.NotContains(t, parameterNames(profile.Parameters), "background")
+			assert.NotContains(t, parameterNames(profile.Parameters), "moderation")
+
+			imageInput := imageAPIParameterByName(t, profile, "image_input")
+			assert.Equal(t, tt.requiresImageInput, imageInput.Required)
+			require.NotNil(t, imageInput.MaxItems)
+			assert.Equal(t, MaxImageInputURLs, *imageInput.MaxItems)
+
+			require.Len(t, profile.Constraints, 1)
+			assert.Equal(t, []string{"resolution", "aspect_ratio"}, profile.Constraints[0].Fields)
+			assert.Len(t, profile.Constraints[0].Combinations, tt.combinationCount)
+			assert.NotContains(t, profile.Constraints[0].Combinations, ImageSizeCombination{Resolution: "2K", AspectRatio: "auto"})
+			assert.NotContains(t, profile.Constraints[0].Combinations, ImageSizeCombination{Resolution: "4K", AspectRatio: "1:1"})
+		})
+	}
+}
+
 func TestGenericImageAPIProfileIsConservative(t *testing.T) {
 	profile := ImageAPIProfileForModel("future-provider-image-model")
 

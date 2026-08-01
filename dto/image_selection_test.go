@@ -8,6 +8,61 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestResolveGPTImage2SupplierAliasCombinationMatrix(t *testing.T) {
+	allRatios := []string{
+		"auto", "1:1", "3:2", "2:3", "4:3", "3:4", "5:4", "4:5",
+		"16:9", "9:16", "2:1", "1:2", "3:1", "1:3", "21:9", "9:21",
+	}
+	tests := []struct {
+		model       string
+		resolution  string
+		unsupported map[string]bool
+	}{
+		{model: "gpt-image-2-text-to-image", resolution: "1K"},
+		{model: "gpt-image-2-text-to-image", resolution: "2K", unsupported: map[string]bool{"auto": true, "5:4": true, "4:5": true, "3:1": true, "1:3": true, "9:21": true}},
+		{model: "gpt-image-2-text-to-image", resolution: "4K", unsupported: map[string]bool{"auto": true, "1:1": true, "5:4": true, "4:5": true, "3:1": true, "1:3": true, "9:21": true}},
+		{model: "gpt-image-2-image-to-image", resolution: "1K"},
+		{model: "gpt-image-2-image-to-image", resolution: "2K", unsupported: map[string]bool{"auto": true, "5:4": true, "4:5": true}},
+		{model: "gpt-image-2-image-to-image", resolution: "4K", unsupported: map[string]bool{"auto": true, "1:1": true, "5:4": true, "4:5": true}},
+	}
+
+	for _, tt := range tests {
+		for _, ratio := range allRatios {
+			name := tt.model + "/" + tt.resolution + "/" + ratio
+			t.Run(name, func(t *testing.T) {
+				request := &ImageRequest{
+					Model:  tt.model,
+					Prompt: "compatibility test",
+					Extra: map[string]json.RawMessage{
+						"resolution":   json.RawMessage(`"` + tt.resolution + `"`),
+						"aspect_ratio": json.RawMessage(`"` + ratio + `"`),
+					},
+				}
+				requirement, err := ResolveImageSelectionRequirementWithModelDefaults(request, tt.model, ImageOperationGeneration)
+				if tt.unsupported[ratio] {
+					require.Error(t, err)
+					assert.Contains(t, err.Error(), "not supported")
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, tt.resolution, requirement.Resolution)
+				assert.Equal(t, ratio, requirement.AspectRatio)
+				assert.Empty(t, requirement.Size)
+			})
+		}
+	}
+}
+
+func TestResolveGPTImage2SupplierAliasDefaultsToAutoOneK(t *testing.T) {
+	request := &ImageRequest{Model: "gpt-image-2-text-to-image", Prompt: "compatibility test"}
+
+	requirement, err := ResolveImageSelectionRequirementWithModelDefaults(request, request.Model, ImageOperationGeneration)
+
+	require.NoError(t, err)
+	assert.Equal(t, "1K", requirement.Resolution)
+	assert.Equal(t, "auto", requirement.AspectRatio)
+}
+
 func TestResolveImageSelectionRequirementCanonicalizesGPTImageVariant(t *testing.T) {
 	request := &ImageRequest{
 		Model:   "gpt-image-2",
