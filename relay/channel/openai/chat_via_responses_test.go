@@ -87,6 +87,52 @@ func TestOaiResponsesToChatStreamHandlerConvertsSSEOrderAndUsage(t *testing.T) {
 	)
 }
 
+func TestOaiResponsesToChatStreamHandlerOmitsEmptyReadPagesForLunaClaude(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"provider-luna","created_at":1710000000}}`,
+		`data: {"type":"response.output_text.delta","delta":"I will inspect the image."}`,
+		`data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"Read"}}`,
+		`data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"{\"file_path\":\"/tmp/sentinel.png\",\"limit\":2000,"}`,
+		`data: {"type":"response.function_call_arguments.delta","output_index":1,"delta":"\"pages\":\"\"}"}`,
+		`data: {"type":"response.function_call_arguments.done","output_index":1,"item_id":"fc_1"}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"provider-luna","status":"completed","usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+	info.OriginModelName = "gpt-5.6-luna"
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 5, usage.TotalTokens)
+	got := recorder.Body.String()
+	require.Contains(t, got, `"type":"text_delta","text":"I will inspect the image."`)
+	require.Contains(t, got, `"name":"Read"`)
+	require.JSONEq(t, `{"file_path":"/tmp/sentinel.png","limit":2000}`, claudePartialJSON(t, got))
+	require.Contains(t, got, "event: message_stop")
+}
+
+func TestOaiResponsesToChatStreamHandlerPreservesReadPagesOutsideLuna(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"Read"}}`,
+		`data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"file_path\":\"/tmp/doc.pdf\",\"pages\":\"1-5\"}"}`,
+		`data: {"type":"response.function_call_arguments.done","output_index":0,"item_id":"fc_1"}`,
+		`data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-test","status":"completed","usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+	info.OriginModelName = "gpt-test"
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.JSONEq(t, `{"file_path":"/tmp/doc.pdf","pages":"1-5"}`, claudePartialJSON(t, recorder.Body.String()))
+}
+
 func TestOaiResponsesToChatHandlerRejectsCompletedResponseWithoutVisibleOutput(t *testing.T) {
 	body := `{"id":"resp_1","model":"gpt-test","status":"completed","output":[],"usage":{"input_tokens":2,"output_tokens":1,"total_tokens":3}}`
 	c, recorder, resp, info := newResponsesChatTestContext(t, body, false)
@@ -903,6 +949,25 @@ func requireOrderedSubstrings(t *testing.T, s string, parts ...string) {
 		require.NotEqualf(t, -1, idx, "missing %q after byte offset %d", part, offset)
 		offset += idx + len(part)
 	}
+}
+
+func claudePartialJSON(t *testing.T, stream string) string {
+	t.Helper()
+	var partial strings.Builder
+	for _, line := range strings.Split(stream, "\n") {
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == line {
+			continue
+		}
+		var response dto.ClaudeResponse
+		if err := common.UnmarshalJsonStr(data, &response); err != nil {
+			continue
+		}
+		if response.Delta != nil && response.Delta.PartialJson != nil {
+			partial.WriteString(*response.Delta.PartialJson)
+		}
+	}
+	return partial.String()
 }
 
 type readError struct {
