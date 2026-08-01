@@ -346,10 +346,10 @@ func TestImageTaskRejectedProviderCanAtomicallySwitchChannel(t *testing.T) {
 	truncateTables(t)
 	now := common.GetTimestamp()
 	task := &Task{
-		TaskID:    "task_image_channel_failover",
-		Platform:  constant.TaskPlatformOpenAIImage,
-		ChannelId: 116,
-		Status:    TaskStatusNotStart,
+		TaskID:     "task_image_channel_failover",
+		Platform:   constant.TaskPlatformOpenAIImage,
+		ChannelId:  116,
+		Status:     TaskStatusNotStart,
 		SubmitTime: now,
 		PrivateData: TaskPrivateData{
 			ChannelKeyHash:       "old-key-hash",

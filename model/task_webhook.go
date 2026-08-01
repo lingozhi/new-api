@@ -240,6 +240,71 @@ func (task *Task) ReopenRejectedImageProviderCall(checkpointData []byte) (bool, 
 	return true, nil
 }
 
+// SwitchRejectedImageProviderChannel atomically clears a definitive provider
+// rejection fence and returns the task to the submission queue on a different
+// channel. It must never be used for transport or response-read failures,
+// whose upstream acceptance state is ambiguous.
+func (task *Task) SwitchRejectedImageProviderChannel(channelID int, privateData TaskPrivateData, checkpointData []byte, lastError string) (bool, error) {
+	if task == nil || task.ID == 0 || task.TaskID == "" {
+		return false, errors.New("persisted image task is required")
+	}
+	if channelID <= 0 || channelID == task.ChannelId {
+		return false, errors.New("different image provider channel is required")
+	}
+	if len(checkpointData) == 0 {
+		return false, errors.New("switched image task checkpoint is required")
+	}
+	if len(lastError) > 2000 {
+		lastError = lastError[:2000]
+	}
+	now := common.GetTimestamp()
+	result := DB.Model(&Task{}).
+		Where(
+			"id = ? AND task_id = ? AND platform = ? AND status = ? AND attempt = ? AND channel_id = ?",
+			task.ID,
+			task.TaskID,
+			constant.TaskPlatformOpenAIImage,
+			TaskStatusCheckpointPending,
+			task.Attempt,
+			task.ChannelId,
+		).
+		Updates(map[string]any{
+			"channel_id":             channelID,
+			"private_data":           privateData,
+			"checkpoint_data":        checkpointData,
+			"status":                 TaskStatusNotStart,
+			"progress":               "10%",
+			"start_time":             0,
+			"provider_attempts":      gorm.Expr("provider_attempts + ?", 1),
+			"provider_next_retry_at": now,
+			"provider_error":         lastError,
+			"worker_attempts":        0,
+			"worker_next_retry_at":   0,
+			"worker_error":           "",
+			"updated_at":             now,
+		})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected != 1 {
+		return false, nil
+	}
+	task.ChannelId = channelID
+	task.PrivateData = privateData
+	task.CheckpointData = append(task.CheckpointData[:0], checkpointData...)
+	task.Status = TaskStatusNotStart
+	task.Progress = "10%"
+	task.StartTime = 0
+	task.ProviderAttempts++
+	task.ProviderNextRetryAt = now
+	task.ProviderError = lastError
+	task.WorkerAttempts = 0
+	task.WorkerNextRetryAt = 0
+	task.WorkerError = ""
+	task.UpdatedAt = now
+	return true, nil
+}
+
 func (task *Task) MarkImageProviderRetry(nextRetryAt int64, lastError string) (bool, error) {
 	return task.markImageProviderRetry(nextRetryAt, lastError, "40%")
 }

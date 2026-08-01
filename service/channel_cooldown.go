@@ -300,6 +300,38 @@ func CooldownChannelForRetry(channelError types.ChannelError, err *types.NewAPIE
 	model.CooldownChannel(channelError.ChannelId, reason, duration)
 }
 
+// QuarantineAsyncImageChannel removes a definitively failing image channel
+// from routing before the durable task is switched. Authentication and access
+// failures are auto-disabled; transient capacity failures open a bounded
+// circuit so the channel can recover without operator intervention.
+func QuarantineAsyncImageChannel(channelError types.ChannelError, err *types.NewAPIError) {
+	if err == nil {
+		return
+	}
+	statusCode := err.StatusCode
+	if err.UpstreamStatusCode != 0 {
+		statusCode = err.UpstreamStatusCode
+	}
+	if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden {
+		reason := fmt.Sprintf("async_image_access_rejected status=%d code=%s error=%s", statusCode, err.GetErrorCode(), err.Error())
+		DisableChannel(channelError, reason)
+		cooldownChannelPersistentWithoutFallback(channelError.ChannelId, reason, ChannelCooldownDuration)
+		return
+	}
+	duration := UpstreamErrorCooldownDuration
+	class := "async_image_upstream_unavailable"
+	if IsUpstreamRateLimitError(err) || statusCode == http.StatusTooManyRequests {
+		duration = UpstreamRateLimitCooldownDuration
+		class = "async_image_rate_limited"
+	} else if statusCode >= http.StatusInternalServerError {
+		duration = ShortChannelCooldownDuration
+		class = "async_image_transient_failure"
+	}
+	reason := fmt.Sprintf("%s status=%d code=%s error=%s", class, statusCode, err.GetErrorCode(), err.Error())
+	common.SysLog(fmt.Sprintf("生图通道熔断：#%d，持续 %s，原因：%s", channelError.ChannelId, duration, reason))
+	cooldownChannelPersistentWithoutFallback(channelError.ChannelId, reason, duration)
+}
+
 // CooldownSlowChannel cools a channel for the full ChannelCooldownDuration when
 // an otherwise-successful request had a first-response-time above
 // SlowChannelFRTThreshold, i.e. the upstream is up but unstably slow.

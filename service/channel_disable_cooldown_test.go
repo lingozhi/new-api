@@ -4,8 +4,10 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/assert"
@@ -59,6 +61,32 @@ func TestShouldDisableChannelIgnoresPreCommitStreamCapacity(t *testing.T) {
 	)
 
 	assert.False(t, ShouldDisableChannel(err), "a transient pre-commit capacity signal must use stream-quality cooldowns, not permanent auto-disable")
+}
+
+func TestQuarantineAsyncImageChannelBlocksCoolingFallbackImmediately(t *testing.T) {
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	model.ClearChannelCacheForTest()
+	t.Cleanup(func() {
+		model.CooldownChannel(99117, "test cleanup", -time.Second)
+		model.ClearChannelCacheForTest()
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+	priority := int64(10)
+	weight := uint(100)
+	channel := &model.Channel{Id: 99117, Type: 1, Key: "test-key", Status: common.ChannelStatusEnabled, Name: "image failover", Priority: &priority, Weight: &weight}
+	model.SetChannelCacheForTest(map[int]*model.Channel{channel.Id: channel}, map[string]map[string][]int{
+		"default": {"gpt-image-2": {channel.Id}},
+	})
+	apiErr := types.NewErrorWithStatusCode(errors.New("provider unavailable"), types.ErrorCodeBadResponse, http.StatusServiceUnavailable)
+	apiErr.UpstreamStatusCode = http.StatusServiceUnavailable
+
+	QuarantineAsyncImageChannel(*types.NewChannelError(channel.Id, channel.Type, channel.Name, false, channel.Key, false), apiErr)
+
+	assert.True(t, model.IsChannelCoolingDown(channel.Id))
+	selected, err := model.GetRandomSatisfiedChannelWithOptions("default", "gpt-image-2", 0, model.ChannelSelectionOptions{AllowCoolingFallback: true})
+	assert.NoError(t, err)
+	assert.Nil(t, selected, "a failed image channel must not return as a cooling fallback")
 }
 
 func TestShouldCooldownChannelForUpstreamErrorCoolsMalformedResponses(t *testing.T) {

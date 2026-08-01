@@ -95,8 +95,10 @@ func TestSwitchRejectedAsyncImageChannelUsesHealthyCompatibleRoute(t *testing.T)
 	healthy := &model.Channel{Id: 118, Type: constant.ChannelTypeOpenAI, Key: "healthy-key", Status: common.ChannelStatusEnabled, Name: "healthy", CreatedTime: 1700000200, BaseURL: &baseB, Models: "gpt-image-2", Group: "default", Priority: &priority, Weight: &weight}
 	profile := &dto.ImageRoutingConfig{Version: dto.ImageRoutingVersion1, Profiles: []dto.ImageRoutingProfile{{
 		Model: "gpt-image-2", Protocol: dto.ImageRoutingProtocolImagesGenerations, UpstreamPath: "/v1/images/generations",
-		Operations: []dto.ImageOperation{dto.ImageOperationGeneration}, Sizes: []string{"1024x1024"}, DefaultSize: "1024x1024", MaxOutputImages: 1,
-		VerificationStatus: dto.ImageRoutingVerificationProductionVerified,
+		Operations: []dto.ImageOperation{dto.ImageOperationGeneration}, AspectRatios: []string{"1:1"}, Sizes: []string{"1024x1024"}, Qualities: []string{"low"}, OutputFormats: []string{"png"},
+		DefaultAspectRatio: "1:1", DefaultSize: "1024x1024", DefaultQuality: "low", DefaultOutputFormat: "png", MaxOutputImages: 1,
+		AllowedCombinations: []dto.ImageRoutingCombination{{Operation: dto.ImageOperationGeneration, AspectRatio: "1:1", Size: "1024x1024", Quality: "low", OutputFormat: "png"}},
+		VerificationStatus:  dto.ImageRoutingVerificationProductionVerified,
 	}}}
 	failed.SetOtherSettings(dto.ChannelOtherSettings{ImageRouting: profile})
 	healthy.SetOtherSettings(dto.ChannelOtherSettings{ImageRouting: profile})
@@ -108,10 +110,10 @@ func TestSwitchRejectedAsyncImageChannelUsesHealthyCompatibleRoute(t *testing.T)
 
 	payload := asyncImageTaskPayload{
 		Version: asyncImagePayloadVersion, Executor: AsyncImageExecutorAdaptor,
-		RelayMode: relayconstant.RelayModeImagesGenerations,
+		RelayMode:            relayconstant.RelayModeImagesGenerations,
 		ImageRoutingProtocol: dto.ImageRoutingProtocolImagesGenerations, ImageRoutingUpstreamPath: "/v1/images/generations",
-		ImageRequirement: &dto.ImageSelectionRequirement{Operation: dto.ImageOperationGeneration, Size: "1024x1024", N: 1},
-		Request: &dto.ImageRequest{Model: "gpt-image-2", Prompt: "fail over"},
+		ImageRequirement: &dto.ImageSelectionRequirement{Operation: dto.ImageOperationGeneration, AspectRatio: "1:1", Size: "1024x1024", Quality: "low", OutputFormat: "png", N: 1},
+		Request:          &dto.ImageRequest{Model: "gpt-image-2", Prompt: "fail over"},
 		PreparedRequest: &PreparedAsyncImageRequest{
 			Body: []byte(`{"model":"gpt-image-2","prompt":"fail over","size":"1024x1024"}`), ContentType: "application/json",
 			RequestURLPath: "/v1/images/generations", ImageRoutingProtocol: dto.ImageRoutingProtocolImagesGenerations,
@@ -140,6 +142,13 @@ func TestSwitchRejectedAsyncImageChannelUsesHealthyCompatibleRoute(t *testing.T)
 	started, err := task.BeginImageTaskProviderCall(encrypted)
 	require.NoError(t, err)
 	require.True(t, started)
+	selected, err := model.GetRandomSatisfiedChannelWithOptions("default", "gpt-image-2", 0, model.ChannelSelectionOptions{
+		ExcludedChannelIDs: map[int]struct{}{failed.Id: {}}, ImageRequirement: payload.ImageRequirement,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, healthy.Id, selected.Id)
+	assert.True(t, compatibleAsyncImageFailoverChannel(failed, healthy, task, &payload))
 
 	switched, err := switchRejectedAsyncImageChannel(context.Background(), task, &payload, "upstream returned status 503")
 	require.NoError(t, err)

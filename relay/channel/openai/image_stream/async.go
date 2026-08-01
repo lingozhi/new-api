@@ -126,6 +126,7 @@ type asyncImageTaskPayload struct {
 	ChannelCreateTime          int64                          `json:"channel_create_time,omitempty"`
 	ProviderStored             bool                           `json:"provider_response_stored,omitempty"`
 	ArtifactStored             bool                           `json:"artifact_stored,omitempty"`
+	AttemptedChannelIDs        []int                          `json:"attempted_channel_ids,omitempty"`
 	// ProviderCallStarted was written before the upstream request. A checkpoint
 	// with this bit but no stored response is ambiguous after restart and must
 	// never be resubmitted automatically.
@@ -614,6 +615,7 @@ func SubmitAsyncImage(c *gin.Context, info *relaycommon.RelayInfo, req *dto.Imag
 		PreparedRequest:            preparedRequest,
 		ExecutionDestinationHash:   executionDestinationHash,
 		ExecutionDestinationStored: true,
+		AttemptedChannelIDs:        []int{info.ChannelId},
 	}
 	if info.ChannelMeta != nil {
 		payload.ChannelType = info.ChannelType
@@ -2125,6 +2127,16 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 			}
 			definitiveResponse := errors.Is(apiErr, ErrGenericImageDefinitiveResponse)
 			if definitiveResponse && genericUpstream == nil && payload.ProviderCallStarted {
+				service.RecordChannelHealthOutcome(genericChannel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), genericInfo, genericAttemptStart, apiErr, false)
+				channelError := *types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan())
+				service.QuarantineAsyncImageChannel(channelError, apiErr)
+				switched, switchErr := switchRejectedAsyncImageChannel(ctx, task, &payload, apiErr.Error())
+				if switchErr != nil {
+					return false, failAmbiguousAsyncImageTask(ctx, task)
+				}
+				if switched {
+					return false, errAsyncImageRetryScheduled
+				}
 				reopenedPayload := payload
 				reopenedPayload.ProviderCallStarted = false
 				checkpointData, checkpointErr := encodeAsyncImageTaskPayload(reopenedPayload)
@@ -2366,11 +2378,19 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 			statusCode := asyncImageUpstreamStatus(upstreamErr)
 			apiError := types.NewErrorWithStatusCode(upstreamErr, types.ErrorCodeBadResponse, statusCode, types.ErrOptionWithSkipRetry())
 			service.RecordChannelHealthOutcome(channel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), nil, attemptStart, apiError, false)
-			service.CooldownChannelForUpstreamError(*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, apiKey, channel.GetAutoBan()), apiError)
+			channelError := *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, apiKey, channel.GetAutoBan())
+			service.QuarantineAsyncImageChannel(channelError, apiError)
 		}
 		if upstreamErr != nil {
 			var upstreamResponseErr *asyncImageUpstreamError
 			if errors.As(upstreamErr, &upstreamResponseErr) && upstreamResponseErr.definitiveResponse {
+				switched, switchErr := switchRejectedAsyncImageChannel(ctx, task, &payload, upstreamErr.Error())
+				if switchErr != nil {
+					return false, failAmbiguousAsyncImageTask(ctx, task)
+				}
+				if switched {
+					return false, errAsyncImageRetryScheduled
+				}
 				reopenedPayload := payload
 				reopenedPayload.ProviderCallStarted = false
 				checkpointData, checkpointErr := encodeAsyncImageTaskPayload(reopenedPayload)
@@ -2941,6 +2961,147 @@ func beginAsyncImageProviderCall(task *model.Task, payload *asyncImageTaskPayloa
 	}
 	*payload = startedPayload
 	return true, nil
+}
+
+func switchRejectedAsyncImageChannel(ctx context.Context, task *model.Task, payload *asyncImageTaskPayload, lastError string) (bool, error) {
+	if task == nil || payload == nil || payload.Request == nil || task.ProviderAttempts+1 >= asyncImageProviderAttempts {
+		return false, nil
+	}
+	failedChannel, err := model.CacheGetChannel(task.ChannelId)
+	if err != nil {
+		return false, fmt.Errorf("load rejected image channel: %w", err)
+	}
+	excluded := make(map[int]struct{}, len(payload.AttemptedChannelIDs)+1)
+	for _, channelID := range payload.AttemptedChannelIDs {
+		if channelID > 0 {
+			excluded[channelID] = struct{}{}
+		}
+	}
+	excluded[task.ChannelId] = struct{}{}
+	requestPath := asyncImageHealthPath(*payload)
+
+	for {
+		candidate, selectErr := model.GetRandomSatisfiedChannelWithOptions(task.Group, task.Properties.OriginModelName, 0, model.ChannelSelectionOptions{
+			ExcludedChannelIDs:   excluded,
+			ImageRequirement:     payload.ImageRequirement,
+			AllowCoolingFallback: false,
+			RequestPath:          requestPath,
+			Path:                 service.ChannelHealthPath(requestPath),
+		})
+		if selectErr != nil {
+			return false, fmt.Errorf("select image failover channel: %w", selectErr)
+		}
+		if candidate == nil {
+			return false, nil
+		}
+		excluded[candidate.Id] = struct{}{}
+		if !compatibleAsyncImageFailoverChannel(failedChannel, candidate, task, payload) {
+			continue
+		}
+
+		key, keyIndex, keyErr := candidate.GetNextEnabledKey()
+		if keyErr != nil {
+			continue
+		}
+		destinationHash, fingerprintErr := AsyncImageExecutionDestinationFingerprint(candidate.GetBaseURL(), candidate.GetSetting().Proxy)
+		if fingerprintErr != nil {
+			return false, fingerprintErr
+		}
+		nextPayload := *payload
+		nextPayload.ProviderCallStarted = false
+		nextPayload.ProviderStored = false
+		nextPayload.ArtifactStored = false
+		nextPayload.ChannelType = candidate.Type
+		nextPayload.ChannelCreateTime = candidate.CreatedTime
+		nextPayload.ChannelBaseURL = candidate.GetBaseURL()
+		nextPayload.ChannelProxy = candidate.GetSetting().Proxy
+		nextPayload.ExecutionDestinationHash = destinationHash
+		nextPayload.ExecutionDestinationStored = true
+		nextPayload.AttemptedChannelIDs = append(append([]int(nil), payload.AttemptedChannelIDs...), candidate.Id)
+		if nextPayload.PreparedRequest != nil {
+			prepared := *nextPayload.PreparedRequest
+			apiType, _ := common.ChannelType2APIType(candidate.Type)
+			prepared.APIType = apiType
+			prepared.ChannelType = candidate.Type
+			prepared.ChannelCreateTime = candidate.CreatedTime
+			prepared.ChannelBaseURL = candidate.GetBaseURL()
+			prepared.ExecutionDestinationHash = destinationHash
+			prepared.ExecutionDestinationStored = true
+			prepared.APIVersion = candidate.Other
+			prepared.Organization = ""
+			if candidate.OpenAIOrganization != nil {
+				prepared.Organization = *candidate.OpenAIOrganization
+			}
+			channelSetting := candidate.GetSetting()
+			channelSetting.Proxy = ""
+			channelSetting.SystemPrompt = ""
+			channelSetting.SystemPromptOverride = false
+			prepared.ChannelSetting = &channelSetting
+			channelOtherSettings := candidate.GetOtherSettings()
+			channelOtherSettings.AdvancedCustom = nil
+			prepared.ChannelOtherSettings = &channelOtherSettings
+			overrideHash, overrideErr := AsyncImageExecutionOverrideFingerprint(candidate.GetParamOverride(), candidate.GetHeaderOverride())
+			if overrideErr != nil {
+				return false, overrideErr
+			}
+			prepared.ExecutionOverrideHash = overrideHash
+			prepared.ExecutionOverrideStored = true
+			nextPayload.PreparedRequest = &prepared
+		}
+		checkpointData, encodeErr := encodeAsyncImageTaskPayload(nextPayload)
+		if encodeErr != nil {
+			return false, encodeErr
+		}
+		storedCheckpoint, encryptErr := model.EncryptImageTaskArtifactCheckpoint(checkpointData)
+		if encryptErr != nil {
+			return false, encryptErr
+		}
+		nextPrivate := task.PrivateData
+		nextPrivate.ChannelKeyHash = common.GenerateHMAC(key)
+		nextPrivate.ChannelMultiKeyIndex = keyIndex
+		switched, switchErr := task.SwitchRejectedImageProviderChannel(candidate.Id, nextPrivate, storedCheckpoint, common.MaskSensitiveInfo(lastError))
+		if switchErr != nil || !switched {
+			return switched, switchErr
+		}
+		*payload = nextPayload
+		logger.LogWarn(ctx, fmt.Sprintf("async image channel switched: task=%s from=#%d to=#%d", task.TaskID, failedChannel.Id, candidate.Id))
+		return true, nil
+	}
+}
+
+func compatibleAsyncImageFailoverChannel(failed, candidate *model.Channel, task *model.Task, payload *asyncImageTaskPayload) bool {
+	if failed == nil || candidate == nil || task == nil || payload == nil || candidate.Status != common.ChannelStatusEnabled {
+		return false
+	}
+	if failed.Type != candidate.Type || failed.GetModelMapping() != candidate.GetModelMapping() {
+		return false
+	}
+	apiType, _ := common.ChannelType2APIType(candidate.Type)
+	if payload.PreparedRequest != nil && payload.PreparedRequest.APIType != apiType {
+		return false
+	}
+	if payload.PreparedRequest != nil {
+		overrideHash, err := AsyncImageExecutionOverrideFingerprint(candidate.GetParamOverride(), candidate.GetHeaderOverride())
+		if err != nil {
+			return false
+		}
+		if payload.PreparedRequest.ExecutionOverrideStored && payload.PreparedRequest.ExecutionOverrideHash != overrideHash {
+			return false
+		}
+		if !payload.PreparedRequest.ExecutionOverrideStored && (len(candidate.GetParamOverride()) > 0 || len(candidate.GetHeaderOverride()) > 0) {
+			return false
+		}
+	}
+	settings := candidate.GetOtherSettings()
+	if settings.ImageRouting == nil {
+		return payload.ImageRoutingProtocol == "" && payload.ImageRoutingUpstreamPath == ""
+	}
+	profile, ok := settings.ImageRouting.ProfileForModel(task.Properties.OriginModelName)
+	if !ok || profile == nil || payload.ImageRequirement == nil || !settings.ImageRouting.Supports(task.Properties.OriginModelName, *payload.ImageRequirement) {
+		return false
+	}
+	protocol, upstreamPath, ok := profile.RouteForOperation(payload.ImageRequirement.Operation)
+	return ok && protocol == payload.ImageRoutingProtocol && upstreamPath == payload.ImageRoutingUpstreamPath
 }
 
 func imageTaskChannelKey(channel *model.Channel, private model.TaskPrivateData) (string, error) {
