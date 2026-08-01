@@ -1,6 +1,7 @@
 package oairesponses
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/dto"
@@ -279,6 +280,61 @@ func TestResponsesStreamEventToChatChunksUsesTerminalDoneOutput(t *testing.T) {
 	assert.Equal(t, `{"q":"x"}`, tool.Function.Arguments)
 	require.NotNil(t, chunks[3].Choices[0].FinishReason)
 	assert.Equal(t, "tool_calls", *chunks[3].Choices[0].FinishReason)
+}
+
+func TestResponsesStreamEventToChatChunksDoesNotReplayToolFromTerminalOutput(t *testing.T) {
+	state := newTestResponsesStreamState()
+	outputIndex := 0
+
+	var chunks []dto.ChatCompletionsStreamResponse
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventOutputItemAdded,
+		OutputIndex: &outputIndex,
+		Item: &dto.ResponsesOutput{
+			Type:   responsesOutputTypeFunctionCall,
+			ID:     "fc_1",
+			CallId: "call_1",
+			Name:   "Skill",
+		},
+	})...)
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type:        responsesEventFunctionArgsDelta,
+		OutputIndex: &outputIndex,
+		ItemID:      "fc_1",
+		Delta:       `{"skill":"opone-canvas-agent:drama-director"}`,
+	})...)
+	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
+		Type: responsesEventCompleted,
+		Response: &dto.OpenAIResponsesResponse{
+			Status: []byte(`"completed"`),
+			Output: []dto.ResponsesOutput{
+				{
+					Type:      responsesOutputTypeFunctionCall,
+					ID:        "fc_1",
+					CallId:    "call_1",
+					Name:      "Skill",
+					Arguments: []byte(`{"skill":"opone-canvas-agent:drama-director"}`),
+				},
+			},
+		},
+	})...)
+
+	var toolNameChunks int
+	var arguments strings.Builder
+	for _, chunk := range chunks {
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		for _, toolCall := range chunk.Choices[0].Delta.ToolCalls {
+			if toolCall.Function.Name != "" {
+				toolNameChunks++
+			}
+			arguments.WriteString(toolCall.Function.Arguments)
+		}
+	}
+
+	assert.Equal(t, 1, toolNameChunks)
+	assert.Equal(t, `{"skill":"opone-canvas-agent:drama-director"}`, arguments.String())
 }
 
 func TestFinalizeResponsesToChatStreamFlushesPendingDeltaOnlyArguments(t *testing.T) {
