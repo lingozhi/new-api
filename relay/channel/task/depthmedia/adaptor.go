@@ -25,22 +25,29 @@ const (
 	ActionDepth = "depth"
 	ActionMedia = "media"
 
-	maxVideoBillingSeconds = 10 * 60
+	maxVideoBillingSeconds           = 10 * 60
+	maxVideoBackgroundBillingSeconds = 60
 
-	ModelDepthVideo        = "depth-anything-v2-small-video"
-	ModelSubtitleRemove    = "subtitle-remove"
-	ModelBackgroundFast    = "background-remove-fast"
-	ModelBackgroundQuality = "background-remove-quality"
-	ModelBackgroundMatting = "background-remove-matting"
-	ModelUpscaleFast2X     = "image-upscale-fast-2x"
-	ModelUpscaleFast4X     = "image-upscale-fast-4x"
-	ModelUpscaleFidelity4X = "image-upscale-fidelity-4x"
-	ModelUpscaleSharp4X    = "image-upscale-sharp-4x"
+	ModelDepthVideo             = "depth-anything-v2-small-video"
+	ModelSubtitleRemove         = "subtitle-remove"
+	ModelBackgroundFast         = "background-remove-fast"
+	ModelBackgroundQuality      = "background-remove-quality"
+	ModelBackgroundMatting      = "background-remove-matting"
+	ModelUpscaleFast2X          = "image-upscale-fast-2x"
+	ModelUpscaleFast4X          = "image-upscale-fast-4x"
+	ModelUpscaleFidelity4X      = "image-upscale-fidelity-4x"
+	ModelUpscaleSharp4X         = "image-upscale-sharp-4x"
+	ModelVideoUpscaleQuality2X  = "video-upscale-quality-2x"
+	ModelVideoUpscaleQuality4X  = "video-upscale-quality-4x"
+	ModelVideoBackgroundFast    = "video-background-remove-fast"
+	ModelVideoBackgroundQuality = "video-background-remove-quality"
 
 	PublicModelDepthVideo       = "depth-video"
 	PublicModelSubtitleRemove   = ModelSubtitleRemove
 	PublicModelBackgroundRemove = "background-remove"
 	PublicModelImageUpscale     = "image-upscale"
+	PublicModelVideoUpscale     = "video-upscale"
+	PublicModelVideoBackground  = "video-background-remove"
 )
 
 var supportedModels = []string{
@@ -53,6 +60,10 @@ var supportedModels = []string{
 	ModelUpscaleFast4X,
 	ModelUpscaleFidelity4X,
 	ModelUpscaleSharp4X,
+	ModelVideoUpscaleQuality2X,
+	ModelVideoUpscaleQuality4X,
+	ModelVideoBackgroundFast,
+	ModelVideoBackgroundQuality,
 }
 
 type requestPayload struct {
@@ -114,6 +125,26 @@ func ResolveModel(operation, quality string, scale int) (string, error) {
 		if scale == 0 && (normalizedQuality == "" || normalizedQuality == "quality") {
 			return ModelSubtitleRemove, nil
 		}
+	case "video_upscale":
+		if strings.EqualFold(strings.TrimSpace(quality), "quality") {
+			switch scale {
+			case 2:
+				return ModelVideoUpscaleQuality2X, nil
+			case 4:
+				return ModelVideoUpscaleQuality4X, nil
+			}
+		}
+	case "remove_video_background":
+		switch strings.ToLower(strings.TrimSpace(quality)) {
+		case "fast":
+			if scale == 0 {
+				return ModelVideoBackgroundFast, nil
+			}
+		case "quality":
+			if scale == 0 {
+				return ModelVideoBackgroundQuality, nil
+			}
+		}
 	}
 	return "", fmt.Errorf("unsupported media profile: operation=%q quality=%q scale=%d", operation, quality, scale)
 }
@@ -161,6 +192,25 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			}
 			if metadata.SubtitleArea == "" {
 				metadata.SubtitleArea = "bottom"
+			}
+		}
+		if metadata.Operation == "video_upscale" {
+			if metadata.Quality == "" {
+				metadata.Quality = "quality"
+			}
+			if metadata.Scale == 0 {
+				metadata.Scale = 2
+			}
+			if metadata.Format == "" {
+				metadata.Format = "mp4"
+			}
+		}
+		if metadata.Operation == "remove_video_background" {
+			if metadata.Quality == "" {
+				metadata.Quality = "quality"
+			}
+			if metadata.Format == "" {
+				metadata.Format = "webm"
 			}
 		}
 		resolved, err := ResolveModel(metadata.Operation, metadata.Quality, metadata.Scale)
@@ -250,10 +300,20 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, bod
 }
 
 func (a *TaskAdaptor) EstimateBilling(_ *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
-	if info.OriginModelName != ModelDepthVideo && info.OriginModelName != ModelSubtitleRemove {
+	modelName := info.OriginModelName
+	if modelName != ModelDepthVideo &&
+		modelName != ModelSubtitleRemove &&
+		modelName != ModelVideoUpscaleQuality2X &&
+		modelName != ModelVideoUpscaleQuality4X &&
+		modelName != ModelVideoBackgroundFast &&
+		modelName != ModelVideoBackgroundQuality {
 		return nil
 	}
-	return map[string]float64{"seconds": maxVideoBillingSeconds}
+	maxSeconds := maxVideoBillingSeconds
+	if modelName == ModelVideoBackgroundFast || modelName == ModelVideoBackgroundQuality {
+		maxSeconds = maxVideoBackgroundBillingSeconds
+	}
+	return map[string]float64{"seconds": float64(maxSeconds)}
 }
 
 func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
@@ -266,7 +326,13 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *rela
 	}
 	isDepthVideo := task.Action == ActionDepth && billing.OriginModelName == ModelDepthVideo
 	isSubtitleRemoval := task.Action == ActionMedia && billing.OriginModelName == ModelSubtitleRemove
-	if !isDepthVideo && !isSubtitleRemoval {
+	isVideoUpscale := task.Action == ActionMedia &&
+		(billing.OriginModelName == ModelVideoUpscaleQuality2X ||
+			billing.OriginModelName == ModelVideoUpscaleQuality4X)
+	isVideoBackgroundRemoval := task.Action == ActionMedia &&
+		(billing.OriginModelName == ModelVideoBackgroundFast ||
+			billing.OriginModelName == ModelVideoBackgroundQuality)
+	if !isDepthVideo && !isSubtitleRemoval && !isVideoUpscale && !isVideoBackgroundRemoval {
 		return 0
 	}
 	var response responsePayload
@@ -275,7 +341,11 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *rela
 		return 0
 	}
 	seconds := math.Ceil(float64(response.Frames) / response.FPS)
-	seconds = min(seconds, maxVideoBillingSeconds)
+	maxSeconds := float64(maxVideoBillingSeconds)
+	if isVideoBackgroundRemoval {
+		maxSeconds = maxVideoBackgroundBillingSeconds
+	}
+	seconds = min(seconds, maxSeconds)
 	quota, clamp := common.QuotaFromFloatChecked(
 		billing.ModelPrice * common.QuotaPerUnit * billing.GroupRatio * seconds,
 	)

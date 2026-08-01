@@ -45,6 +45,35 @@ export type DepthMediaAiIntegrationGuideContext = {
 
 const DEPTH_MODEL = 'depth-anything-v2-small-video'
 const SUBTITLE_MODEL = 'subtitle-remove'
+const VIDEO_UPSCALE_PROFILES = [
+  {
+    source: 'video-upscale-quality-2x',
+    label: 'Video 2x',
+    quality: 'quality',
+    scale: 2,
+  },
+  {
+    source: 'video-upscale-quality-4x',
+    label: 'Video 4x',
+    quality: 'quality',
+    scale: 4,
+  },
+] as const
+
+const VIDEO_BACKGROUND_PROFILES = [
+  {
+    source: 'video-background-remove-fast',
+    label: 'Fast video background removal',
+    quality: 'fast',
+    format: 'webm',
+  },
+  {
+    source: 'video-background-remove-quality',
+    label: 'High-quality video background removal',
+    quality: 'quality',
+    format: 'webm',
+  },
+] as const
 
 const BACKGROUND_PROFILES = [
   {
@@ -96,6 +125,8 @@ const SOURCE_MODEL_NAMES = new Set([
   ...BACKGROUND_PROFILES.map((profile) => profile.source),
   ...UPSCALE_PROFILES.map((profile) => profile.source),
   SUBTITLE_MODEL,
+  ...VIDEO_UPSCALE_PROFILES.map((profile) => profile.source),
+  ...VIDEO_BACKGROUND_PROFILES.map((profile) => profile.source),
 ])
 
 function mediaProfile(
@@ -186,6 +217,14 @@ export function consolidateDepthMediaModels(
     return model ? [{ model, profile }] : []
   })
   const upscale = UPSCALE_PROFILES.flatMap((profile) => {
+    const model = indexed.get(profile.source)
+    return model ? [{ model, profile }] : []
+  })
+  const videoUpscale = VIDEO_UPSCALE_PROFILES.flatMap((profile) => {
+    const model = indexed.get(profile.source)
+    return model ? [{ model, profile }] : []
+  })
+  const videoBackground = VIDEO_BACKGROUND_PROFILES.flatMap((profile) => {
     const model = indexed.get(profile.source)
     return model ? [{ model, profile }] : []
   })
@@ -370,6 +409,95 @@ export function consolidateDepthMediaModels(
       )
     )
   }
+  if (videoUpscale.length > 0) {
+    publicModels.push(
+      consolidatedModel(
+        videoUpscale.map((entry) => entry.model),
+        'video-upscale',
+        translate('Upscale videos with FlashVSR, preserving audio.'),
+        translate('Video,Upscale'),
+        mediaProfile(
+          'video_upscale',
+          [
+            {
+              name: 'quality',
+              type: 'enum',
+              default: 'quality',
+              enum_values: ['quality'],
+              description: 'Video enhancement quality profile',
+            },
+            {
+              name: 'scale',
+              type: 'enum',
+              required: true,
+              default: 2,
+              enum_values: ['2', '4'],
+              description: 'Upscale multiplier',
+            },
+            {
+              name: 'format',
+              type: 'enum',
+              default: 'mp4',
+              enum_values: ['mp4'],
+              description: 'Output video format',
+            },
+          ],
+          videoUpscale.map((entry) => ({
+            label: translate(entry.profile.label),
+            parameters: {
+              operation: 'video_upscale',
+              quality: entry.profile.quality,
+              scale: entry.profile.scale,
+              format: 'mp4',
+            },
+            price: entry.model.model_price ?? 0,
+            unit: 'second',
+          }))
+        )
+      )
+    )
+  }
+  if (videoBackground.length > 0) {
+    publicModels.push(
+      consolidatedModel(
+        videoBackground.map((entry) => entry.model),
+        'video-background-remove',
+        translate(
+          'Remove video backgrounds with transparent WebM output and preserved audio.'
+        ),
+        translate('Video,Background removal'),
+        mediaProfile(
+          'remove_video_background',
+          [
+            {
+              name: 'quality',
+              type: 'enum',
+              default: 'quality',
+              enum_values: ['fast', 'quality'],
+              description: 'Video background removal quality profile',
+            },
+            {
+              name: 'format',
+              type: 'enum',
+              default: 'webm',
+              enum_values: ['webm', 'mp4'],
+              description: 'Output video format',
+            },
+          ],
+          videoBackground.map((entry) => ({
+            label: translate(entry.profile.label),
+            parameters: {
+              operation: 'remove_video_background',
+              quality: entry.profile.quality,
+              format: entry.profile.format,
+            },
+            price: entry.model.model_price ?? 0,
+            unit: 'second',
+          }))
+        )
+      )
+    )
+  }
 
   if (publicModels.length === 0) return models
 
@@ -411,6 +539,23 @@ function samplePayload(modelName: string): Record<string, string | number> {
         quality: 'quality',
         format: 'mp4',
         subtitle_area: 'bottom',
+      }
+    case 'video-upscale':
+      return {
+        model: modelName,
+        source_url: 'https://cdn.example.com/input.mp4',
+        operation: 'video_upscale',
+        quality: 'quality',
+        scale: 2,
+        format: 'mp4',
+      }
+    case 'video-background-remove':
+      return {
+        model: modelName,
+        source_url: 'https://cdn.example.com/subject.mp4',
+        operation: 'remove_video_background',
+        quality: 'quality',
+        format: 'webm',
       }
     default:
       return {

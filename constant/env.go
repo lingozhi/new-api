@@ -32,6 +32,10 @@ var TaskPricePatches []string
 var TaskPricePerSecondModels = []string{
 	"depth-anything-v2-small-video",
 	"subtitle-remove",
+	"video-upscale-quality-2x",
+	"video-upscale-quality-4x",
+	"video-background-remove-fast",
+	"video-background-remove-quality",
 }
 
 // TrustedRedirectDomains is a list of trusted domains for redirect URL validation.

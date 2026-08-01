@@ -1,6 +1,6 @@
 # DepthMedia API 调用说明
 
-DepthMedia 是统一的异步媒体处理接口。深度视频、视频去字幕、图片去背景和图片高清放大都通过
+DepthMedia 是统一的异步媒体处理接口。深度视频、视频去字幕、视频去背景、视频放大、图片去背景和图片高清放大都通过
 `POST /v1/media/jobs` 提交。客户端会立即获得公开 `task_id`，随后可轮询任务状态，也可以
 通过 Webhook 接收最终结果。
 
@@ -61,7 +61,7 @@ POST /v1/media/jobs
 | `image-upscale` | 锐化 4 倍 | `upscale` | `sharp` | `4` | `$0.05` |
 
 模型广场只展示 `depth-video`、`background-remove`、`image-upscale`、
-`subtitle-remove` 四个模型。
+`subtitle-remove`、`video-upscale`、`video-background-remove` 六个模型。
 具体处理档位和价格由参数决定，并在模型详情抽屉中展示。图片格式支持上游允许的
 `png` 和 `webp`。
 
@@ -107,6 +107,58 @@ curl https://api.opwan.ai/v1/media/jobs \
     "subtitle_area": "bottom",
     "webhook_url": "https://client.example.com/webhooks/depth-media",
     "webhook_secret": "replace-with-your-secret"
+  }'
+```
+
+## 视频增强
+
+### 视频放大
+
+模型：`video-upscale`
+
+按源视频实际时长计费，支持 2 倍和 4 倍放大，默认输出 MP4。上游最多处理 300 帧，输出最高 4K；
+模型可能为了对齐要求调整输出尺寸，客户端应读取任务结果中的实际宽高。视频音频会保留。
+
+| 档位 | operation | quality | scale | format |
+| --- | --- | --- | --- | --- |
+| 2 倍 | `video_upscale` | `quality` | `2` | `mp4` |
+| 4 倍 | `video_upscale` | `quality` | `4` | `mp4` |
+
+```bash
+curl https://api.opwan.ai/v1/media/jobs \
+  -H "Authorization: Bearer $OPWAN_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "video-upscale",
+    "source_url": "https://cdn.example.com/input.mp4",
+    "operation": "video_upscale",
+    "quality": "quality",
+    "scale": 2,
+    "format": "mp4"
+  }'
+```
+
+### 视频去背景
+
+模型：`video-background-remove`
+
+按源视频实际时长计费，最长 60 秒。默认输出透明 WebM；如选择 MP4，前景会合成到黑色背景。视频音频会保留。
+
+| 档位 | operation | quality | format |
+| --- | --- | --- | --- |
+| 快速 | `remove_video_background` | `fast` | `webm` |
+| 高质量 | `remove_video_background` | `quality` | `webm` |
+
+```bash
+curl https://api.opwan.ai/v1/media/jobs \
+  -H "Authorization: Bearer $OPWAN_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "video-background-remove",
+    "source_url": "https://cdn.example.com/subject.mp4",
+    "operation": "remove_video_background",
+    "quality": "quality",
+    "format": "webm"
   }'
 ```
 
@@ -209,8 +261,8 @@ v1.<timestamp>.<delivery_id>.<raw_request_body>
 ## 当前限制
 
 - 当前生产接口仅接收公网 `source_url`。
-- `/v1/media/jobs/upload` 暂未通过网关开放。
+- `/v1/media/jobs/upload` 暂未通过网关开放；当前仍使用公网 `source_url`。
 - `/v1/depth/jobs` 暂时保留给深度视频兼容调用；新接入统一使用
   `/v1/media/jobs`。
-- `/v1/jobs` 是异步图片生成入口，不用于 DepthMedia 媒体处理。
+- `/v1/jobs` 也可用于统一异步媒体任务；新接入优先使用 `/v1/media/jobs`，便于兼容旧客户端。
 - 渠道密钥和模型价格必须先在管理员后台配置，否则网站不会路由任务。

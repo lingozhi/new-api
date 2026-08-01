@@ -62,6 +62,10 @@ func TestResolveModel(t *testing.T) {
 	require.Error(t, err)
 	_, err = ResolveModel("remove_subtitles", "quality", 2)
 	require.Error(t, err)
+	_, err = ResolveModel("video_upscale", "fast", 2)
+	require.Error(t, err)
+	_, err = ResolveModel("remove_video_background", "quality", 2)
+	require.Error(t, err)
 }
 
 func TestTaskAdaptorBuildsMediaRequestWithoutGatewayWebhookFields(t *testing.T) {
@@ -377,7 +381,7 @@ func TestTaskAdaptorEstimatesMaximumDepthVideoDuration(t *testing.T) {
 
 	videoBackgroundInfo := newTestRelayInfo("https://modal.example.com", "key", ActionMedia)
 	videoBackgroundInfo.OriginModelName = ModelVideoBackgroundQuality
-	assert.Equal(t, map[string]float64{"seconds": 600}, adaptor.EstimateBilling(c, videoBackgroundInfo))
+	assert.Equal(t, map[string]float64{"seconds": 60}, adaptor.EstimateBilling(c, videoBackgroundInfo))
 }
 
 func TestTaskAdaptorReconcilesDepthVideoToActualDuration(t *testing.T) {
@@ -472,7 +476,7 @@ func TestTaskAdaptorReconcilesVideoUpscaleToActualDuration(t *testing.T) {
 	adaptor := &TaskAdaptor{}
 	task := &model.Task{
 		Action: ActionMedia,
-		Data: []byte(`{"id":"job_1","status":"completed","progress":100,"fps":24,"frames":73}`),
+		Data:   []byte(`{"id":"job_1","status":"completed","progress":100,"fps":24,"frames":73}`),
 		PrivateData: model.TaskPrivateData{
 			BillingContext: &model.TaskBillingContext{
 				ModelPrice:      0.03,
@@ -486,5 +490,26 @@ func TestTaskAdaptorReconcilesVideoUpscaleToActualDuration(t *testing.T) {
 		Status: model.TaskStatusSuccess,
 	})
 
-	assert.Equal(t, 90000, quota)
+	assert.Equal(t, 60000, quota)
+}
+
+func TestTaskAdaptorCapsVideoBackgroundDurationAtUpstreamLimit(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	task := &model.Task{
+		Action: ActionMedia,
+		Data:   []byte(`{"id":"job_1","status":"completed","progress":100,"fps":1,"frames":1000}`),
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice:      0.02,
+				GroupRatio:      1,
+				OriginModelName: ModelVideoBackgroundQuality,
+			},
+		},
+	}
+
+	quota := adaptor.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{
+		Status: model.TaskStatusSuccess,
+	})
+
+	assert.Equal(t, 600000, quota)
 }
