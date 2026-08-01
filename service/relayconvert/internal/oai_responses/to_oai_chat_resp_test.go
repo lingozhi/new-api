@@ -342,6 +342,7 @@ func TestResponsesStreamEventToChatChunksPreservesDistinctParallelTools(t *testi
 	state := newTestResponsesStreamState()
 	var chunks []dto.ChatCompletionsStreamResponse
 	outputs := make([]dto.ResponsesOutput, 0, 2)
+	argumentsByIndex := []string{`{"view":"canvas"}`, `{"kind":"image"}`}
 
 	for index, name := range []string{"canvas_read", "asset_list"} {
 		itemID := fmt.Sprintf("fc_%d", index)
@@ -361,7 +362,7 @@ func TestResponsesStreamEventToChatChunksPreservesDistinctParallelTools(t *testi
 			ID:        itemID,
 			CallId:    callID,
 			Name:      name,
-			Arguments: []byte(`{}`),
+			Arguments: []byte(argumentsByIndex[index]),
 		})
 	}
 	chunks = append(chunks, mustStreamChunks(t, state, &dto.ResponsesStreamResponse{
@@ -372,19 +373,39 @@ func TestResponsesStreamEventToChatChunksPreservesDistinctParallelTools(t *testi
 		},
 	})...)
 
-	toolNames := make([]string, 0, 2)
+	type observedTool struct {
+		id        string
+		name      string
+		arguments string
+	}
+	observedByIndex := make(map[int]observedTool, 2)
+	toolStarts := 0
 	for _, chunk := range chunks {
 		if len(chunk.Choices) == 0 {
 			continue
 		}
 		for _, toolCall := range chunk.Choices[0].Delta.ToolCalls {
-			if toolCall.Function.Name != "" {
-				toolNames = append(toolNames, toolCall.Function.Name)
+			require.NotNil(t, toolCall.Index)
+			observed := observedByIndex[*toolCall.Index]
+			if observed.id == "" {
+				observed.id = toolCall.ID
+			} else {
+				assert.Equal(t, observed.id, toolCall.ID)
 			}
+			if toolCall.Function.Name != "" {
+				toolStarts++
+				observed.name = toolCall.Function.Name
+			}
+			observed.arguments += toolCall.Function.Arguments
+			observedByIndex[*toolCall.Index] = observed
 		}
 	}
 
-	assert.Equal(t, []string{"canvas_read", "asset_list"}, toolNames)
+	assert.Equal(t, 2, toolStarts)
+	assert.Equal(t, map[int]observedTool{
+		0: {id: "call_0", name: "canvas_read", arguments: `{"view":"canvas"}`},
+		1: {id: "call_1", name: "asset_list", arguments: `{"kind":"image"}`},
+	}, observedByIndex)
 }
 
 func TestFinalizeResponsesToChatStreamFlushesPendingDeltaOnlyArguments(t *testing.T) {
