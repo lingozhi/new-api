@@ -196,6 +196,19 @@ type NewAPIError struct {
 	Metadata           json.RawMessage
 }
 
+type messageOverrideError struct {
+	message string
+	cause   error
+}
+
+func (e *messageOverrideError) Error() string {
+	return e.message
+}
+
+func (e *messageOverrideError) Unwrap() error {
+	return e.cause
+}
+
 // Unwrap enables errors.Is / errors.As to work with NewAPIError by exposing the underlying error.
 func (e *NewAPIError) Unwrap() error {
 	if e == nil {
@@ -272,7 +285,11 @@ func (e *NewAPIError) MaskSensitiveErrorWithStatusCode() string {
 }
 
 func (e *NewAPIError) SetMessage(message string) {
-	e.Err = errors.New(message)
+	if e.Err == nil {
+		e.Err = errors.New(message)
+		return
+	}
+	e.Err = &messageOverrideError{message: message, cause: e.Err}
 }
 
 func (e *NewAPIError) ToOpenAIError() OpenAIError {
