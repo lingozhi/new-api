@@ -196,19 +196,6 @@ type NewAPIError struct {
 	Metadata           json.RawMessage
 }
 
-type messageOverrideError struct {
-	message string
-	cause   error
-}
-
-func (e *messageOverrideError) Error() string {
-	return e.message
-}
-
-func (e *messageOverrideError) Unwrap() error {
-	return e.cause
-}
-
 // Unwrap enables errors.Is / errors.As to work with NewAPIError by exposing the underlying error.
 func (e *NewAPIError) Unwrap() error {
 	if e == nil {
@@ -285,11 +272,25 @@ func (e *NewAPIError) MaskSensitiveErrorWithStatusCode() string {
 }
 
 func (e *NewAPIError) SetMessage(message string) {
-	if e.Err == nil {
-		e.Err = errors.New(message)
-		return
+	e.Err = errors.New(message)
+}
+
+// SetMaskedProviderMessage replaces the displayable error text while retaining
+// only the provider-task control metadata needed by async workers. The original
+// provider cause is intentionally discarded so masked credentials cannot remain
+// reachable through errors.Unwrap.
+func (e *NewAPIError) SetMaskedProviderMessage(message string) {
+	retryAfter, pollingRetry := ProviderTaskPollingRetryAfter(e)
+	unsafeToResubmit := IsProviderTaskUnsafeToResubmit(e)
+
+	var masked error = errors.New(message)
+	if pollingRetry {
+		masked = NewProviderTaskPollingRetryError(masked, retryAfter)
 	}
-	e.Err = &messageOverrideError{message: message, cause: e.Err}
+	if unsafeToResubmit {
+		masked = NewProviderTaskUnsafeToResubmitError(masked)
+	}
+	e.Err = masked
 }
 
 func (e *NewAPIError) ToOpenAIError() OpenAIError {
