@@ -1,5 +1,16 @@
 FROM oven/bun:1@sha256:0733e50325078969732ebe3b15ce4c4be5082f18c4ac1a0f0ca4839c2e4e42a7 AS builder
 
+ARG RAILWAY_PROJECT_ID
+ARG RAILWAY_ENVIRONMENT_ID
+ARG RAILWAY_SERVICE_ID
+ARG RAILWAY_GIT_COMMIT_SHA
+ARG RAILWAY_GIT_BRANCH
+ARG RAILWAY_GIT_REPO_NAME
+ARG RAILWAY_GIT_REPO_OWNER
+
+COPY ops/verify-production-build-source.sh /tmp/verify-production-build-source.sh
+RUN /bin/sh /tmp/verify-production-build-source.sh
+
 WORKDIR /build/web
 COPY web/package.json web/bun.lock ./
 COPY web/default/package.json ./default/package.json
