@@ -683,6 +683,101 @@ func TestCalculateTextQuotaSummaryKeepsToolSurchargeWithZeroTokens(t *testing.T)
 	require.Equal(t, 5000, summary.Quota)
 }
 
+func TestCalculateSettledTextQuotaSummaryMakesProtocolFailureNonBillable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("fixed price", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		relayInfo := &relaycommon.RelayInfo{
+			OriginModelName: "fixed-price-model",
+			PriceData: types.PriceData{
+				UsePrice:       true,
+				ModelPrice:     0.25,
+				GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+			},
+			StartTime: time.Now(),
+		}
+		usage := &dto.Usage{NonBillable: true}
+
+		summary, tieredApplied, _ := calculateSettledTextQuotaSummary(
+			ctx,
+			relayInfo,
+			usage,
+			usage,
+		)
+
+		require.True(t, summary.NonBillable)
+		require.Zero(t, summary.Quota)
+		require.False(t, tieredApplied)
+	})
+
+	t.Run("tool surcharge", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Set("claude_web_search_requests", 2)
+		ctx.Set("image_generation_call", true)
+		relayInfo := &relaycommon.RelayInfo{
+			OriginModelName: "gpt-5.6-luna",
+			PriceData: types.PriceData{
+				ModelRatio:      1,
+				CompletionRatio: 1,
+				GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+			},
+			ResponsesUsageInfo: &relaycommon.ResponsesUsageInfo{
+				BuiltInTools: map[string]*relaycommon.BuildInToolInfo{
+					dto.BuildInToolWebSearchPreview: {CallCount: 1},
+				},
+			},
+			StartTime: time.Now(),
+		}
+		usage := &dto.Usage{NonBillable: true}
+
+		summary, tieredApplied, _ := calculateSettledTextQuotaSummary(
+			ctx,
+			relayInfo,
+			usage,
+			usage,
+		)
+
+		require.Zero(t, summary.Quota)
+		require.True(t, summary.ToolCallSurchargeQuota.IsZero())
+		require.Zero(t, summary.WebSearchCallCount)
+		require.Zero(t, summary.ClaudeWebSearchCallCount)
+		require.False(t, tieredApplied)
+	})
+
+	t.Run("tiered expression", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		relayInfo := &relaycommon.RelayInfo{
+			OriginModelName: "tiered-model",
+			PriceData: types.PriceData{
+				ModelRatio:      1,
+				CompletionRatio: 1,
+				GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+			},
+			TieredBillingSnapshot: &billingexpr.BillingSnapshot{
+				BillingMode:               "tiered_expr",
+				ExprString:                `tier("base", 5000 + p + c)`,
+				GroupRatio:                1,
+				EstimatedQuotaBeforeGroup: 5000,
+				EstimatedQuotaAfterGroup:  5000,
+			},
+			FinalPreConsumedQuota: 5000,
+			StartTime:             time.Now(),
+		}
+		usage := &dto.Usage{NonBillable: true}
+
+		summary, tieredApplied, _ := calculateSettledTextQuotaSummary(
+			ctx,
+			relayInfo,
+			usage,
+			usage,
+		)
+
+		require.Zero(t, summary.Quota)
+		require.False(t, tieredApplied)
+	})
+}
+
 func TestComposeTieredTextQuotaSaturatesFinalSurcharge(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	relayInfo := &relaycommon.RelayInfo{}
