@@ -218,7 +218,7 @@ describe('DepthMedia model plaza catalog', () => {
       baseUrl: 'https://api.opwan.ai',
       apiKeyEnv: 'OPWAN_API_KEY',
       modelName: 'video-upscale',
-      endpointPath: '/v1/jobs',
+      endpointPath: '/v1/media/jobs',
     })
     assert.match(upscaleSample, /"model": "video-upscale"/)
     assert.match(upscaleSample, /"operation": "video_upscale"/)
@@ -230,15 +230,80 @@ describe('DepthMedia model plaza catalog', () => {
       baseUrl: 'https://api.opwan.ai',
       apiKeyEnv: 'OPWAN_API_KEY',
       modelName: 'video-background-remove',
-      endpointPath: '/v1/jobs',
+      endpointPath: '/v1/media/jobs',
     })
     assert.match(backgroundSample, /"model": "video-background-remove"/)
-    assert.match(
-      backgroundSample,
-      /"operation": "remove_video_background"/
-    )
+    assert.match(backgroundSample, /"operation": "remove_video_background"/)
     assert.match(backgroundSample, /"quality": "quality"/)
     assert.match(backgroundSample, /"format": "webm"/)
+  })
+
+  test('only advertises video options backed by configured source models', () => {
+    const models = consolidateDepthMediaModels(
+      sourceModels.filter(
+        (model) =>
+          ![
+            'video-upscale-quality-2x',
+            'video-background-remove-fast',
+          ].includes(model.model_name)
+      )
+    )
+    const videoUpscale = models.find(
+      (model) => model.model_name === 'video-upscale'
+    )
+    const videoBackground = models.find(
+      (model) => model.model_name === 'video-background-remove'
+    )
+
+    assert.deepEqual(
+      videoUpscale?.api_profile?.parameters?.find(
+        (parameter) => parameter.name === 'scale'
+      ),
+      {
+        name: 'scale',
+        type: 'enum',
+        required: true,
+        default: 4,
+        enum_values: ['4'],
+        description: 'Upscale multiplier',
+      }
+    )
+    assert.deepEqual(
+      videoBackground?.api_profile?.parameters?.find(
+        (parameter) => parameter.name === 'quality'
+      ),
+      {
+        name: 'quality',
+        type: 'enum',
+        default: 'quality',
+        enum_values: ['quality'],
+        description: 'Video background removal quality profile',
+      }
+    )
+    assert.deepEqual(
+      videoBackground?.api_profile?.parameters?.find(
+        (parameter) => parameter.name === 'format'
+      ),
+      {
+        name: 'format',
+        type: 'enum',
+        default: 'webm',
+        enum_values: ['webm', 'mp4'],
+        description: 'Output video format',
+      }
+    )
+    assert.deepEqual(
+      videoUpscale?.api_profile?.pricing_variants?.map(
+        (variant) => variant.parameters.scale
+      ),
+      [4]
+    )
+    assert.deepEqual(
+      videoBackground?.api_profile?.pricing_variants?.map(
+        (variant) => variant.parameters.quality
+      ),
+      ['quality']
+    )
   })
 
   test('generates a self-contained AI integration guide for one-click copy', () => {

@@ -410,6 +410,12 @@ export function consolidateDepthMediaModels(
     )
   }
   if (videoUpscale.length > 0) {
+    const videoUpscaleQualities = [
+      ...new Set(videoUpscale.map((entry) => entry.profile.quality)),
+    ]
+    const videoUpscaleScales = [
+      ...new Set(videoUpscale.map((entry) => entry.profile.scale)),
+    ]
     publicModels.push(
       consolidatedModel(
         videoUpscale.map((entry) => entry.model),
@@ -422,16 +428,16 @@ export function consolidateDepthMediaModels(
             {
               name: 'quality',
               type: 'enum',
-              default: 'quality',
-              enum_values: ['quality'],
+              default: videoUpscaleQualities[0],
+              enum_values: videoUpscaleQualities,
               description: 'Video enhancement quality profile',
             },
             {
               name: 'scale',
               type: 'enum',
               required: true,
-              default: 2,
-              enum_values: ['2', '4'],
+              default: videoUpscaleScales[0],
+              enum_values: videoUpscaleScales.map(String),
               description: 'Upscale multiplier',
             },
             {
@@ -458,6 +464,9 @@ export function consolidateDepthMediaModels(
     )
   }
   if (videoBackground.length > 0) {
+    const videoBackgroundQualities = [
+      ...new Set(videoBackground.map((entry) => entry.profile.quality)),
+    ]
     publicModels.push(
       consolidatedModel(
         videoBackground.map((entry) => entry.model),
@@ -472,8 +481,8 @@ export function consolidateDepthMediaModels(
             {
               name: 'quality',
               type: 'enum',
-              default: 'quality',
-              enum_values: ['fast', 'quality'],
+              default: videoBackgroundQualities[0],
+              enum_values: videoBackgroundQualities,
               description: 'Video background removal quality profile',
             },
             {

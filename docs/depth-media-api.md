@@ -264,5 +264,4 @@ v1.<timestamp>.<delivery_id>.<raw_request_body>
 - `/v1/media/jobs/upload` 暂未通过网关开放；当前仍使用公网 `source_url`。
 - `/v1/depth/jobs` 暂时保留给深度视频兼容调用；新接入统一使用
   `/v1/media/jobs`。
-- `/v1/jobs` 也可用于统一异步媒体任务；新接入优先使用 `/v1/media/jobs`，便于兼容旧客户端。
 - 渠道密钥和模型价格必须先在管理员后台配置，否则网站不会路由任务。
