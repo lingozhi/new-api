@@ -342,6 +342,63 @@ func TestImageTaskSubmissionRetryReturnsTaskToSubmissionStage(t *testing.T) {
 	assert.Equal(t, "provider submit unavailable", task.ProviderError)
 }
 
+func TestImageTaskRejectedProviderCanAtomicallySwitchChannel(t *testing.T) {
+	truncateTables(t)
+	now := common.GetTimestamp()
+	task := &Task{
+		TaskID:    "task_image_channel_failover",
+		Platform:  constant.TaskPlatformOpenAIImage,
+		ChannelId: 116,
+		Status:    TaskStatusNotStart,
+		SubmitTime: now,
+		PrivateData: TaskPrivateData{
+			ChannelKeyHash:       "old-key-hash",
+			ChannelMultiKeyIndex: 2,
+			BillingContext:       &TaskBillingContext{PerCallBilling: true},
+		},
+	}
+	require.NoError(t, DB.Create(task).Error)
+
+	claimed, err := ClaimImageTask(task, now)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	started, err := task.BeginImageTaskProviderCall([]byte(`{"provider_call_started":true}`))
+	require.NoError(t, err)
+	require.True(t, started)
+
+	nextPrivate := task.PrivateData
+	nextPrivate.ChannelKeyHash = "new-key-hash"
+	nextPrivate.ChannelMultiKeyIndex = 0
+	switched, err := task.SwitchRejectedImageProviderChannel(
+		118,
+		nextPrivate,
+		[]byte(`{"provider_call_started":false,"attempted_channel_ids":[116,118]}`),
+		"upstream returned status 403",
+	)
+	require.NoError(t, err)
+	require.True(t, switched)
+	assert.Equal(t, 118, task.ChannelId)
+	assert.Equal(t, TaskStatus(TaskStatusNotStart), task.Status)
+	assert.Equal(t, "10%", task.Progress)
+	assert.Equal(t, 1, task.ProviderAttempts)
+	assert.Equal(t, "new-key-hash", task.PrivateData.ChannelKeyHash)
+	assert.NotNil(t, task.PrivateData.BillingContext)
+	assert.True(t, task.PrivateData.BillingContext.PerCallBilling)
+
+	var stored Task
+	require.NoError(t, DB.First(&stored, task.ID).Error)
+	assert.Equal(t, 118, stored.ChannelId)
+	assert.Equal(t, TaskStatus(TaskStatusNotStart), stored.Status)
+	assert.Equal(t, "new-key-hash", stored.PrivateData.ChannelKeyHash)
+	assert.Contains(t, string(stored.CheckpointData), "attempted_channel_ids")
+
+	// The CHECKPOINT_PENDING fence is the CAS guard. A stale worker cannot
+	// switch the task again after the first failover has been committed.
+	switched, err = task.SwitchRejectedImageProviderChannel(121, nextPrivate, []byte(`{}`), "late worker")
+	require.NoError(t, err)
+	assert.False(t, switched)
+}
+
 func TestImageTaskUnexpectedWorkerRetryIsDueGatedAndResetByKnownRetry(t *testing.T) {
 	truncateTables(t)
 	now := common.GetTimestamp()
