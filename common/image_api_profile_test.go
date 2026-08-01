@@ -56,7 +56,7 @@ func TestGPTImage2ProfileAndValidatorShareCombinationMatrix(t *testing.T) {
 	require.Len(t, profile.Constraints, 1)
 	assert.Equal(t, "allowed_combinations", profile.Constraints[0].Type)
 	assert.Equal(t, []string{"resolution", "aspect_ratio", "size"}, profile.Constraints[0].Fields)
-	assert.Len(t, profile.Constraints[0].Combinations, 16)
+	assert.Len(t, profile.Constraints[0].Combinations, 36)
 
 	for _, combination := range profile.Constraints[0].Combinations {
 		size, ok := capabilities.SizeFor(combination.Resolution, combination.AspectRatio)
@@ -65,6 +65,39 @@ func TestGPTImage2ProfileAndValidatorShareCombinationMatrix(t *testing.T) {
 	}
 	_, ok := capabilities.SizeFor("4K", "auto")
 	assert.False(t, ok)
+
+	verifiedVariants := []ImageSizeCombination{
+		{Resolution: "1K", AspectRatio: "3:2", Size: "1536x1024"},
+		{Resolution: "1K", AspectRatio: "2:3", Size: "1024x1536"},
+		{Resolution: "1K", AspectRatio: "5:4", Size: "1280x1024"},
+		{Resolution: "1K", AspectRatio: "4:5", Size: "1024x1280"},
+		{Resolution: "1K", AspectRatio: "2:1", Size: "1536x768"},
+		{Resolution: "1K", AspectRatio: "1:2", Size: "768x1536"},
+		{Resolution: "1K", AspectRatio: "3:1", Size: "1536x512"},
+		{Resolution: "1K", AspectRatio: "1:3", Size: "512x1536"},
+		{Resolution: "1K", AspectRatio: "21:9", Size: "1792x768"},
+		{Resolution: "1K", AspectRatio: "9:21", Size: "768x1792"},
+		{Resolution: "2K", AspectRatio: "3:2", Size: "1920x1280"},
+		{Resolution: "2K", AspectRatio: "2:3", Size: "1280x1920"},
+		{Resolution: "2K", AspectRatio: "5:4", Size: "1600x1280"},
+		{Resolution: "2K", AspectRatio: "4:5", Size: "1280x1600"},
+		{Resolution: "2K", AspectRatio: "2:1", Size: "2048x1024"},
+		{Resolution: "2K", AspectRatio: "1:2", Size: "1024x2048"},
+		{Resolution: "2K", AspectRatio: "3:1", Size: "1920x640"},
+		{Resolution: "2K", AspectRatio: "1:3", Size: "640x1920"},
+		{Resolution: "2K", AspectRatio: "21:9", Size: "2016x864"},
+		{Resolution: "2K", AspectRatio: "9:21", Size: "864x2016"},
+	}
+	for _, variant := range verifiedVariants {
+		size, found := capabilities.SizeFor(variant.Resolution, variant.AspectRatio)
+		assert.True(t, found, "%s %s", variant.Resolution, variant.AspectRatio)
+		assert.Equal(t, variant.Size, size)
+	}
+
+	for _, aspectRatio := range []string{"3:2", "2:3", "5:4", "4:5", "2:1", "1:2", "3:1", "1:3", "21:9", "9:21"} {
+		_, found := capabilities.SizeFor("4K", aspectRatio)
+		assert.False(t, found, "unverified 4K ratio %s must not be advertised", aspectRatio)
+	}
 }
 
 func TestGenericImageAPIProfileIsConservative(t *testing.T) {

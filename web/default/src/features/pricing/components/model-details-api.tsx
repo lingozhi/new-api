@@ -30,6 +30,7 @@ import {
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { BundledLanguage } from 'shiki/bundle/web'
+import { toast } from 'sonner'
 
 import {
   CodeBlock,
@@ -44,7 +45,6 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useStatus } from '@/hooks/use-status'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
-import { toast } from 'sonner'
 
 import {
   buildDepthMediaAiIntegrationGuide,
@@ -52,7 +52,11 @@ import {
 } from '../lib/depth-media-catalog'
 import {
   buildAsyncImageSample,
+  buildImageAiIntegrationGuide,
+  GPT_IMAGE_2_UNAVAILABLE_EXACT_4K_SIZES,
+  GPT_IMAGE_2_VERIFIED_4K_SIZES,
   IMAGE_SAMPLE_LANGUAGES,
+  isGPTImage2Model,
   STANDARD_SAMPLE_LANGUAGES,
   type ImageSampleLanguage,
 } from '../lib/image-api-docs'
@@ -536,15 +540,23 @@ function CodeSamplesSection(props: {
     endpointPath: activeEndpoint.path,
     apiProfile: props.model.api_profile,
   })
-  const aiIntegrationGuide =
-    props.model.api_profile?.kind === 'media'
-      ? buildDepthMediaAiIntegrationGuide({
-          baseUrl,
-          apiKeyEnv: 'NEW_API_KEY',
-          selectedModel: props.model,
-          publicModels: props.publicModels,
-        })
-      : ''
+  let aiIntegrationGuide = ''
+  if (props.model.api_profile?.kind === 'image') {
+    aiIntegrationGuide = buildImageAiIntegrationGuide({
+      baseUrl,
+      apiKeyEnv: 'NEW_API_KEY',
+      modelName: props.model.model_name || '',
+      endpointPath: props.model.api_profile.endpoint,
+      profile: props.model.api_profile,
+    })
+  } else if (props.model.api_profile?.kind === 'media') {
+    aiIntegrationGuide = buildDepthMediaAiIntegrationGuide({
+      baseUrl,
+      apiKeyEnv: 'NEW_API_KEY',
+      selectedModel: props.model,
+      publicModels: props.publicModels,
+    })
+  }
 
   const copyAiIntegrationGuide = async () => {
     const copied = await copyToClipboard(aiIntegrationGuide)
@@ -584,6 +596,10 @@ function CodeSamplesSection(props: {
             <Badge variant='outline'>{t('OSS URL')}</Badge>
           )}
         </div>
+      )}
+
+      {isGPTImage2Model(props.model.model_name || '') && (
+        <GPTImage2FourKCompatibilityNotice />
       )}
 
       <div className='flex flex-wrap items-center gap-2'>
@@ -649,6 +665,51 @@ function CodeSamplesSection(props: {
         <WebhookContractNotice profileKind={props.model.api_profile.kind} />
       )}
     </section>
+  )
+}
+
+function GPTImage2FourKCompatibilityNotice() {
+  const { t } = useTranslation()
+
+  return (
+    <aside className='border-border/60 bg-muted/20 mt-4 rounded-lg border p-3'>
+      <h4 className='text-foreground text-xs font-semibold'>
+        {t('Verified 4K output sizes')}
+      </h4>
+      <p className='text-muted-foreground mt-1 text-xs leading-relaxed'>
+        {t(
+          'Only the following five GPT Image 2 sizes have been verified as exact 4K output.'
+        )}
+      </p>
+      <div className='mt-2 flex flex-wrap gap-1.5'>
+        {GPT_IMAGE_2_VERIFIED_4K_SIZES.map((item) => (
+          <code
+            key={item.aspectRatio}
+            className='bg-background rounded border px-2 py-1 font-mono text-xs'
+          >
+            {item.aspectRatio} · {item.size}
+          </code>
+        ))}
+      </div>
+      <p className='text-muted-foreground mt-3 text-xs leading-relaxed'>
+        {t(
+          'The following requested sizes are not available as exact 4K output and are downscaled by the upstream provider.'
+        )}
+      </p>
+      <div className='mt-2 flex flex-wrap gap-1.5'>
+        {GPT_IMAGE_2_UNAVAILABLE_EXACT_4K_SIZES.map((item) => (
+          <code
+            key={item.aspectRatio}
+            className='rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1 font-mono text-xs text-amber-700 dark:text-amber-300'
+          >
+            {item.aspectRatio} · {item.size}
+          </code>
+        ))}
+      </div>
+      <p className='text-muted-foreground mt-2 text-xs leading-relaxed'>
+        {t('These aspect ratios remain available at verified 1K and 2K sizes.')}
+      </p>
+    </aside>
   )
 }
 

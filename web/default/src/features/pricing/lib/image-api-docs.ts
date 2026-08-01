@@ -48,6 +48,142 @@ export type ImageSampleContext = {
   profile: ModelApiProfile
 }
 
+export type ImageAiIntegrationGuideContext = ImageSampleContext
+
+export const GPT_IMAGE_2_VERIFIED_4K_SIZES = [
+  { aspectRatio: '1:1', size: '2880x2880' },
+  { aspectRatio: '16:9', size: '3840x2160' },
+  { aspectRatio: '9:16', size: '2160x3840' },
+  { aspectRatio: '3:4', size: '2448x3264' },
+  { aspectRatio: '4:3', size: '3264x2448' },
+] as const
+
+export const GPT_IMAGE_2_UNAVAILABLE_EXACT_4K_SIZES = [
+  { aspectRatio: '3:2', size: '3840x2560' },
+  { aspectRatio: '2:3', size: '2560x3840' },
+  { aspectRatio: '5:4', size: '3200x2560' },
+  { aspectRatio: '4:5', size: '2560x3200' },
+  { aspectRatio: '2:1', size: '3840x1920' },
+  { aspectRatio: '1:2', size: '1920x3840' },
+  { aspectRatio: '3:1', size: '3840x1280' },
+  { aspectRatio: '1:3', size: '1280x3840' },
+  { aspectRatio: '21:9', size: '4032x1728' },
+  { aspectRatio: '9:21', size: '1728x4032' },
+] as const
+
+export function isGPTImage2Model(modelName: string): boolean {
+  return modelName.trim().toLowerCase().startsWith('gpt-image-2')
+}
+
+function formatImageGuideParameter(
+  parameter: ModelApiProfile['parameters'][number]
+): string {
+  const details: string[] = [parameter.type]
+  if (parameter.required) details.push('required')
+  if (parameter.default !== undefined) {
+    details.push(`default=${String(parameter.default)}`)
+  }
+  if (parameter.enum_values?.length) {
+    details.push(`allowed=${parameter.enum_values.join('|')}`)
+  }
+  if (parameter.min !== undefined) details.push(`min=${parameter.min}`)
+  if (parameter.max !== undefined) details.push(`max=${parameter.max}`)
+  if (parameter.max_items !== undefined) {
+    details.push(`max_items=${parameter.max_items}`)
+  }
+  const description = parameter.description ? `; ${parameter.description}` : ''
+  return `- ${parameter.name}: ${details.join(', ')}${description}`
+}
+
+function formatImageGuideCombination(
+  combination: Record<string, string>
+): string {
+  return `- ${Object.entries(combination)
+    .filter(([, value]) => value !== '')
+    .map(([field, value]) => `${field}=${value}`)
+    .join(', ')}`
+}
+
+export function buildImageAiIntegrationGuide(
+  context: ImageAiIntegrationGuideContext
+): string {
+  const baseUrl = context.baseUrl.replace(/\/$/, '')
+  const pollEndpoint = (
+    context.profile.poll_endpoint || `${context.endpointPath}/{task_id}`
+  ).replace(/^\/?/, '/')
+  const combinations = (context.profile.constraints || []).flatMap(
+    (constraint) => constraint.combinations
+  )
+  const quickStart = buildAsyncImageSample('curl', {
+    ...context,
+    baseUrl,
+  })
+  const fourKCompatibility = isGPTImage2Model(context.modelName)
+    ? [
+        '',
+        '## GPT Image 2 exact 4K compatibility',
+        'Verified exact 4K output:',
+        ...GPT_IMAGE_2_VERIFIED_4K_SIZES.map(
+          (item) => `- ${item.aspectRatio}=${item.size}`
+        ),
+        '',
+        'The following requested sizes are downscaled by the upstream provider and must not be advertised as exact 4K output:',
+        ...GPT_IMAGE_2_UNAVAILABLE_EXACT_4K_SIZES.map(
+          (item) => `- ${item.aspectRatio}=${item.size}`
+        ),
+        '- These aspect ratios remain available through their verified 1K and 2K combinations.',
+      ]
+    : []
+
+  return [
+    '# Opwan image API integration guide',
+    '',
+    'Use this document as the source of truth when implementing the integration.',
+    '',
+    '## Contract',
+    `- Model: ${context.modelName}`,
+    `- Submit: POST ${baseUrl}${context.endpointPath}`,
+    `- Poll: GET ${baseUrl}${pollEndpoint}`,
+    `- Authentication: Authorization: Bearer $${context.apiKeyEnv}`,
+    '- Content-Type: application/json',
+    '- Submit response: HTTP 202 with task_id.',
+    '- Poll according to Retry-After until status is completed or failed.',
+    '- On completed, read the durable OSS URL from result.data[0].url.',
+    '- Use a 15-minute overall polling deadline and a 30-second timeout per HTTP request.',
+    '- Do not use /v1/chat/completions for image models.',
+    '',
+    '## Parameters',
+    ...context.profile.parameters.map(formatImageGuideParameter),
+    '',
+    '## Verified parameter combinations',
+    ...(combinations.length
+      ? combinations.map(formatImageGuideCombination)
+      : [
+          '- No exact combination matrix is currently published; use only the parameter values shown above.',
+        ]),
+    ...fourKCompatibility,
+    '',
+    '## Quick start',
+    '```bash',
+    quickStart,
+    '```',
+    '',
+    '## Webhook',
+    '- Optional request fields: webhook_url and webhook_secret.',
+    '- webhook_url must be a publicly reachable HTTPS URL.',
+    '- Delivery is at least once. Deduplicate using X-Webhook-Delivery-Id.',
+    '- Verify X-Webhook-Timestamp and X-Webhook-Signature: v1=<hex>.',
+    '- Signature input: v1.timestamp.deliveryID.rawBody.',
+    '- Signature algorithm: HMAC-SHA256 using webhook_secret; compare in constant time.',
+    '- Reject timestamps outside your replay window and return HTTP 2xx after accepting a callback.',
+    '',
+    '## Implementation requirements',
+    '- Preserve the exact model and parameter combination selected by the caller.',
+    '- Treat HTTP errors and failed tasks as failures; do not poll forever.',
+    '- Store task_id so polling, billing, OSS output, and Webhook delivery can be reconciled.',
+  ].join('\n')
+}
+
 function imageRequestBody(ctx: ImageSampleContext): Record<string, unknown> {
   const input: Record<string, unknown> = {
     prompt: 'A serene koi pond at sunset, ukiyo-e style.',

@@ -76,6 +76,98 @@ func TestAsyncImageHealthPathUsesPublicImageRoute(t *testing.T) {
 	}))
 }
 
+func TestSwitchRejectedAsyncImageChannelUsesHealthyCompatibleRoute(t *testing.T) {
+	setupAsyncImageSubmitTestDB(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Channel{}))
+	previousMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	model.ClearChannelCacheForTest()
+	t.Cleanup(func() {
+		model.ClearChannelCacheForTest()
+		common.MemoryCacheEnabled = previousMemoryCacheEnabled
+	})
+
+	priority := int64(10)
+	weight := uint(100)
+	baseA := "https://failed.example.com"
+	baseB := "https://healthy.example.com"
+	failed := &model.Channel{Id: 116, Type: constant.ChannelTypeOpenAI, Key: "failed-key", Status: common.ChannelStatusEnabled, Name: "failed", CreatedTime: 1700000100, BaseURL: &baseA, Models: "gpt-image-2", Group: "default", Priority: &priority, Weight: &weight}
+	healthy := &model.Channel{Id: 118, Type: constant.ChannelTypeOpenAI, Key: "healthy-key", Status: common.ChannelStatusEnabled, Name: "healthy", CreatedTime: 1700000200, BaseURL: &baseB, Models: "gpt-image-2", Group: "default", Priority: &priority, Weight: &weight}
+	responsesProfile := &dto.ImageRoutingConfig{Version: dto.ImageRoutingVersion1, Profiles: []dto.ImageRoutingProfile{{
+		Model: "gpt-image-2", Protocol: dto.ImageRoutingProtocolResponsesSSE, UpstreamPath: "/v1/responses",
+		Operations: []dto.ImageOperation{dto.ImageOperationGeneration}, AspectRatios: []string{"1:1"}, Sizes: []string{"1024x1024"}, Qualities: []string{"low"}, OutputFormats: []string{"png"},
+		DefaultAspectRatio: "1:1", DefaultSize: "1024x1024", DefaultQuality: "low", DefaultOutputFormat: "png", MaxOutputImages: 1,
+		AllowedCombinations: []dto.ImageRoutingCombination{{Operation: dto.ImageOperationGeneration, AspectRatio: "1:1", Size: "1024x1024", Quality: "low", OutputFormat: "png"}},
+		VerificationStatus:  dto.ImageRoutingVerificationProductionVerified,
+	}}}
+	generationsProfile := &dto.ImageRoutingConfig{Version: dto.ImageRoutingVersion1, Profiles: []dto.ImageRoutingProfile{{
+		Model: "gpt-image-2", Protocol: dto.ImageRoutingProtocolImagesGenerations, UpstreamPath: "/v1/images/generations",
+		Operations: []dto.ImageOperation{dto.ImageOperationGeneration}, AspectRatios: []string{"1:1"}, Sizes: []string{"1024x1024"}, Qualities: []string{"low"}, OutputFormats: []string{"png"},
+		DefaultAspectRatio: "1:1", DefaultSize: "1024x1024", DefaultQuality: "low", DefaultOutputFormat: "png", MaxOutputImages: 1,
+		AllowedCombinations: []dto.ImageRoutingCombination{{Operation: dto.ImageOperationGeneration, AspectRatio: "1:1", Size: "1024x1024", Quality: "low", OutputFormat: "png"}},
+		VerificationStatus:  dto.ImageRoutingVerificationProductionVerified,
+	}}}
+	failed.SetOtherSettings(dto.ChannelOtherSettings{ImageRouting: responsesProfile})
+	healthy.SetOtherSettings(dto.ChannelOtherSettings{ImageRouting: generationsProfile})
+	require.NoError(t, model.DB.Create(failed).Error)
+	require.NoError(t, model.DB.Create(healthy).Error)
+	model.SetChannelCacheForTest(map[int]*model.Channel{failed.Id: failed, healthy.Id: healthy}, map[string]map[string][]int{
+		"default": {"gpt-image-2": {failed.Id, healthy.Id}},
+	})
+
+	payload := asyncImageTaskPayload{
+		Version: asyncImagePayloadVersion, Executor: AsyncImageExecutorResponses,
+		RelayMode:            relayconstant.RelayModeImagesGenerations,
+		ImageRoutingProtocol: dto.ImageRoutingProtocolResponsesSSE, ImageRoutingUpstreamPath: "/v1/responses",
+		ImageRequirement: &dto.ImageSelectionRequirement{Operation: dto.ImageOperationGeneration, AspectRatio: "1:1", Size: "1024x1024", Quality: "low", OutputFormat: "png", N: 1},
+		Request:          &dto.ImageRequest{Model: "gpt-image-2", Prompt: "fail over", Size: "1024x1024"},
+		ChannelType:      failed.Type, ChannelCreateTime: failed.CreatedTime,
+		ProviderCallStarted: true, AttemptedChannelIDs: []int{failed.Id},
+	}
+	task := &model.Task{
+		TaskID: "task_route_failover", Platform: constant.TaskPlatformOpenAIImage, UserId: 1, Group: "default", ChannelId: failed.Id,
+		Status: model.TaskStatusNotStart, Properties: model.Properties{OriginModelName: "gpt-image-2", UpstreamModelName: "gpt-image-2"},
+		PrivateData: model.TaskPrivateData{ChannelKeyHash: common.GenerateHMAC(failed.Key), BillingContext: &model.TaskBillingContext{PerCallBilling: true}},
+	}
+	task.SetCheckpointData(payload)
+	require.NoError(t, model.DB.Create(task).Error)
+	claimed, err := model.ClaimImageTask(task, common.GetTimestamp())
+	require.NoError(t, err)
+	require.True(t, claimed)
+	startedPayload := payload
+	startedPayload.ProviderCallStarted = true
+	checkpoint, err := encodeAsyncImageTaskPayload(startedPayload)
+	require.NoError(t, err)
+	encrypted, err := model.EncryptImageTaskArtifactCheckpoint(checkpoint)
+	require.NoError(t, err)
+	started, err := task.BeginImageTaskProviderCall(encrypted)
+	require.NoError(t, err)
+	require.True(t, started)
+	selected, err := model.GetRandomSatisfiedChannelWithOptions("default", "gpt-image-2", 0, model.ChannelSelectionOptions{
+		ExcludedChannelIDs: map[int]struct{}{failed.Id: {}}, ImageRequirement: payload.ImageRequirement,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, healthy.Id, selected.Id)
+	assert.True(t, compatibleAsyncImageFailoverChannel(failed, healthy, task, &payload))
+
+	switched, err := switchRejectedAsyncImageChannel(context.Background(), task, &payload, "upstream returned status 503")
+	require.NoError(t, err)
+	require.True(t, switched)
+	assert.Equal(t, healthy.Id, task.ChannelId)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusNotStart), task.Status)
+	assert.Equal(t, common.GenerateHMAC(healthy.Key), task.PrivateData.ChannelKeyHash)
+	assert.Equal(t, healthy.CreatedTime, payload.ChannelCreateTime)
+	assert.Equal(t, []int{failed.Id, healthy.Id}, payload.AttemptedChannelIDs)
+	assert.False(t, payload.ProviderCallStarted)
+	assert.Equal(t, AsyncImageExecutorAdaptor, payload.Executor)
+	assert.Equal(t, dto.ImageRoutingProtocolImagesGenerations, payload.ImageRoutingProtocol)
+	require.NotNil(t, payload.PreparedRequest)
+	assert.Equal(t, healthy.CreatedTime, payload.PreparedRequest.ChannelCreateTime)
+	assert.Contains(t, string(payload.PreparedRequest.Body), `"response_format":"url"`)
+	assert.True(t, payload.ExecutionDestinationStored)
+}
+
 func TestAsyncImagePersistedArtifactLoadHoldsOutputLeaseAndReleasesOnCancellation(t *testing.T) {
 	previousSemaphore := asyncImageOutputMaterializationSemaphore
 	asyncImageOutputMaterializationSemaphore = make(chan struct{}, 1)

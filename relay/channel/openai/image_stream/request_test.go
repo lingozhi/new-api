@@ -172,8 +172,9 @@ func TestGPTImageSizeFromUnifiedOptionsEnforcesModelConstraints(t *testing.T) {
 		{name: "four k portrait", aspect: "9:16", resolution: "4K", want: "2160x3840"},
 		{name: "four k three four", aspect: "3:4", resolution: "4K", want: "2448x3264"},
 		{name: "four k four three", aspect: "4:3", resolution: "4K", want: "3264x2448"},
-		{name: "old portrait ratio", aspect: "2:3", resolution: "2K", wantError: "not supported"},
-		{name: "arbitrary ratio", aspect: "5:4", resolution: "2K", wantError: "not supported"},
+		{name: "two k two three", aspect: "2:3", resolution: "2K", want: "1280x1920"},
+		{name: "two k five four", aspect: "5:4", resolution: "2K", want: "1600x1280"},
+		{name: "unverified four k two three", aspect: "2:3", resolution: "4K", wantError: "not supported with resolution 4K"},
 		{name: "auto defaults upstream sizing at one k", aspect: "auto", resolution: "1K", want: "auto"},
 		{name: "auto rejects two k", aspect: "auto", resolution: "2K", wantError: "only supported with resolution 1K"},
 		{name: "auto rejects four k", aspect: "auto", resolution: "4K", wantError: "only supported with resolution 1K"},
@@ -228,13 +229,17 @@ func TestValidateAsyncOpenAIImageRequestRejectsUnsupportedQuality(t *testing.T) 
 }
 
 func TestGPTImageSizeFromUnifiedOptionsValidatesExplicitSizes(t *testing.T) {
-	officialGPTImage2Sizes := []string{
+	verifiedGPTImage2Sizes := []string{
 		"1024x1024", "1536x864", "864x1536", "1024x1360", "1360x1024",
+		"1536x1024", "1024x1536", "1280x1024", "1024x1280", "1536x768",
+		"768x1536", "1536x512", "512x1536", "1792x768", "768x1792",
 		"1440x1440", "2048x1152", "1152x2048", "1248x1664", "1664x1248",
+		"1920x1280", "1280x1920", "1600x1280", "1280x1600", "2048x1024",
+		"1024x2048", "1920x640", "640x1920", "2016x864", "864x2016",
 		"2880x2880", "3840x2160", "2160x3840", "2448x3264", "3264x2448",
 		"auto",
 	}
-	for _, explicitSize := range officialGPTImage2Sizes {
+	for _, explicitSize := range verifiedGPTImage2Sizes {
 		t.Run(explicitSize, func(t *testing.T) {
 			size, err := gptImageSizeFromUnifiedOptions(&dto.ImageRequest{Size: explicitSize}, "gpt-image-2")
 			require.NoError(t, err)
@@ -244,7 +249,7 @@ func TestGPTImageSizeFromUnifiedOptionsValidatesExplicitSizes(t *testing.T) {
 
 	_, err := gptImageSizeFromUnifiedOptions(&dto.ImageRequest{Size: "2000x1600"}, "gpt-image-2")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "15 official sizes")
+	assert.Contains(t, err.Error(), "published by the model capability profile")
 
 	size, err := gptImageSizeFromUnifiedOptions(&dto.ImageRequest{Size: "1536x1024"}, "gpt-image-1")
 	require.NoError(t, err)

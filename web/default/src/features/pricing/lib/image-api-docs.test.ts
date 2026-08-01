@@ -22,6 +22,9 @@ import { describe, test } from 'node:test'
 import type { ModelApiProfile } from '../types'
 import {
   buildAsyncImageSample,
+  buildImageAiIntegrationGuide,
+  GPT_IMAGE_2_UNAVAILABLE_EXACT_4K_SIZES,
+  GPT_IMAGE_2_VERIFIED_4K_SIZES,
   IMAGE_SAMPLE_LANGUAGES,
   STANDARD_SAMPLE_LANGUAGES,
 } from './image-api-docs'
@@ -75,6 +78,57 @@ const editProfile: ModelApiProfile = {
 }
 
 describe('async image API samples', () => {
+  test('generates a self-contained GPT Image 2 AI integration guide', () => {
+    const guideProfile: ModelApiProfile = {
+      ...profile,
+      constraints: [
+        {
+          type: 'allowed_combinations',
+          fields: ['resolution', 'aspect_ratio', 'size'],
+          combinations: [
+            {
+              resolution: '4K',
+              aspect_ratio: '16:9',
+              size: '3840x2160',
+            },
+          ],
+        },
+      ],
+    }
+
+    const guide = buildImageAiIntegrationGuide({
+      baseUrl: 'https://api.opwan.ai',
+      apiKeyEnv: 'OPWAN_API_KEY',
+      modelName: 'gpt-image-2',
+      endpointPath: '/v1/images/generations',
+      profile: guideProfile,
+    })
+
+    assert.match(guide, /^# Opwan image API integration guide/m)
+    assert.match(guide, /Model: gpt-image-2/)
+    assert.match(
+      guide,
+      /POST https:\/\/api\.opwan\.ai\/v1\/images\/generations/
+    )
+    assert.match(
+      guide,
+      /GET https:\/\/api\.opwan\.ai\/v1\/images\/generations\/\{task_id\}/
+    )
+    assert.match(guide, /Authorization: Bearer \$OPWAN_API_KEY/)
+    assert.match(guide, /resolution=4K, aspect_ratio=16:9, size=3840x2160/)
+    assert.match(guide, /1:1=2880x2880/)
+    assert.match(guide, /9:21=1728x4032/)
+    assert.match(guide, /must not be advertised as exact 4K output/)
+    assert.match(guide, /X-Webhook-Signature/)
+    assert.match(guide, /v1=<hex>/)
+    assert.match(guide, /completed/)
+    assert.match(guide, /failed/)
+    assert.match(guide, /result\.data\[0\]\.url/)
+    assert.match(guide, /Do not use \/v1\/chat\/completions/)
+    assert.equal(GPT_IMAGE_2_VERIFIED_4K_SIZES.length, 5)
+    assert.equal(GPT_IMAGE_2_UNAVAILABLE_EXACT_4K_SIZES.length, 10)
+  })
+
   test('image samples add Bash without exposing it to standard endpoints', () => {
     assert.deepEqual(IMAGE_SAMPLE_LANGUAGES, [
       'curl',
