@@ -731,15 +731,19 @@ func (profile *ImageRoutingProfile) allowedCombinationMatches(
 	if !combination.matches(requirement) {
 		return false
 	}
-	if !profile.allowsGPTImage2ContractAutoDefaults() ||
-		!isGPTImage2ContractAutoCombination(combination) {
+	if profile.VerificationStatus != ImageRoutingVerificationProductionVerified ||
+		!profile.isVerifiedGPTImage2AutoGeometry(combination) {
+		return true
+	}
+	if requirement.Quality != "" || requirement.OutputFormat != "" {
+		return false
+	}
+	if !isGPTImage2ContractAutoCombination(combination) {
 		return true
 	}
 	return (requirement.Resolution == "" || requirement.Resolution == "1K") &&
 		(requirement.AspectRatio == "" || requirement.AspectRatio == "auto") &&
-		(requirement.Size == "" || requirement.Size == "auto") &&
-		requirement.Quality == "" &&
-		requirement.OutputFormat == ""
+		(requirement.Size == "" || requirement.Size == "auto")
 }
 
 func isGPTImage2ContractAutoCombination(combination ImageRoutingCombination) bool {
