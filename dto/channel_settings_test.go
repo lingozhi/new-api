@@ -896,3 +896,84 @@ func TestImageRoutingConfigRejectsInvalidProfiles(t *testing.T) {
 		})
 	}
 }
+
+func TestGPTImage2VerifiedProfileAllowsOnlyTheDocumentedAutoGeometryTuple(t *testing.T) {
+	profile := ImageRoutingProfile{
+		Model:              "gpt-image-2",
+		Protocol:           ImageRoutingProtocolImagesGenerations,
+		UpstreamPath:       "/v1/images/generations",
+		Operations:         []ImageOperation{ImageOperationGeneration},
+		Resolutions:        []string{"1K", "2K"},
+		AspectRatios:       []string{"auto", "1:1"},
+		Sizes:              []string{"auto", "1024x1024", "1440x1440"},
+		DefaultResolution:  "1K",
+		DefaultAspectRatio: "auto",
+		DefaultSize:        "auto",
+		VerificationStatus: ImageRoutingVerificationProductionVerified,
+		AllowedCombinations: []ImageRoutingCombination{
+			{Operation: ImageOperationGeneration, Resolution: "1K", AspectRatio: "auto", Size: "auto"},
+			{Operation: ImageOperationGeneration, Resolution: "1K", AspectRatio: "1:1", Size: "1024x1024"},
+			{Operation: ImageOperationGeneration, Resolution: "2K", AspectRatio: "1:1", Size: "1440x1440"},
+		},
+	}
+
+	require.NoError(t, (&ImageRoutingConfig{
+		Version:  ImageRoutingVersion1,
+		Profiles: []ImageRoutingProfile{profile},
+	}).Validate())
+
+	tests := []struct {
+		name   string
+		mutate func(*ImageRoutingProfile)
+	}{
+		{
+			name: "rejects auto geometry outside 1K",
+			mutate: func(candidate *ImageRoutingProfile) {
+				candidate.DefaultResolution = "2K"
+				candidate.AllowedCombinations[0].Resolution = "2K"
+			},
+		},
+		{
+			name: "rejects auto size for a fixed aspect ratio",
+			mutate: func(candidate *ImageRoutingProfile) {
+				candidate.DefaultAspectRatio = "1:1"
+				candidate.AllowedCombinations[0].AspectRatio = "1:1"
+			},
+		},
+		{
+			name: "rejects the exception for another model",
+			mutate: func(candidate *ImageRoutingProfile) {
+				candidate.Model = "future-image-model"
+			},
+		},
+		{
+			name: "rejects the exception for image editing",
+			mutate: func(candidate *ImageRoutingProfile) {
+				candidate.Protocol = ImageRoutingProtocolImagesEdits
+				candidate.UpstreamPath = "/v1/images/edits"
+				candidate.Operations = []ImageOperation{ImageOperationEdit}
+				for i := range candidate.AllowedCombinations {
+					candidate.AllowedCombinations[i].Operation = ImageOperationEdit
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			candidate := profile
+			candidate.AllowedCombinations = append(
+				[]ImageRoutingCombination(nil),
+				profile.AllowedCombinations...,
+			)
+			tt.mutate(&candidate)
+
+			err := (&ImageRoutingConfig{
+				Version:  ImageRoutingVersion1,
+				Profiles: []ImageRoutingProfile{candidate},
+			}).Validate()
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "exact size")
+		})
+	}
+}
