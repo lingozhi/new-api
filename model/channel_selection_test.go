@@ -1064,6 +1064,20 @@ func TestGetRandomSatisfiedChannelKeepsContractAutoFailoverDefaultsCompatible(t 
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, 117, selected.Id)
+
+	selected, err = GetRandomSatisfiedChannelWithOptions("gpt pro", "gpt-image-2", 0, ChannelSelectionOptions{
+		ExcludedChannelIDs: map[int]struct{}{117: {}},
+		ImageRequirement: &dto.ImageSelectionRequirement{
+			Operation: dto.ImageOperationGeneration,
+			Size:      "auto",
+			N:         1,
+		},
+		RequestPath: "/v1/images/generations",
+		Path:        "/v1/images/generations",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, 127, selected.Id)
 }
 
 func TestGetRandomSatisfiedChannelRequiresExplicitTypedParameterForConflictingDefaults(t *testing.T) {

@@ -52,8 +52,8 @@ func TestGPTImage2ProductionProfileValidatesAndRoutesTheCompleteMatrix(t *testin
 	}
 	assert.False(t, config.Supports("gpt-image-2", dto.ImageSelectionRequirement{
 		Operation:   dto.ImageOperationGeneration,
-		Resolution:  "4K",
-		AspectRatio: "3:2",
+		Resolution:  "2K",
+		AspectRatio: "auto",
 	}))
 }
 
@@ -102,6 +102,19 @@ func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaul
 	assert.Equal(t, "1K", explicitAuto.Resolution)
 	assert.Equal(t, "auto", explicitAuto.AspectRatio)
 	assert.Equal(t, "auto", explicitAuto.Size)
+	assert.False(t, config.Supports("gpt-image-2", dto.ImageSelectionRequirement{
+		Operation:   dto.ImageOperationGeneration,
+		Resolution:  "2K",
+		AspectRatio: "auto",
+		Size:        "auto",
+		N:           1,
+	}))
+	assert.False(t, config.Supports("gpt-image-2", dto.ImageSelectionRequirement{
+		Operation:   dto.ImageOperationGeneration,
+		Resolution:  "4K",
+		AspectRatio: "3:2",
+		N:           1,
+	}))
 
 	negativeCases := []struct {
 		name   string
