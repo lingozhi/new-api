@@ -56,3 +56,50 @@ func TestGPTImage2ProductionProfileValidatesAndRoutesTheCompleteMatrix(t *testin
 		AspectRatio: "3:2",
 	}))
 }
+
+func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaults(t *testing.T) {
+	profile := dto.ImageRoutingProfile{
+		Model:              "gpt-image-2",
+		Protocol:           dto.ImageRoutingProtocolImagesGenerations,
+		UpstreamPath:       "/v1/images/generations",
+		Operations:         []dto.ImageOperation{dto.ImageOperationGeneration},
+		Resolutions:        []string{"1K", "2K"},
+		AspectRatios:       []string{"auto", "1:1"},
+		Sizes:              []string{"auto", "1024x1024", "1440x1440"},
+		DefaultSize:        "auto",
+		MaxOutputImages:    1,
+		VerificationStatus: dto.ImageRoutingVerificationProductionVerified,
+		AllowedCombinations: []dto.ImageRoutingCombination{
+			{Operation: dto.ImageOperationGeneration, Size: "auto"},
+			{Operation: dto.ImageOperationGeneration, Resolution: "1K", AspectRatio: "1:1", Size: "1024x1024"},
+			{Operation: dto.ImageOperationGeneration, Resolution: "2K", AspectRatio: "1:1", Size: "1440x1440"},
+		},
+	}
+	config := &dto.ImageRoutingConfig{
+		Version:  dto.ImageRoutingVersion1,
+		Profiles: []dto.ImageRoutingProfile{profile},
+	}
+
+	require.NoError(t, config.Validate())
+
+	auto, err := profile.ApplyDefaults(dto.ImageSelectionRequirement{
+		Operation: dto.ImageOperationGeneration,
+		Size:      "auto",
+		N:         1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "", auto.Resolution)
+	assert.Equal(t, "", auto.AspectRatio)
+	assert.Equal(t, "auto", auto.Size)
+
+	explicitAuto, err := profile.ApplyDefaults(dto.ImageSelectionRequirement{
+		Operation:   dto.ImageOperationGeneration,
+		Resolution:  "1K",
+		AspectRatio: "auto",
+		N:           1,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "1K", explicitAuto.Resolution)
+	assert.Equal(t, "auto", explicitAuto.AspectRatio)
+	assert.Equal(t, "auto", explicitAuto.Size)
+}
