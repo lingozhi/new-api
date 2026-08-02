@@ -335,3 +335,37 @@ func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaul
 		})
 	}
 }
+
+func TestGPTImage2ProductionProfileAllowsEditAutoTupleAlongsideGeneration(t *testing.T) {
+	profile := dto.ImageRoutingProfile{
+		Model:              "gpt-image-2",
+		Protocol:           dto.ImageRoutingProtocolImagesGenerations,
+		UpstreamPath:       "/v1/images/generations",
+		Operations:         []dto.ImageOperation{dto.ImageOperationGeneration, dto.ImageOperationEdit},
+		Resolutions:        []string{"1K", "2K"},
+		AspectRatios:       []string{"auto", "1:1"},
+		Sizes:              []string{"auto", "1024x1024", "1440x1440"},
+		DefaultResolution:  "1K",
+		DefaultAspectRatio: "auto",
+		DefaultSize:        "auto",
+		MaxOutputImages:    1,
+		MaxReferenceImages: 16,
+		AllowedCombinations: []dto.ImageRoutingCombination{
+			{Operation: dto.ImageOperationGeneration, Size: "auto"},
+			{Operation: dto.ImageOperationEdit, Size: "auto"},
+			{Operation: dto.ImageOperationGeneration, Resolution: "1K", AspectRatio: "1:1", Size: "1024x1024"},
+			{Operation: dto.ImageOperationEdit, Resolution: "1K", AspectRatio: "1:1", Size: "1024x1024"},
+			{Operation: dto.ImageOperationGeneration, Resolution: "2K", AspectRatio: "1:1", Size: "1440x1440"},
+			{Operation: dto.ImageOperationEdit, Resolution: "2K", AspectRatio: "1:1", Size: "1440x1440"},
+		},
+		VerificationStatus: dto.ImageRoutingVerificationProductionVerified,
+	}
+	config := &dto.ImageRoutingConfig{Version: dto.ImageRoutingVersion1, Profiles: []dto.ImageRoutingProfile{profile}}
+	require.NoError(t, config.Validate())
+	assert.True(t, config.Supports("gpt-image-2", dto.ImageSelectionRequirement{
+		Operation: dto.ImageOperationEdit, Size: "auto", ReferenceImageCount: 1, N: 1,
+	}))
+	assert.True(t, config.Supports("gpt-image-2", dto.ImageSelectionRequirement{
+		Operation: dto.ImageOperationEdit, Resolution: "2K", AspectRatio: "1:1", Size: "1440x1440", ReferenceImageCount: 1, N: 1,
+	}))
+}

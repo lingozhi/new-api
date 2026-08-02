@@ -712,16 +712,29 @@ func (profile *ImageRoutingProfile) validate(index int) error {
 func (profile *ImageRoutingProfile) allowsGPTImage2ContractAutoDefaults() bool {
 	if profile == nil || normalizeImageRoutingModel(profile.Model) != "gpt-image-2" ||
 		profile.VerificationStatus != ImageRoutingVerificationProductionVerified ||
-		len(profile.Operations) != 1 || profile.Operations[0] != ImageOperationGeneration ||
+		!containsImageOperation(profile.Operations, ImageOperationGeneration) ||
 		profile.DefaultSize != "auto" {
 		return false
 	}
-	for _, combination := range profile.AllowedCombinations {
-		if isGPTImage2ContractAutoCombination(combination) {
-			return true
+	// Mixed generation/edit profiles must declare the defaults explicitly so
+	// the auto sentinel cannot silently invent edit controls.
+	if len(profile.Operations) > 1 &&
+		(profile.DefaultResolution == "" || profile.DefaultAspectRatio == "") {
+		return false
+	}
+	for _, operation := range profile.Operations {
+		found := false
+		for _, combination := range profile.AllowedCombinations {
+			if combination.Operation == operation && isGPTImage2ContractAutoCombination(combination) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
 func (profile *ImageRoutingProfile) allowedCombinationMatches(
@@ -747,7 +760,7 @@ func (profile *ImageRoutingProfile) allowedCombinationMatches(
 }
 
 func isGPTImage2ContractAutoCombination(combination ImageRoutingCombination) bool {
-	return combination.Operation == ImageOperationGeneration &&
+	return (combination.Operation == ImageOperationGeneration || combination.Operation == ImageOperationEdit) &&
 		combination.Resolution == "" &&
 		combination.AspectRatio == "" &&
 		combination.Size == "auto" &&
@@ -759,13 +772,19 @@ func (profile *ImageRoutingProfile) isVerifiedGPTImage2AutoGeometry(
 	combination ImageRoutingCombination,
 ) bool {
 	if profile == nil || normalizeImageRoutingModel(profile.Model) != "gpt-image-2" ||
-		combination.Operation != ImageOperationGeneration ||
+		(combination.Operation != ImageOperationGeneration && combination.Operation != ImageOperationEdit) ||
 		combination.Size != "auto" ||
 		combination.Quality != "" ||
 		combination.OutputFormat != "" {
 		return false
 	}
-	if combination.Resolution == "1K" && combination.AspectRatio == "auto" {
+	if combination.Operation == ImageOperationGeneration &&
+		combination.Resolution == "1K" && combination.AspectRatio == "auto" {
+		return true
+	}
+	if combination.Operation == ImageOperationEdit &&
+		containsImageOperation(profile.Operations, ImageOperationGeneration) &&
+		isGPTImage2ContractAutoCombination(combination) {
 		return true
 	}
 	return profile.allowsGPTImage2ContractAutoDefaults() &&
