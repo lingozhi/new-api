@@ -164,6 +164,28 @@ func TestValidateImageDataListContractChecksAspectRatioWithTolerance(t *testing.
 	assert.Contains(t, err.Error(), "expected 16:9")
 }
 
+func TestValidateImageDataListContractAllowsApproximatePixelBudgetForAspectRatio(t *testing.T) {
+	nativePortrait := dto.ImageData{B64Json: base64.StdEncoding.EncodeToString(encodedPNG(t, 941, 1672))}
+	tooLargePortrait := dto.ImageData{B64Json: base64.StdEncoding.EncodeToString(encodedPNG(t, 950, 1700))}
+
+	// Some GPT Image 2 providers preserve their 1K pixel budget and quantize
+	// the requested 9:16 ratio to 941x1672 instead of the catalog's
+	// 864x1536 tuple. The ratio is still correct and the pixel budget is close
+	// enough to accept as the same requested output.
+	require.NoError(t, ValidateImageDataListContract([]dto.ImageData{nativePortrait}, "864x1536", "9:16", "png", 1))
+
+	err := ValidateImageDataListContract([]dto.ImageData{tooLargePortrait}, "864x1536", "9:16", "png", 1)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrImageDimensionMismatch)
+	assert.Contains(t, err.Error(), "expected approximately 864x1536")
+
+	// A size-only contract remains exact because it has no aspect-ratio context
+	// in which an upstream-native pixel budget can be interpreted safely.
+	err = ValidateImageDataListContract([]dto.ImageData{nativePortrait}, "864x1536", "", "png", 1)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrImageDimensionMismatch)
+}
+
 func encodedPNG(t *testing.T, width, height int) []byte {
 	t.Helper()
 	return encodeImage(t, func(buf *bytes.Buffer, img image.Image) error {
