@@ -102,4 +102,56 @@ func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaul
 	assert.Equal(t, "1K", explicitAuto.Resolution)
 	assert.Equal(t, "auto", explicitAuto.AspectRatio)
 	assert.Equal(t, "auto", explicitAuto.Size)
+
+	negativeCases := []struct {
+		name   string
+		mutate func(*dto.ImageRoutingProfile)
+	}{
+		{
+			name: "another model cannot omit defaults",
+			mutate: func(candidate *dto.ImageRoutingProfile) {
+				candidate.Model = "future-image-model"
+			},
+		},
+		{
+			name: "image editing cannot omit defaults",
+			mutate: func(candidate *dto.ImageRoutingProfile) {
+				candidate.Protocol = dto.ImageRoutingProtocolImagesEdits
+				candidate.UpstreamPath = "/v1/images/edits"
+				candidate.Operations = []dto.ImageOperation{dto.ImageOperationEdit}
+				for index := range candidate.AllowedCombinations {
+					candidate.AllowedCombinations[index].Operation = dto.ImageOperationEdit
+				}
+			},
+		},
+		{
+			name: "mixed operations cannot omit defaults",
+			mutate: func(candidate *dto.ImageRoutingProfile) {
+				candidate.Operations = []dto.ImageOperation{dto.ImageOperationGeneration, dto.ImageOperationEdit}
+			},
+		},
+		{
+			name: "missing auto size default cannot omit defaults",
+			mutate: func(candidate *dto.ImageRoutingProfile) {
+				candidate.DefaultSize = ""
+			},
+		},
+	}
+	for _, testCase := range negativeCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			candidate := profile
+			candidate.Operations = append([]dto.ImageOperation(nil), profile.Operations...)
+			candidate.AllowedCombinations = append(
+				[]dto.ImageRoutingCombination(nil),
+				profile.AllowedCombinations...,
+			)
+			testCase.mutate(&candidate)
+			err := (&dto.ImageRoutingConfig{
+				Version:  dto.ImageRoutingVersion1,
+				Profiles: []dto.ImageRoutingProfile{candidate},
+			}).Validate()
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "default_resolution is required")
+		})
+	}
 }

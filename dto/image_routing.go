@@ -501,6 +501,7 @@ func (profile *ImageRoutingProfile) validate(index int) error {
 		{name: "default_quality", value: profile.DefaultQuality, declared: profile.Qualities, normalize: normalizeImageQuality},
 		{name: "default_output_format", value: profile.DefaultOutputFormat, declared: profile.OutputFormats, normalize: normalizeImageOutputFormat},
 	}
+	allowsContractAutoDefaults := profile.allowsGPTImage2ContractAutoDefaults()
 	for _, item := range defaults {
 		if item.value != item.normalize(item.value) {
 			return fmt.Errorf("%s.%s must use a canonical value", prefix, item.name)
@@ -511,6 +512,9 @@ func (profile *ImageRoutingProfile) validate(index int) error {
 			}
 		}
 		if profile.VerificationStatus == ImageRoutingVerificationProductionVerified && len(item.declared) > 1 && item.value == "" {
+			if allowsContractAutoDefaults && (item.name == "default_resolution" || item.name == "default_aspect_ratio") {
+				continue
+			}
 			return fmt.Errorf("%s.%s is required when a verified profile declares multiple values", prefix, item.name)
 		}
 	}
@@ -667,11 +671,11 @@ func (profile *ImageRoutingProfile) validate(index int) error {
 		for i, combination := range profile.AllowedCombinations {
 			isVerifiedAutoGeometry := normalizeImageRoutingModel(profile.Model) == "gpt-image-2" &&
 				combination.Operation == ImageOperationGeneration &&
-				combination.Resolution == "1K" &&
-				combination.AspectRatio == "auto" &&
-				combination.Size == "auto"
-			if combination.Resolution == "" ||
-				(!imageSizePattern.MatchString(combination.Size) && !isVerifiedAutoGeometry) {
+				combination.Size == "auto" &&
+				((combination.Resolution == "1K" && combination.AspectRatio == "auto") ||
+					(combination.Resolution == "" && combination.AspectRatio == ""))
+			if !isVerifiedAutoGeometry &&
+				(combination.Resolution == "" || !imageSizePattern.MatchString(combination.Size)) {
 				return fmt.Errorf("%s.allowed_combinations[%d] must bind resolution to an exact size for output verification", prefix, i)
 			}
 			coveredResolutions[combination.Resolution] = struct{}{}
@@ -707,6 +711,26 @@ func (profile *ImageRoutingProfile) validate(index int) error {
 		}
 	}
 	return nil
+}
+
+func (profile *ImageRoutingProfile) allowsGPTImage2ContractAutoDefaults() bool {
+	if profile == nil || normalizeImageRoutingModel(profile.Model) != "gpt-image-2" ||
+		profile.VerificationStatus != ImageRoutingVerificationProductionVerified ||
+		len(profile.Operations) != 1 || profile.Operations[0] != ImageOperationGeneration ||
+		profile.DefaultSize != "auto" {
+		return false
+	}
+	for _, combination := range profile.AllowedCombinations {
+		if combination.Operation == ImageOperationGeneration &&
+			combination.Resolution == "" &&
+			combination.AspectRatio == "" &&
+			combination.Size == "auto" &&
+			combination.Quality == "" &&
+			combination.OutputFormat == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func validateImageRoutingCombinationCoverage(
