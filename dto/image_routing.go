@@ -737,7 +737,9 @@ func (profile *ImageRoutingProfile) allowedCombinationMatches(
 	}
 	return (requirement.Resolution == "" || requirement.Resolution == "1K") &&
 		(requirement.AspectRatio == "" || requirement.AspectRatio == "auto") &&
-		(requirement.Size == "" || requirement.Size == "auto")
+		(requirement.Size == "" || requirement.Size == "auto") &&
+		requirement.Quality == "" &&
+		requirement.OutputFormat == ""
 }
 
 func isGPTImage2ContractAutoCombination(combination ImageRoutingCombination) bool {

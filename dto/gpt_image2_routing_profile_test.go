@@ -259,7 +259,9 @@ func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaul
 				Profiles: []dto.ImageRoutingProfile{candidate},
 			}
 
-			require.NoError(t, config.Validate())
+			err := config.Validate()
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "default image tuple")
 			assert.False(t, config.Supports("gpt-image-2", testCase.requirement))
 		})
 	}
