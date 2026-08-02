@@ -946,6 +946,17 @@ func TestGPTImage2VerifiedProfileAllowsOnlyTheDocumentedAutoGeometryTuple(t *tes
 				candidate.Model = "future-image-model"
 			},
 		},
+		{
+			name: "rejects the exception for image editing",
+			mutate: func(candidate *ImageRoutingProfile) {
+				candidate.Protocol = ImageRoutingProtocolImagesEdits
+				candidate.UpstreamPath = "/v1/images/edits"
+				candidate.Operations = []ImageOperation{ImageOperationEdit}
+				for i := range candidate.AllowedCombinations {
+					candidate.AllowedCombinations[i].Operation = ImageOperationEdit
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
