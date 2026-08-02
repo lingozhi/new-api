@@ -994,6 +994,92 @@ func TestGetRandomSatisfiedChannelRequiresExplicitVariantForConflictingDefaults(
 	assert.Equal(t, 108, selected.Id)
 }
 
+func TestGetRandomSatisfiedChannelKeepsContractAutoFailoverDefaultsCompatible(t *testing.T) {
+	setImageResolutionPricesForChannelSelectionTest(t)
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	ClearChannelCacheForTest()
+	clearChannelCooldownsForTest()
+	t.Cleanup(func() {
+		clearChannelCooldownsForTest()
+		ClearChannelCacheForTest()
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	primaryPriority := int64(10)
+	backupPriority := int64(9)
+	weight := uint(100)
+	primary := &Channel{Id: 117, Status: common.ChannelStatusEnabled, Weight: &weight, Priority: &primaryPriority}
+	backup := &Channel{Id: 127, Status: common.ChannelStatusEnabled, Weight: &weight, Priority: &backupPriority}
+	primary.SetOtherSettings(dto.ChannelOtherSettings{ImageRouting: &dto.ImageRoutingConfig{
+		Version: dto.ImageRoutingVersion1,
+		Profiles: []dto.ImageRoutingProfile{{
+			Model:              "gpt-image-2",
+			Protocol:           dto.ImageRoutingProtocolImagesGenerations,
+			UpstreamPath:       "/v1/images/generations",
+			Operations:         []dto.ImageOperation{dto.ImageOperationGeneration},
+			Resolutions:        []string{"1K", "2K"},
+			AspectRatios:       []string{"auto", "1:1"},
+			Sizes:              []string{"auto", "1024x1024", "1440x1440"},
+			DefaultSize:        "auto",
+			MaxOutputImages:    1,
+			VerificationStatus: dto.ImageRoutingVerificationProductionVerified,
+			AllowedCombinations: []dto.ImageRoutingCombination{
+				{Operation: dto.ImageOperationGeneration, Size: "auto"},
+				{Operation: dto.ImageOperationGeneration, Resolution: "1K", AspectRatio: "1:1", Size: "1024x1024"},
+				{Operation: dto.ImageOperationGeneration, Resolution: "2K", AspectRatio: "1:1", Size: "1440x1440"},
+			},
+		}},
+	}})
+	backup.SetOtherSettings(dto.ChannelOtherSettings{ImageRouting: &dto.ImageRoutingConfig{
+		Version: dto.ImageRoutingVersion1,
+		Profiles: []dto.ImageRoutingProfile{{
+			Model:           "gpt-image-2",
+			Protocol:        dto.ImageRoutingProtocolKIEJobs,
+			UpstreamPath:    "/api/v1/jobs/createTask",
+			Operations:      []dto.ImageOperation{dto.ImageOperationGeneration},
+			Sizes:           []string{"auto"},
+			DefaultSize:     "auto",
+			MaxOutputImages: 1,
+			AllowedCombinations: []dto.ImageRoutingCombination{{
+				Operation: dto.ImageOperationGeneration,
+				Size:      "auto",
+			}},
+			VerificationStatus: dto.ImageRoutingVerificationProductionVerified,
+		}},
+	}})
+	SetChannelCacheForTest(map[int]*Channel{117: primary, 127: backup}, map[string]map[string][]int{
+		"gpt pro": {"gpt-image-2": {117, 127}},
+	})
+
+	selected, err := GetRandomSatisfiedChannelWithOptions("gpt pro", "gpt-image-2", 0, ChannelSelectionOptions{
+		ImageRequirement: &dto.ImageSelectionRequirement{
+			Operation: dto.ImageOperationGeneration,
+			Size:      "auto",
+			N:         1,
+		},
+		RequestPath: "/v1/images/generations",
+		Path:        "/v1/images/generations",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, 117, selected.Id)
+
+	selected, err = GetRandomSatisfiedChannelWithOptions("gpt pro", "gpt-image-2", 0, ChannelSelectionOptions{
+		ExcludedChannelIDs: map[int]struct{}{117: {}},
+		ImageRequirement: &dto.ImageSelectionRequirement{
+			Operation: dto.ImageOperationGeneration,
+			Size:      "auto",
+			N:         1,
+		},
+		RequestPath: "/v1/images/generations",
+		Path:        "/v1/images/generations",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, selected)
+	assert.Equal(t, 127, selected.Id)
+}
+
 func TestGetRandomSatisfiedChannelRequiresExplicitTypedParameterForConflictingDefaults(t *testing.T) {
 	setImageResolutionPricesForChannelSelectionTest(t)
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
