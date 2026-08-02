@@ -167,4 +167,45 @@ func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaul
 			assert.ErrorContains(t, err, "default_resolution is required")
 		})
 	}
+
+	t.Run("mixed operations cannot restore the contract auto sentinel with explicit defaults", func(t *testing.T) {
+		candidate := profile
+		candidate.Operations = []dto.ImageOperation{dto.ImageOperationGeneration, dto.ImageOperationEdit}
+		candidate.DefaultResolution = "1K"
+		candidate.DefaultAspectRatio = "auto"
+		candidate.AllowedCombinations = append(
+			append([]dto.ImageRoutingCombination(nil), profile.AllowedCombinations...),
+			dto.ImageRoutingCombination{
+				Operation:   dto.ImageOperationEdit,
+				Resolution:  "1K",
+				AspectRatio: "1:1",
+				Size:        "1024x1024",
+			},
+		)
+		err := (&dto.ImageRoutingConfig{
+			Version:  dto.ImageRoutingVersion1,
+			Profiles: []dto.ImageRoutingProfile{candidate},
+		}).Validate()
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "exact size")
+	})
+
+	t.Run("contract auto sentinel cannot carry output controls", func(t *testing.T) {
+		candidate := profile
+		candidate.DefaultResolution = "1K"
+		candidate.DefaultAspectRatio = "auto"
+		candidate.OutputFormats = []string{"png"}
+		candidate.DefaultOutputFormat = "png"
+		candidate.AllowedCombinations = append(
+			[]dto.ImageRoutingCombination(nil),
+			profile.AllowedCombinations...,
+		)
+		candidate.AllowedCombinations[0].OutputFormat = "png"
+		err := (&dto.ImageRoutingConfig{
+			Version:  dto.ImageRoutingVersion1,
+			Profiles: []dto.ImageRoutingProfile{candidate},
+		}).Validate()
+		require.Error(t, err)
+		assert.ErrorContains(t, err, "exact size")
+	})
 }
