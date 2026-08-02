@@ -265,4 +265,73 @@ func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaul
 			assert.False(t, config.Supports("gpt-image-2", testCase.requirement))
 		})
 	}
+
+	for _, testCase := range []struct {
+		name        string
+		configure   func(*dto.ImageRoutingProfile)
+		requirement dto.ImageSelectionRequirement
+	}{
+		{
+			name: "exact auto geometry cannot borrow a declared quality",
+			configure: func(candidate *dto.ImageRoutingProfile) {
+				candidate.Qualities = []string{"high"}
+				candidate.DefaultQuality = "high"
+				for index := 1; index < len(candidate.AllowedCombinations); index++ {
+					candidate.AllowedCombinations[index].Quality = "high"
+				}
+			},
+			requirement: dto.ImageSelectionRequirement{
+				Operation:   dto.ImageOperationGeneration,
+				Resolution:  "1K",
+				AspectRatio: "auto",
+				Size:        "auto",
+				Quality:     "high",
+				N:           1,
+			},
+		},
+		{
+			name: "exact auto geometry cannot borrow a declared output format",
+			configure: func(candidate *dto.ImageRoutingProfile) {
+				candidate.OutputFormats = []string{"png"}
+				candidate.DefaultOutputFormat = "png"
+				for index := 1; index < len(candidate.AllowedCombinations); index++ {
+					candidate.AllowedCombinations[index].OutputFormat = "png"
+				}
+			},
+			requirement: dto.ImageSelectionRequirement{
+				Operation:    dto.ImageOperationGeneration,
+				Resolution:   "1K",
+				AspectRatio:  "auto",
+				Size:         "auto",
+				OutputFormat: "png",
+				N:            1,
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			candidate := profile
+			candidate.DefaultResolution = "1K"
+			candidate.DefaultAspectRatio = "auto"
+			candidate.AllowedCombinations = append(
+				[]dto.ImageRoutingCombination(nil),
+				profile.AllowedCombinations...,
+			)
+			candidate.AllowedCombinations[0] = dto.ImageRoutingCombination{
+				Operation:   dto.ImageOperationGeneration,
+				Resolution:  "1K",
+				AspectRatio: "auto",
+				Size:        "auto",
+			}
+			testCase.configure(&candidate)
+			config := &dto.ImageRoutingConfig{
+				Version:  dto.ImageRoutingVersion1,
+				Profiles: []dto.ImageRoutingProfile{candidate},
+			}
+
+			err := config.Validate()
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "default image tuple")
+			assert.False(t, config.Supports("gpt-image-2", testCase.requirement))
+		})
+	}
 }
