@@ -507,6 +507,26 @@ func TestSubmitAsyncImageUsesPreparedProviderOutputCountForContract(t *testing.T
 	assert.Equal(t, uint(3), asyncImageExpectedOutputContract(payload).count)
 }
 
+func TestAsyncImageExpectedOutputContractTreatsGPTImage2DimensionsAsProviderManaged(t *testing.T) {
+	contract := asyncImageExpectedOutputContract(asyncImageTaskPayload{
+		ImageRoutingProtocol: dto.ImageRoutingProtocolImagesGenerations,
+		ImageRequirement: &dto.ImageSelectionRequirement{
+			Operation:    dto.ImageOperationGeneration,
+			Resolution:   "1K",
+			AspectRatio:  "9:16",
+			Size:         "864x1536",
+			OutputFormat: "png",
+			N:            1,
+		},
+		Request: &dto.ImageRequest{Model: "gpt-image-2"},
+	})
+
+	assert.Empty(t, contract.size)
+	assert.Equal(t, "9:16", contract.aspectRatio)
+	assert.Equal(t, "png", contract.format)
+	assert.Equal(t, uint(1), contract.count)
+}
+
 func TestSubmitAsyncImageRejectsPreparedOutputCountBeyondVerifiedProfile(t *testing.T) {
 	setupAsyncImageSubmitTestDB(t)
 	user, token := seedAsyncImageSubmitIdentity(t)
