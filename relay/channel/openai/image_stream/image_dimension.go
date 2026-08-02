@@ -28,6 +28,13 @@ var (
 	ErrImageDataRequiresMaterialization = errors.New("image data requires materialization")
 )
 
+// Some image providers keep a resolution-specific pixel budget and quantize
+// the requested aspect ratio to a nearby native size. A 1K 9:16 request may,
+// for example, be returned as 941x1672 instead of the catalog's 864x1536.
+// Keep the tolerance narrow enough to reject a materially different output,
+// while allowing this provider-native rounding behavior.
+const approximateImagePixelAreaTolerance = 0.20
+
 // ParseExpectedImageDimensions parses an exact image size in WIDTHxHEIGHT form.
 func ParseExpectedImageDimensions(size string) (int, int, error) {
 	normalized := strings.TrimSpace(size)
@@ -156,15 +163,36 @@ func validateDecodedImageOutputContract(data []byte, expectedWidth, expectedHeig
 		return fmt.Errorf("%w: decoded %s dimensions are %dx%d", ErrUndecodableImage, format, config.Width, config.Height)
 	}
 	if expectedWidth > 0 && expectedHeight > 0 && (config.Width != expectedWidth || config.Height != expectedHeight) {
-		return fmt.Errorf(
-			"%w: expected %dx%d, got %dx%d (%s)",
-			ErrImageDimensionMismatch,
-			expectedWidth,
-			expectedHeight,
-			config.Width,
-			config.Height,
-			format,
-		)
+		approximate := false
+		if expectedAspectWidth > 0 && expectedAspectHeight > 0 {
+			expectedPixelArea := float64(expectedWidth) * float64(expectedHeight)
+			actualPixelArea := float64(config.Width) * float64(config.Height)
+			relativeAreaError := math.Abs(actualPixelArea/expectedPixelArea - 1)
+			approximate = relativeAreaError <= approximateImagePixelAreaTolerance
+		}
+		if !approximate {
+			if expectedAspectWidth > 0 && expectedAspectHeight > 0 {
+				return fmt.Errorf(
+					"%w: expected approximately %dx%d (pixel area tolerance %.0f%%), got %dx%d (%s)",
+					ErrImageDimensionMismatch,
+					expectedWidth,
+					expectedHeight,
+					approximateImagePixelAreaTolerance*100,
+					config.Width,
+					config.Height,
+					format,
+				)
+			}
+			return fmt.Errorf(
+				"%w: expected %dx%d, got %dx%d (%s)",
+				ErrImageDimensionMismatch,
+				expectedWidth,
+				expectedHeight,
+				config.Width,
+				config.Height,
+				format,
+			)
+		}
 	}
 	if expectedAspectWidth > 0 && expectedAspectHeight > 0 {
 		actualRatio := float64(config.Width) / float64(config.Height)
