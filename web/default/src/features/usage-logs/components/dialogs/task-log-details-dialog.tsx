@@ -120,7 +120,7 @@ function DetailValue(props: { value: unknown }) {
     )
   }
 
-  return <span className='break-all whitespace-pre-wrap'>{formatted}</span>
+  return <span className='break-words whitespace-pre-wrap'>{formatted}</span>
 }
 
 function getErrorLabelKey(key: string): string {
