@@ -665,7 +665,13 @@ func (profile *ImageRoutingProfile) validate(index int) error {
 		coveredResolutions := make(map[string]struct{}, len(profile.Resolutions))
 		coveredSizes := make(map[string]struct{}, len(profile.Sizes))
 		for i, combination := range profile.AllowedCombinations {
-			if combination.Resolution == "" || !imageSizePattern.MatchString(combination.Size) {
+			isVerifiedAutoGeometry := normalizeImageRoutingModel(profile.Model) == "gpt-image-2" &&
+				combination.Operation == ImageOperationGeneration &&
+				combination.Resolution == "1K" &&
+				combination.AspectRatio == "auto" &&
+				combination.Size == "auto"
+			if combination.Resolution == "" ||
+				(!imageSizePattern.MatchString(combination.Size) && !isVerifiedAutoGeometry) {
 				return fmt.Errorf("%s.allowed_combinations[%d] must bind resolution to an exact size for output verification", prefix, i)
 			}
 			coveredResolutions[combination.Resolution] = struct{}{}
