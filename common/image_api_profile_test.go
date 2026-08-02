@@ -174,6 +174,15 @@ func TestGPTImageProfileEnumeratesResponsesToolOptions(t *testing.T) {
 	assert.Equal(t, []string{"auto", "low"}, imageAPIParameterByName(t, profile, "moderation").EnumValues)
 }
 
+func TestGPTImage2UnifiedProfilePublishesImageEditing(t *testing.T) {
+	profile := ImageAPIProfileForModel("gpt-image-2")
+
+	assert.Equal(t, []string{"generation", "edit"}, profile.Operations)
+	imageInput := imageAPIParameterByName(t, profile, "image_input")
+	require.NotNil(t, imageInput.MaxItems)
+	assert.Equal(t, MaxImageInputURLs, *imageInput.MaxItems)
+}
+
 func TestGPTImageProfileKeepsUnifiedDimensionsOptionalWhenUpstreamDefaultsToAuto(t *testing.T) {
 	profile := ImageAPIProfileForModel("gpt-image-2")
 
