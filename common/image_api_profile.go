@@ -541,6 +541,9 @@ func imageOperationsForModel(model string) []string {
 	if strings.HasSuffix(model, "-image-to-image") || strings.Contains(model, "image-edit") {
 		return []string{"edit"}
 	}
+	if strings.HasPrefix(model, "gpt-image-2") {
+		return []string{"generation", "edit"}
+	}
 	return []string{"generation"}
 }
 
