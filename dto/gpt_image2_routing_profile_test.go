@@ -208,4 +208,59 @@ func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaul
 		require.Error(t, err)
 		assert.ErrorContains(t, err, "exact size")
 	})
+
+	for _, testCase := range []struct {
+		name        string
+		configure   func(*dto.ImageRoutingProfile)
+		requirement dto.ImageSelectionRequirement
+	}{
+		{
+			name: "contract auto sentinel cannot borrow a declared quality",
+			configure: func(candidate *dto.ImageRoutingProfile) {
+				candidate.Qualities = []string{"high"}
+				candidate.DefaultQuality = "high"
+				for index := 1; index < len(candidate.AllowedCombinations); index++ {
+					candidate.AllowedCombinations[index].Quality = "high"
+				}
+			},
+			requirement: dto.ImageSelectionRequirement{
+				Operation: dto.ImageOperationGeneration,
+				Size:      "auto",
+				Quality:   "high",
+				N:         1,
+			},
+		},
+		{
+			name: "contract auto sentinel cannot borrow a declared output format",
+			configure: func(candidate *dto.ImageRoutingProfile) {
+				candidate.OutputFormats = []string{"png"}
+				candidate.DefaultOutputFormat = "png"
+				for index := 1; index < len(candidate.AllowedCombinations); index++ {
+					candidate.AllowedCombinations[index].OutputFormat = "png"
+				}
+			},
+			requirement: dto.ImageSelectionRequirement{
+				Operation:    dto.ImageOperationGeneration,
+				Size:         "auto",
+				OutputFormat: "png",
+				N:            1,
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			candidate := profile
+			candidate.AllowedCombinations = append(
+				[]dto.ImageRoutingCombination(nil),
+				profile.AllowedCombinations...,
+			)
+			testCase.configure(&candidate)
+			config := &dto.ImageRoutingConfig{
+				Version:  dto.ImageRoutingVersion1,
+				Profiles: []dto.ImageRoutingProfile{candidate},
+			}
+
+			require.NoError(t, config.Validate())
+			assert.False(t, config.Supports("gpt-image-2", testCase.requirement))
+		})
+	}
 }
