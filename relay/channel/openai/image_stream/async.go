@@ -3554,14 +3554,6 @@ func asyncImageExpectedOutputContract(payload asyncImageTaskPayload) asyncImageO
 	if size == "auto" {
 		size = ""
 	}
-	// GPT Image 2 providers may return a near-equivalent raster size even
-	// when the request selects an exact aspect/resolution tuple (for example,
-	// 941x1672 for the documented 9:16 1K tuple 864x1536).  The provider
-	// contract guarantees the selected geometry, not those exact pixels, so
-	// validate the aspect ratio below while leaving dimensions provider-managed.
-	if payload.Request != nil && strings.HasPrefix(strings.ToLower(strings.TrimSpace(payload.Request.Model)), "gpt-image-2") {
-		size = ""
-	}
 	aspectRatio := strings.ToLower(strings.TrimSpace(payload.ImageRequirement.AspectRatio))
 	if aspectRatio == "auto" {
 		aspectRatio = ""
