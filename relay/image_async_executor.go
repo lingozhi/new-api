@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -148,6 +149,13 @@ func executeGenericImageAdaptor(ctx context.Context, input *image_stream.Generic
 	requestURL := info.RequestURLPath
 	if !strings.HasPrefix(requestURL, "/") && !strings.HasPrefix(requestURL, "http://") && !strings.HasPrefix(requestURL, "https://") {
 		requestURL = "/" + requestURL
+	}
+	if useGPTImage2MultipartCountQuery(request) {
+		// The adaptor builds the final provider URL from RelayInfo rather than
+		// from the temporary rebuilt request, so carry the compatibility query
+		// into the route snapshot as well as the local request URL.
+		requestURL = appendImageCountQuery(requestURL, *request.N)
+		info.RequestURLPath = appendImageCountQuery(info.RequestURLPath, *request.N)
 	}
 	var httpRequest *http.Request
 	var err error
@@ -475,6 +483,14 @@ func buildGenericImageEditHTTPRequest(ctx context.Context, requestURL string, re
 	if len(urls) == 0 {
 		return nil, errors.New("image is required for asynchronous image edits")
 	}
+	// Sixoner's GPT Image 2 edit endpoint rejects `n=1` when it is encoded as
+	// a multipart text field, even though the value is valid. It accepts the
+	// same canonical count in the query string. Keep this compatibility detail
+	// scoped to GPT Image 2, whose verified routes only allow n=1; other image
+	// models retain the standard multipart field semantics (including n>1).
+	if useGPTImage2MultipartCountQuery(request) {
+		requestURL = appendImageCountQuery(requestURL, *request.N)
+	}
 
 	pipeReader, pipeWriter := io.Pipe()
 	writer := multipart.NewWriter(pipeWriter)
@@ -535,7 +551,7 @@ func writeGenericImageEditMultipart(
 	if err := writeField("prompt", request.Prompt); err != nil {
 		return err
 	}
-	if request.N != nil {
+	if request.N != nil && !useGPTImage2MultipartCountQuery(request) {
 		if err := writeField("n", strconv.FormatUint(uint64(*request.N), 10)); err != nil {
 			return err
 		}
@@ -712,6 +728,24 @@ func writeGenericImageEditMultipart(
 		totalBytes += written
 	}
 	return nil
+}
+
+func useGPTImage2MultipartCountQuery(request *dto.ImageRequest) bool {
+	if request == nil || request.N == nil || *request.N == 0 {
+		return false
+	}
+	return common.ImageModelCapabilitiesForModel(request.Model).Family == common.ImageModelFamilyGPTImage2
+}
+
+func appendImageCountQuery(requestURL string, count uint) string {
+	parsed, err := url.Parse(requestURL)
+	if err != nil {
+		return requestURL
+	}
+	query := parsed.Query()
+	query.Set("n", strconv.FormatUint(uint64(count), 10))
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func strictAsyncImageInputFormat(head []byte) (string, bool) {

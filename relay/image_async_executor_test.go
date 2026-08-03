@@ -295,6 +295,7 @@ func TestGenericImageExecutorRebuildsEditMultipartFromStagedInput(t *testing.T) 
 		require.NoError(t, r.ParseMultipartForm(64<<20))
 		require.Equal(t, "gpt-image-1", r.PostForm.Get("model"))
 		require.Equal(t, "turn it blue", r.PostForm.Get("prompt"))
+		require.Equal(t, "2", r.PostForm.Get("n"))
 		require.Equal(t, "png", r.PostForm.Get("output_format"))
 		require.Len(t, r.MultipartForm.File["image"], 1)
 		file, err := r.MultipartForm.File["image"][0].Open()
@@ -310,9 +311,11 @@ func TestGenericImageExecutorRebuildsEditMultipartFromStagedInput(t *testing.T) 
 	}))
 	defer server.Close()
 
+	count := uint(2)
 	request := &dto.ImageRequest{
 		Model:        "gpt-image-1",
 		Prompt:       "turn it blue",
+		N:            &count,
 		Images:       json.RawMessage(`[` + `"data:image/png;base64,` + base64.StdEncoding.EncodeToString(imageBytes) + `"` + `]`),
 		OutputFormat: json.RawMessage(`"png"`),
 	}
@@ -322,6 +325,55 @@ func TestGenericImageExecutorRebuildsEditMultipartFromStagedInput(t *testing.T) 
 		OriginModelName: request.Model,
 		RequestURLPath:  "/v1/images/edits",
 		RequestHeaders:  map[string]string{"Content-Type": "multipart/form-data; boundary=stale-boundary"},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeOpenAI,
+			ChannelBaseUrl:    server.URL,
+			ApiType:           constant.APITypeOpenAI,
+			ApiKey:            "test-key",
+			UpstreamModelName: request.Model,
+		},
+	}
+
+	result, apiErr := image_stream.ExecuteGenericImageAdaptor(context.Background(), &image_stream.GenericImageExecutionRequest{
+		RelayInfo:    info,
+		ImageRequest: request,
+	})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, result)
+	require.Len(t, result.Response.Data, 1)
+	assert.Equal(t, "https://images.example/result.png", result.Response.Data[0].Url)
+}
+
+func TestGenericImageExecutorUsesQueryCountForGPTImage2Multipart(t *testing.T) {
+	imageBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x01, 0x02}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/v1/images/edits", r.URL.Path)
+		require.Equal(t, "1", r.URL.Query().Get("n"))
+		require.NoError(t, r.ParseMultipartForm(64<<20))
+		require.Empty(t, r.PostForm.Get("n"))
+		require.Equal(t, "gpt-image-2", r.PostForm.Get("model"))
+		require.Len(t, r.MultipartForm.File["image"], 1)
+
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"created":123,"data":[{"url":"https://images.example/result.png"}]}`))
+		require.NoError(t, err)
+	}))
+	defer server.Close()
+
+	count := uint(1)
+	request := &dto.ImageRequest{
+		Model:  "gpt-image-2",
+		Prompt: "turn it blue",
+		N:      &count,
+		Images: json.RawMessage(`[` + `"data:image/png;base64,` + base64.StdEncoding.EncodeToString(imageBytes) + `"` + `]`),
+	}
+	info := &relaycommon.RelayInfo{
+		RelayMode:       relayconstant.RelayModeImagesEdits,
+		RelayFormat:     types.RelayFormatOpenAIImage,
+		OriginModelName: request.Model,
+		RequestURLPath:  "/v1/images/edits",
+		RequestHeaders:  map[string]string{"Content-Type": "multipart/form-data"},
 		ChannelMeta: &relaycommon.ChannelMeta{
 			ChannelType:       constant.ChannelTypeOpenAI,
 			ChannelBaseUrl:    server.URL,
