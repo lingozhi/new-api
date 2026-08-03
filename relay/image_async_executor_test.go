@@ -105,6 +105,7 @@ func TestGenericImageExecutorPreservesKIEPollingMarkerAfterMasking(t *testing.T)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/jobs/createTask":
+			assert.Empty(t, r.URL.Query().Get("n"))
 			w.WriteHeader(http.StatusAccepted)
 			_, err := w.Write([]byte(`{"code":200,"data":{"taskId":"kie-pending-task"}}`))
 			require.NoError(t, err)
@@ -119,7 +120,8 @@ func TestGenericImageExecutorPreservesKIEPollingMarkerAfterMasking(t *testing.T)
 	}))
 	defer server.Close()
 
-	request := &dto.ImageRequest{Model: "gpt-image-2", Prompt: "draw a blue sphere"}
+	count := uint(1)
+	request := &dto.ImageRequest{Model: "gpt-image-2", Prompt: "draw a blue sphere", N: &count}
 	info := &relaycommon.RelayInfo{
 		RelayMode:            relayconstant.RelayModeImagesGenerations,
 		RelayFormat:          types.RelayFormatOpenAIImage,

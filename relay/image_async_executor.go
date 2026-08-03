@@ -150,7 +150,9 @@ func executeGenericImageAdaptor(ctx context.Context, input *image_stream.Generic
 	if !strings.HasPrefix(requestURL, "/") && !strings.HasPrefix(requestURL, "http://") && !strings.HasPrefix(requestURL, "https://") {
 		requestURL = "/" + requestURL
 	}
-	if useGPTImage2MultipartCountQuery(request) {
+	rebuiltEditMultipart := info.RelayMode == relayconstant.RelayModeImagesEdits &&
+		input.UpstreamResponse == nil && imageRoutingUsesMultipartEdit(info.ImageRoutingProtocol)
+	if rebuiltEditMultipart && useGPTImage2MultipartCountQuery(request) {
 		// The adaptor builds the final provider URL from RelayInfo rather than
 		// from the temporary rebuilt request, so carry the compatibility query
 		// into the route snapshot as well as the local request URL.
@@ -159,8 +161,6 @@ func executeGenericImageAdaptor(ctx context.Context, input *image_stream.Generic
 	}
 	var httpRequest *http.Request
 	var err error
-	rebuiltEditMultipart := info.RelayMode == relayconstant.RelayModeImagesEdits &&
-		input.UpstreamResponse == nil && imageRoutingUsesMultipartEdit(info.ImageRoutingProtocol)
 	if rebuiltEditMultipart {
 		httpRequest, err = buildGenericImageEditHTTPRequest(ctx, requestURL, request)
 	} else {
