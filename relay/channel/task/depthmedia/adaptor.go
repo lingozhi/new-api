@@ -2,11 +2,13 @@ package depthmedia
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -27,6 +29,8 @@ const (
 
 	maxVideoBillingSeconds           = 10 * 60
 	maxVideoBackgroundBillingSeconds = 60
+	maxVideoDurationProbeBytes       = 128 << 20
+	videoDurationProbeTimeout        = 30 * time.Second
 
 	ModelDepthVideo             = "depth-anything-v2-small-video"
 	ModelSubtitleRemove         = "subtitle-remove"
@@ -87,8 +91,9 @@ type responsePayload struct {
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
-	baseURL string
-	apiKey  string
+	baseURL               string
+	apiKey                string
+	videoDurationResolver func(context.Context, string) (float64, error)
 }
 
 func ResolveModel(operation, quality string, scale int) (string, error) {
@@ -152,6 +157,59 @@ func ResolveModel(operation, quality string, scale int) (string, error) {
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.baseURL = strings.TrimRight(info.ChannelBaseUrl, "/")
 	a.apiKey = info.ApiKey
+	if a.videoDurationResolver == nil {
+		a.videoDurationResolver = resolveRemoteMP4Duration
+	}
+}
+
+func resolveRemoteMP4Duration(ctx context.Context, sourceURL string) (float64, error) {
+	if err := service.ValidateSSRFProtectedFetchURL(sourceURL); err != nil {
+		return 0, fmt.Errorf("source video URL is not allowed: %w", err)
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, videoDurationProbeTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return 0, fmt.Errorf("build source video request: %w", err)
+	}
+	resp, err := service.GetDirectSSRFProtectedHTTPClient().Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("fetch source video: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return 0, fmt.Errorf("fetch source video: HTTP %d", resp.StatusCode)
+	}
+	if resp.ContentLength > maxVideoDurationProbeBytes {
+		return 0, fmt.Errorf("source video exceeds %d-byte duration probe limit", maxVideoDurationProbeBytes)
+	}
+
+	tempFile, err := os.CreateTemp("", "new-api-video-duration-*.mp4")
+	if err != nil {
+		return 0, fmt.Errorf("create source video probe file: %w", err)
+	}
+	tempName := tempFile.Name()
+	defer os.Remove(tempName)
+	defer tempFile.Close()
+
+	written, err := io.Copy(tempFile, io.LimitReader(resp.Body, maxVideoDurationProbeBytes+1))
+	if err != nil {
+		return 0, fmt.Errorf("read source video: %w", err)
+	}
+	if written > maxVideoDurationProbeBytes {
+		return 0, fmt.Errorf("source video exceeds %d-byte duration probe limit", maxVideoDurationProbeBytes)
+	}
+	if _, err := tempFile.Seek(0, io.SeekStart); err != nil {
+		return 0, fmt.Errorf("seek source video probe file: %w", err)
+	}
+	duration, err := common.GetAudioDuration(probeCtx, tempFile, ".mp4")
+	if err != nil {
+		return 0, fmt.Errorf("parse source video duration: %w", err)
+	}
+	if math.IsNaN(duration) || math.IsInf(duration, 0) || duration <= 0 {
+		return 0, fmt.Errorf("source video duration is invalid")
+	}
+	return duration, nil
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -246,6 +304,23 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 					http.StatusBadRequest,
 				)
 			}
+			duration, err := a.videoDurationResolver(c.Request.Context(), request.Image)
+			if err != nil {
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("could not verify source video duration: %w", err),
+					"invalid_source_video",
+					http.StatusBadRequest,
+				)
+			}
+			billingSeconds := math.Ceil(duration)
+			if billingSeconds > maxVideoBillingSeconds {
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("source video duration must not exceed %d seconds", maxVideoBillingSeconds),
+					"invalid_source_video",
+					http.StatusBadRequest,
+				)
+			}
+			request.Duration = int(billingSeconds)
 		}
 		if resolved == ModelVideoBackgroundFast || resolved == ModelVideoBackgroundQuality {
 			if metadata.Format != "" && metadata.Format != "webm" && metadata.Format != "mp4" {
@@ -317,7 +392,7 @@ func (a *TaskAdaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, bod
 	return channel.DoTaskApiRequest(a, c, info, body)
 }
 
-func (a *TaskAdaptor) EstimateBilling(_ *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
 	modelName := info.OriginModelName
 	if modelName != ModelDepthVideo &&
 		modelName != ModelSubtitleRemove &&
@@ -330,6 +405,11 @@ func (a *TaskAdaptor) EstimateBilling(_ *gin.Context, info *relaycommon.RelayInf
 	maxSeconds := maxVideoBillingSeconds
 	if modelName == ModelVideoBackgroundFast || modelName == ModelVideoBackgroundQuality {
 		maxSeconds = maxVideoBackgroundBillingSeconds
+	} else if modelName == ModelVideoUpscaleQuality2X || modelName == ModelVideoUpscaleQuality4X {
+		request, err := relaycommon.GetTaskRequest(c)
+		if err == nil && request.Duration > 0 && request.Duration <= maxVideoBillingSeconds {
+			maxSeconds = request.Duration
+		}
 	}
 	return map[string]float64{"seconds": float64(maxSeconds)}
 }

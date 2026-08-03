@@ -242,7 +242,11 @@ func TestTaskAdaptorValidatesDepthAndMediaRequests(t *testing.T) {
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(tt.body))
 			c.Request.Header.Set("Content-Type", "application/json")
 			info := newTestRelayInfo("https://modal.example.com", "key", "")
-			adaptor := &TaskAdaptor{}
+			adaptor := &TaskAdaptor{
+				videoDurationResolver: func(context.Context, string) (float64, error) {
+					return 10, nil
+				},
+			}
 			adaptor.Init(info)
 
 			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
@@ -405,6 +409,7 @@ func TestTaskAdaptorBillsVideoUpscaleByVerifiedSourceDuration(t *testing.T) {
 	)
 	c.Request.Header.Set("Content-Type", "application/json")
 	info := newTestRelayInfo("https://modal.example.com", "key", "")
+	info.OriginModelName = ModelVideoUpscaleQuality4X
 	adaptor := &TaskAdaptor{
 		videoDurationResolver: func(_ context.Context, sourceURL string) (float64, error) {
 			assert.Equal(t, "https://cdn.example.com/input.mp4", sourceURL)
