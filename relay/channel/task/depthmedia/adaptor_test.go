@@ -2,6 +2,7 @@ package depthmedia
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -392,6 +393,65 @@ func TestTaskAdaptorEstimatesMaximumDepthVideoDuration(t *testing.T) {
 	videoBackgroundInfo := newTestRelayInfo("https://modal.example.com", "key", ActionMedia)
 	videoBackgroundInfo.OriginModelName = ModelVideoBackgroundQuality
 	assert.Equal(t, map[string]float64{"seconds": 60}, adaptor.EstimateBilling(c, videoBackgroundInfo))
+}
+
+func TestTaskAdaptorBillsVideoUpscaleByVerifiedSourceDuration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v1/video/generations",
+		strings.NewReader(`{"model":"video-upscale-quality-4x","image":"https://cdn.example.com/input.mp4","metadata":{"operation":"video_upscale","quality":"quality","scale":4,"format":"mp4"}}`),
+	)
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := newTestRelayInfo("https://modal.example.com", "key", "")
+	adaptor := &TaskAdaptor{
+		videoDurationResolver: func(_ context.Context, sourceURL string) (float64, error) {
+			assert.Equal(t, "https://cdn.example.com/input.mp4", sourceURL)
+			return 9.2, nil
+		},
+	}
+	adaptor.Init(info)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	request, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, 10, request.Duration)
+	assert.Equal(t, map[string]float64{"seconds": 10}, adaptor.EstimateBilling(c, info))
+}
+
+func TestTaskAdaptorRejectsVideoUpscaleWhenSourceDurationCannotBeVerified(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name     string
+		duration float64
+		err      error
+	}{
+		{name: "probe failed", err: assert.AnError},
+		{name: "duration exceeds upstream limit", duration: 600.1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(
+				http.MethodPost,
+				"/v1/video/generations",
+				strings.NewReader(`{"model":"video-upscale-quality-2x","image":"https://cdn.example.com/input.mp4","metadata":{"operation":"video_upscale","quality":"quality","scale":2,"format":"mp4"}}`),
+			)
+			c.Request.Header.Set("Content-Type", "application/json")
+			info := newTestRelayInfo("https://modal.example.com", "key", "")
+			adaptor := &TaskAdaptor{
+				videoDurationResolver: func(context.Context, string) (float64, error) {
+					return tt.duration, tt.err
+				},
+			}
+			adaptor.Init(info)
+
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+		})
+	}
 }
 
 func TestTaskAdaptorReconcilesDepthVideoToActualDuration(t *testing.T) {
