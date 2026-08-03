@@ -3,6 +3,7 @@ package depthmedia
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,24 @@ func newTestRelayInfo(baseURL, apiKey, action string) *relaycommon.RelayInfo {
 			PublicTaskID: "task_public",
 		},
 	}
+}
+
+func testMP4DurationBytes(timescale, duration uint32) []byte {
+	box := func(boxType string, payload []byte) []byte {
+		data := make([]byte, 8+len(payload))
+		binary.BigEndian.PutUint32(data, uint32(len(data)))
+		copy(data[4:8], boxType)
+		copy(data[8:], payload)
+		return data
+	}
+	mvhd := make([]byte, 100)
+	binary.BigEndian.PutUint32(mvhd[12:16], timescale)
+	binary.BigEndian.PutUint32(mvhd[16:20], duration)
+	binary.BigEndian.PutUint32(mvhd[20:24], 0x00010000)
+	binary.BigEndian.PutUint16(mvhd[24:26], 0x0100)
+	binary.BigEndian.PutUint32(mvhd[96:100], 1)
+	ftyp := append([]byte("isom\x00\x00\x02\x00isomiso2"), make([]byte, 0)...)
+	return append(box("ftyp", ftyp), box("moov", box("mvhd", mvhd))...)
 }
 
 func TestResolveModel(t *testing.T) {
@@ -423,6 +442,48 @@ func TestTaskAdaptorBillsVideoUpscaleByVerifiedSourceDuration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 10, request.Duration)
 	assert.Equal(t, map[string]float64{"seconds": 10}, adaptor.EstimateBilling(c, info))
+}
+
+func TestProbeRemoteMP4Duration(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       []byte
+		want       float64
+		wantError  string
+	}{
+		{name: "reads movie header", statusCode: http.StatusOK, body: testMP4DurationBytes(1000, 9200), want: 9.2},
+		{name: "rejects upstream error", statusCode: http.StatusNotFound, wantError: "HTTP 404"},
+		{name: "rejects malformed mp4", statusCode: http.StatusOK, body: []byte("not-an-mp4"), wantError: "duration is invalid"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.statusCode)
+				_, _ = w.Write(tt.body)
+			}))
+			defer server.Close()
+
+			duration, err := probeRemoteMP4Duration(context.Background(), server.URL+"/input.mp4", server.Client())
+			if tt.wantError != "" {
+				require.ErrorContains(t, err, tt.wantError)
+				return
+			}
+			require.NoError(t, err)
+			assert.InDelta(t, tt.want, duration, 0.0001)
+		})
+	}
+}
+
+func TestProbeRemoteMP4DurationRejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "134217729")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	_, err := probeRemoteMP4Duration(context.Background(), server.URL+"/input.mp4", server.Client())
+	require.ErrorContains(t, err, "duration probe limit")
 }
 
 func TestTaskAdaptorRejectsVideoUpscaleWhenSourceDurationCannotBeVerified(t *testing.T) {

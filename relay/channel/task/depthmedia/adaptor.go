@@ -166,13 +166,17 @@ func resolveRemoteMP4Duration(ctx context.Context, sourceURL string) (float64, e
 	if err := service.ValidateSSRFProtectedFetchURL(sourceURL); err != nil {
 		return 0, fmt.Errorf("source video URL is not allowed: %w", err)
 	}
+	return probeRemoteMP4Duration(ctx, sourceURL, service.GetDirectSSRFProtectedHTTPClient())
+}
+
+func probeRemoteMP4Duration(ctx context.Context, sourceURL string, client *http.Client) (float64, error) {
 	probeCtx, cancel := context.WithTimeout(ctx, videoDurationProbeTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, sourceURL, nil)
 	if err != nil {
 		return 0, fmt.Errorf("build source video request: %w", err)
 	}
-	resp, err := service.GetDirectSSRFProtectedHTTPClient().Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("fetch source video: %w", err)
 	}
