@@ -1,14 +1,70 @@
 package oaichat
 
 import (
+	"bytes"
+	"encoding/json"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestChatCompletionsRequestToResponsesRequestMapsCacheBreakpointsStably(t *testing.T) {
+	system := dto.Message{Role: "system"}
+	system.SetMediaContent([]dto.MediaContent{{
+		Type:         dto.ContentTypeText,
+		Text:         "stable system prompt",
+		CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+	}})
+	request := &dto.GeneralOpenAIRequest{
+		Model:          "gpt-5.6-luna",
+		PromptCacheKey: "claude-affinity-key",
+		Messages: []dto.Message{
+			system,
+			{Role: "user", Content: "variable question"},
+		},
+	}
+
+	first, err := ChatCompletionsRequestToResponsesRequest(request)
+	require.NoError(t, err)
+	second, err := ChatCompletionsRequestToResponsesRequest(request)
+	require.NoError(t, err)
+
+	firstJSON, err := common.Marshal(first)
+	require.NoError(t, err)
+	secondJSON, err := common.Marshal(second)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(firstJSON, secondJSON), "identical requests must serialize byte-for-byte identically")
+	assert.Equal(t, "claude-affinity-key", gjson.GetBytes(firstJSON, "prompt_cache_key").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(firstJSON, "prompt_cache_options.mode").String())
+	assert.Equal(t, "system", gjson.GetBytes(firstJSON, "input.0.role").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(firstJSON, "input.0.content.0.prompt_cache_breakpoint.mode").String())
+	assert.Equal(t, "variable question", gjson.GetBytes(firstJSON, "input.1.content").String())
+}
+
+func TestChatCompletionsRequestToResponsesRequestDoesNotSendExplicitCachingToOlderModels(t *testing.T) {
+	message := dto.Message{Role: "user"}
+	message.SetMediaContent([]dto.MediaContent{{
+		Type:         dto.ContentTypeText,
+		Text:         "stable prefix",
+		CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+	}})
+
+	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model:    "gpt-5.5",
+		Messages: []dto.Message{message},
+	})
+	require.NoError(t, err)
+
+	encoded, err := common.Marshal(got)
+	require.NoError(t, err)
+	assert.False(t, gjson.GetBytes(encoded, "prompt_cache_options").Exists())
+	assert.False(t, gjson.GetBytes(encoded, "input.0.content.0.prompt_cache_breakpoint").Exists())
+}
 
 func TestChatCompletionsRequestToResponsesRequestInstructionsAndTools(t *testing.T) {
 	req := &dto.GeneralOpenAIRequest{

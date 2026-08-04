@@ -35,6 +35,47 @@ func normalizeChatImageURLToString(v any) any {
 	}
 }
 
+func chatContentPartsToResponses(parts []dto.MediaContent, role string, explicitPromptCaching bool) ([]map[string]any, bool) {
+	contentParts := make([]map[string]any, 0, len(parts))
+	hasCacheBreakpoint := false
+	for _, part := range parts {
+		var converted map[string]any
+		cacheable := false
+		switch part.Type {
+		case dto.ContentTypeText:
+			textType := "input_text"
+			if role == "assistant" {
+				textType = "output_text"
+			} else {
+				cacheable = true
+			}
+			converted = map[string]any{"type": textType, "text": part.Text}
+		case dto.ContentTypeImageURL:
+			converted = map[string]any{"type": "input_image", "image_url": normalizeChatImageURLToString(part.ImageUrl)}
+			cacheable = true
+		case dto.ContentTypeInputAudio:
+			converted = map[string]any{"type": "input_audio", "input_audio": part.InputAudio}
+		case dto.ContentTypeFile:
+			converted = map[string]any{"type": "input_file", "file": part.File}
+			cacheable = true
+		case dto.ContentTypeVideoUrl:
+			converted = map[string]any{"type": "input_video", "video_url": part.VideoUrl}
+		default:
+			converted = map[string]any{"type": part.Type}
+		}
+		if explicitPromptCaching && cacheable && len(part.CacheControl) > 0 && string(part.CacheControl) != "null" {
+			converted["prompt_cache_breakpoint"] = map[string]string{"mode": "explicit"}
+			hasCacheBreakpoint = true
+		}
+		contentParts = append(contentParts, converted)
+	}
+	return contentParts, hasCacheBreakpoint
+}
+
+func supportsResponsesExplicitPromptCaching(model string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-5.6")
+}
+
 func convertChatResponseFormatToResponsesText(reqFormat *dto.ResponseFormat) json.RawMessage {
 	if reqFormat == nil || strings.TrimSpace(reqFormat.Type) == "" {
 		return nil
@@ -86,6 +127,8 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 
 	var instructionsParts []string
 	inputItems := make([]map[string]any, 0, len(req.Messages))
+	hasCacheBreakpoint := false
+	explicitPromptCaching := supportsResponsesExplicitPromptCaching(req.Model)
 
 	for _, msg := range req.Messages {
 		role := strings.TrimSpace(msg.Role)
@@ -125,6 +168,15 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 				continue
 			}
 			parts := msg.ParseContent()
+			convertedParts, hasBreakpoint := chatContentPartsToResponses(parts, role, explicitPromptCaching)
+			if hasBreakpoint {
+				inputItems = append(inputItems, map[string]any{
+					"role":    role,
+					"content": convertedParts,
+				})
+				hasCacheBreakpoint = true
+				continue
+			}
 			var sb strings.Builder
 			for _, part := range parts {
 				if part.Type == dto.ContentTypeText && strings.TrimSpace(part.Text) != "" {
@@ -199,44 +251,8 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		}
 
 		parts := msg.ParseContent()
-		contentParts := make([]map[string]any, 0, len(parts))
-		for _, part := range parts {
-			switch part.Type {
-			case dto.ContentTypeText:
-				textType := "input_text"
-				if role == "assistant" {
-					textType = "output_text"
-				}
-				contentParts = append(contentParts, map[string]any{
-					"type": textType,
-					"text": part.Text,
-				})
-			case dto.ContentTypeImageURL:
-				contentParts = append(contentParts, map[string]any{
-					"type":      "input_image",
-					"image_url": normalizeChatImageURLToString(part.ImageUrl),
-				})
-			case dto.ContentTypeInputAudio:
-				contentParts = append(contentParts, map[string]any{
-					"type":        "input_audio",
-					"input_audio": part.InputAudio,
-				})
-			case dto.ContentTypeFile:
-				contentParts = append(contentParts, map[string]any{
-					"type": "input_file",
-					"file": part.File,
-				})
-			case dto.ContentTypeVideoUrl:
-				contentParts = append(contentParts, map[string]any{
-					"type":      "input_video",
-					"video_url": part.VideoUrl,
-				})
-			default:
-				contentParts = append(contentParts, map[string]any{
-					"type": part.Type,
-				})
-			}
-		}
+		contentParts, hasBreakpoint := chatContentPartsToResponses(parts, role, explicitPromptCaching)
+		hasCacheBreakpoint = hasCacheBreakpoint || hasBreakpoint
 		item["content"] = contentParts
 		inputItems = append(inputItems, item)
 
@@ -387,6 +403,12 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		Store:             req.Store,
 		Metadata:          req.Metadata,
 		MaxToolCalls:      req.ResponsesMaxToolCalls,
+	}
+	if req.PromptCacheKey != "" {
+		out.PromptCacheKey, _ = common.Marshal(req.PromptCacheKey)
+	}
+	if hasCacheBreakpoint {
+		out.PromptCacheOptions, _ = common.Marshal(map[string]string{"mode": "explicit"})
 	}
 	if req.MaxTokens != nil || req.MaxCompletionTokens != nil {
 		out.MaxOutputTokens = lo.ToPtr(maxOutputTokens)

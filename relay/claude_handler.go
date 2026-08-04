@@ -234,6 +234,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if convErr != nil {
 			return types.NewError(convErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
+		if promptCacheKey, ok := service.GetChannelAffinityPromptCacheKey(c); ok {
+			openAIRequest.PromptCacheKey = promptCacheKey
+		}
 		applyClaudeResponsesEffort(request, openAIRequest)
 
 		usage, newApiErr := chatCompletionsViaResponses(c, info, adaptor, openAIRequest)

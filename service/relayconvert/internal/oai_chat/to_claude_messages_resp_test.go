@@ -103,6 +103,40 @@ func TestBuildClaudeUsageFromOpenAICacheWriteUsage(t *testing.T) {
 	assert.Equal(t, 3616, usage.BillingUsage.OpenAIUsage.PromptTokensDetails.CacheWriteTokens)
 }
 
+func TestBuildClaudeUsageFromOpenAICacheReadOnlyUsage(t *testing.T) {
+	responsesUsage := &dto.Usage{
+		PromptTokens:     2006,
+		CompletionTokens: 300,
+		TotalTokens:      2306,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens: 1920,
+		},
+	}
+	responsesUsage.BillingUsage = dto.NewOpenAIResponsesBillingUsage(responsesUsage)
+	usage := buildClaudeUsageFromOpenAIUsage(responsesUsage)
+
+	require.NotNil(t, usage)
+	assert.Equal(t, 86, usage.InputTokens)
+	assert.Equal(t, 1920, usage.CacheReadInputTokens)
+	assert.Zero(t, usage.CacheCreationInputTokens)
+	assert.Nil(t, usage.CacheCreation)
+}
+
+func TestBuildClaudeUsageFromChatCacheReadOnlyUsageKeepsExistingInputSemantics(t *testing.T) {
+	usage := buildClaudeUsageFromOpenAIUsage(&dto.Usage{
+		PromptTokens:     2006,
+		CompletionTokens: 300,
+		TotalTokens:      2306,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedTokens: 1920,
+		},
+	})
+
+	require.NotNil(t, usage)
+	assert.Equal(t, 2006, usage.InputTokens)
+	assert.Equal(t, 1920, usage.CacheReadInputTokens)
+}
+
 func TestStreamResponseOpenAI2ClaudeClosesTextThinkingAndToolBlocks(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		ClaudeConvertInfo: &relaycommon.ClaudeConvertInfo{

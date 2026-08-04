@@ -154,7 +154,7 @@ func claudeMessagesRequestToOpenAIChat(claudeRequest dto.ClaudeRequest, info *re
 					Role: "system",
 				}
 				isOpenRouterClaude := isOpenRouter && strings.HasPrefix(relaymeta.RelayInfoUpstreamModelName(info), "anthropic/claude")
-				if isOpenRouterClaude {
+				if isOpenRouterClaude || allowResponsesTools {
 					systemMediaMessages := make([]dto.MediaContent, 0, len(systems))
 					for _, system := range systems {
 						message := dto.MediaContent{
@@ -281,8 +281,9 @@ func claudeMediaToOpenAI(media dto.ClaudeMediaMessage) (dto.MediaContent, bool) 
 			imageURL = fmt.Sprintf("data:%s;base64,%s", media.Source.MediaType, data)
 		}
 		return dto.MediaContent{
-			Type:     dto.ContentTypeImageURL,
-			ImageUrl: &dto.MessageImageUrl{Url: imageURL},
+			Type:         dto.ContentTypeImageURL,
+			ImageUrl:     &dto.MessageImageUrl{Url: imageURL},
+			CacheControl: media.CacheControl,
 		}, true
 	default:
 		return dto.MediaContent{}, false
