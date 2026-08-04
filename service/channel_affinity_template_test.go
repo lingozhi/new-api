@@ -11,6 +11,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -395,6 +396,23 @@ func TestChannelAffinityHitCodexTemplatePassHeadersEffective(t *testing.T) {
 	require.False(t, exists)
 	_, exists = info.RuntimeHeadersOverride["x-codex-turn-metadata"]
 	require.False(t, exists)
+}
+
+func TestChannelAffinityPromptCacheKeyIsStableAndOpaque(t *testing.T) {
+	ctx := buildChannelAffinityTemplateContextForTest(channelAffinityMeta{
+		CacheKey:   "new-api:channel_affinity:v1:claude cli trace:gpt-5.6-luna:gpt pro:user-123",
+		RuleName:   "claude cli trace",
+		UsingGroup: "gpt pro",
+	})
+
+	first, ok := GetChannelAffinityPromptCacheKey(ctx)
+	require.True(t, ok)
+	second, ok := GetChannelAffinityPromptCacheKey(ctx)
+	require.True(t, ok)
+
+	assert.Equal(t, first, second)
+	assert.NotContains(t, first, "user-123")
+	assert.LessOrEqual(t, len(first), 64)
 }
 
 func TestClearCurrentChannelAffinityCache(t *testing.T) {

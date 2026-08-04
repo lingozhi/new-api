@@ -1,6 +1,7 @@
 package claudemessages
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/QuantumNous/new-api/dto"
@@ -8,6 +9,66 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestClaudeMessagesRequestToOpenAIResponsesChatPreservesSystemCacheControl(t *testing.T) {
+	system := dto.ClaudeMediaMessage{
+		Type:         dto.ContentTypeText,
+		CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+	}
+	system.SetText("stable system prompt")
+	request := dto.ClaudeRequest{
+		Model:    "gpt-5.6-luna",
+		System:   []dto.ClaudeMediaMessage{system},
+		Messages: []dto.ClaudeMessage{{Role: "user", Content: "hello"}},
+	}
+
+	got, err := ClaudeMessagesRequestToOpenAIResponsesChat(request, &relaycommon.RelayInfo{})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 2)
+
+	parts := got.Messages[0].ParseContent()
+	require.Len(t, parts, 1)
+	assert.JSONEq(t, `{"type":"ephemeral"}`, string(parts[0].CacheControl))
+}
+
+func TestClaudeMessagesRequestToOpenAIResponsesChatPreservesImageCacheControl(t *testing.T) {
+	image := dto.ClaudeMediaMessage{
+		Type:         "image",
+		Source:       &dto.ClaudeMessageSource{Type: "base64", MediaType: "image/png", Data: "cGl4ZWxz"},
+		CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+	}
+	message := dto.ClaudeMessage{Role: "user"}
+	message.SetContent([]dto.ClaudeMediaMessage{image})
+
+	got, err := ClaudeMessagesRequestToOpenAIResponsesChat(dto.ClaudeRequest{
+		Model:    "gpt-5.6-luna",
+		Messages: []dto.ClaudeMessage{message},
+	}, &relaycommon.RelayInfo{})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 1)
+
+	parts := got.Messages[0].ParseContent()
+	require.Len(t, parts, 1)
+	assert.JSONEq(t, `{"type":"ephemeral"}`, string(parts[0].CacheControl))
+}
+
+func TestClaudeMessagesRequestToOpenAIChatKeepsNonResponsesSystemShape(t *testing.T) {
+	system := dto.ClaudeMediaMessage{
+		Type:         dto.ContentTypeText,
+		CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+	}
+	system.SetText("stable system prompt")
+
+	got, err := ClaudeMessagesRequestToOpenAIChat(dto.ClaudeRequest{
+		Model:    "deepseek-chat",
+		System:   []dto.ClaudeMediaMessage{system},
+		Messages: []dto.ClaudeMessage{{Role: "user", Content: "hello"}},
+	}, &relaycommon.RelayInfo{})
+	require.NoError(t, err)
+	require.Len(t, got.Messages, 2)
+	assert.True(t, got.Messages[0].IsStringContent())
+	assert.Equal(t, "stable system prompt", got.Messages[0].StringContent())
+}
 
 func TestClaudeMessagesRequestToOpenAIResponsesChatPreservesMixedAssistantContent(t *testing.T) {
 	text := dto.ClaudeMediaMessage{Type: "text"}

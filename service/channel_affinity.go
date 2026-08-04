@@ -412,6 +412,19 @@ func GetChannelAffinityStatsContext(c *gin.Context) (ChannelAffinityStatsContext
 	}, true
 }
 
+// GetChannelAffinityPromptCacheKey derives an opaque upstream cache-routing key
+// from the exact affinity key already selected for this request.
+func GetChannelAffinityPromptCacheKey(c *gin.Context) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	meta, ok := getChannelAffinityMeta(c)
+	if !ok || strings.TrimSpace(meta.CacheKey) == "" {
+		return "", false
+	}
+	return "claude:" + common.Sha1([]byte(meta.CacheKey)), true
+}
+
 func affinityFingerprint(s string) string {
 	if s == "" {
 		return ""
