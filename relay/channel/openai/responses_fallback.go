@@ -76,6 +76,9 @@ func (ctx *responsesStreamCtx) observe(ev dto.ResponsesStreamResponse) {
 }
 
 func (ctx *responsesStreamCtx) captureResponseMetadata(ev dto.ResponsesStreamResponse) {
+	if ev.Usage != nil {
+		ctx.mergeUsage(ev.Usage)
+	}
 	if ev.Response != nil {
 		if ev.Response.ID != "" {
 			ctx.responseID = ev.Response.ID

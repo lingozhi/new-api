@@ -2,6 +2,7 @@ package openai
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -85,6 +86,151 @@ func TestOaiResponsesToChatStreamHandlerConvertsSSEOrderAndUsage(t *testing.T) {
 		`"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5`,
 		`data: [DONE]`,
 	)
+}
+
+func TestOaiResponsesToChatStreamHandlerPreservesTerminalCacheUsageForClaude(t *testing.T) {
+	tests := []struct {
+		name              string
+		inputDetails      string
+		wantCacheRead     int
+		wantCacheCreation int
+	}{
+		{
+			name:          "cache read",
+			inputDetails:  `"cached_tokens":1354`,
+			wantCacheRead: 1354,
+		},
+		{
+			name:              "cache creation",
+			inputDetails:      `"cache_write_tokens":1354`,
+			wantCacheCreation: 1354,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.Join([]string{
+				`data: {"type":"response.created","response":{"id":"resp_cache","model":"gpt-5.6-luna","created_at":1710000000}}`,
+				`data: {"type":"response.output_text.delta","delta":"ok"}`,
+				fmt.Sprintf(`data: {"type":"response.completed","response":{"id":"resp_cache","model":"gpt-5.6-luna","status":"completed"},"usage":{"input_tokens":1367,"output_tokens":5,"total_tokens":1372,"input_tokens_details":{%s}}}`, tt.inputDetails),
+				`data: [DONE]`,
+				``,
+			}, "\n")
+			c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+			info.RelayFormat = types.RelayFormatClaude
+			info.OriginModelName = "gpt-5.6-luna"
+			info.SetEstimatePromptTokens(905)
+
+			usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+			require.Nil(t, apiErr)
+			require.NotNil(t, usage)
+			require.Equal(t, 1367, usage.PromptTokens)
+			require.Equal(t, tt.wantCacheRead, usage.PromptTokensDetails.CachedTokens)
+			require.Equal(t, tt.wantCacheCreation, usage.PromptTokensDetails.CacheCreationTokensTotal())
+			require.NotNil(t, usage.BillingUsage)
+			require.Equal(t, dto.BillingUsageSourceOAIResponses, usage.BillingUsage.Source)
+			require.NotNil(t, usage.BillingUsage.OpenAIUsage)
+			require.NotNil(t, usage.BillingUsage.OpenAIUsage.InputTokensDetails)
+			require.Equal(t, tt.wantCacheRead, usage.BillingUsage.OpenAIUsage.InputTokensDetails.CachedTokens)
+			require.Equal(t, tt.wantCacheCreation, usage.BillingUsage.OpenAIUsage.InputTokensDetails.CacheCreationTokensTotal())
+
+			var terminalUsage *dto.ClaudeUsage
+			for _, line := range strings.Split(recorder.Body.String(), "\n") {
+				data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+				if data == "" || data == line {
+					continue
+				}
+				var response dto.ClaudeResponse
+				if err := common.UnmarshalJsonStr(data, &response); err != nil {
+					continue
+				}
+				if response.Type == "message_delta" && response.Usage != nil {
+					terminalUsage = response.Usage
+				}
+			}
+			require.NotNil(t, terminalUsage)
+			require.Equal(t, 13, terminalUsage.InputTokens)
+			require.Equal(t, 5, terminalUsage.OutputTokens)
+			require.Equal(t, tt.wantCacheRead, terminalUsage.CacheReadInputTokens)
+			require.Equal(t, tt.wantCacheCreation, terminalUsage.CacheCreationInputTokens)
+		})
+	}
+}
+
+func TestOaiResponsesToChatBufferedStreamHandlerPreservesTerminalCacheUsageForClaude(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"buffered"}`,
+		`data: {"type":"response.completed","usage":{"input_tokens":1367,"output_tokens":5,"total_tokens":1372,"input_tokens_details":{"cached_tokens":1354}}}`,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, false)
+	info.RelayFormat = types.RelayFormatClaude
+	info.OriginModelName = "gpt-5.6-luna"
+	info.SetEstimatePromptTokens(905)
+
+	usage, apiErr := OaiResponsesToChatBufferedStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 1367, usage.PromptTokens)
+	require.Equal(t, 1354, usage.PromptTokensDetails.CachedTokens)
+	require.NotNil(t, usage.BillingUsage)
+	require.Equal(t, dto.BillingUsageSourceOAIResponses, usage.BillingUsage.Source)
+
+	var response dto.ClaudeResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.NotNil(t, response.Usage)
+	require.Equal(t, 13, response.Usage.InputTokens)
+	require.Equal(t, 5, response.Usage.OutputTokens)
+	require.Equal(t, 1354, response.Usage.CacheReadInputTokens)
+}
+
+func TestOaiResponsesToChatStreamHandlerCarriesObservedUsageOnInterruption(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_cache","model":"gpt-5.6-luna","created_at":1710000000}}`,
+		`data: {"type":"response.output_text.delta","delta":"partial"}`,
+		`data: {"type":"response.in_progress","usage":{"input_tokens":1367,"output_tokens":5,"total_tokens":1372,"input_tokens_details":{"cached_tokens":1354}}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+	info.RelayFormat = types.RelayFormatClaude
+	info.OriginModelName = "gpt-5.6-luna"
+	info.SetEstimatePromptTokens(905)
+
+	usage, apiErr := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 1367, usage.PromptTokens)
+	require.Equal(t, 1354, usage.PromptTokensDetails.CachedTokens)
+	require.NotNil(t, usage.BillingUsage)
+	require.Equal(t, dto.BillingUsageSourceOAIResponses, usage.BillingUsage.Source)
+	require.Contains(t, recorder.Body.String(), "event: error")
+}
+
+func TestOaiResponsesToChatHandlerKeepsNonStreamCacheUsageForClaude(t *testing.T) {
+	body := `{"id":"resp_cache","model":"gpt-5.6-luna","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":1367,"output_tokens":5,"total_tokens":1372,"input_tokens_details":{"cached_tokens":1354}}}`
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, false)
+	info.RelayFormat = types.RelayFormatClaude
+	info.OriginModelName = "gpt-5.6-luna"
+
+	usage, apiErr := OaiResponsesToChatHandler(c, info, resp)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Equal(t, 1367, usage.PromptTokens)
+	require.Equal(t, 1354, usage.PromptTokensDetails.CachedTokens)
+	require.NotNil(t, usage.BillingUsage)
+	require.Equal(t, dto.BillingUsageSourceOAIResponses, usage.BillingUsage.Source)
+
+	var response dto.ClaudeResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.NotNil(t, response.Usage)
+	require.Equal(t, 13, response.Usage.InputTokens)
+	require.Equal(t, 5, response.Usage.OutputTokens)
+	require.Equal(t, 1354, response.Usage.CacheReadInputTokens)
 }
 
 func TestOaiResponsesToChatStreamHandlerOmitsEmptyReadPagesForLunaClaude(t *testing.T) {

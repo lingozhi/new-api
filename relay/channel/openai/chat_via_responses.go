@@ -94,6 +94,7 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 	defer service.CloseResponseBodyGracefully(resp)
 
 	accumulator := relayconvert.NewResponsesBufferedAccumulator()
+	usageAccumulator := newResponsesStreamCtx()
 	var finalResponse *dto.OpenAIResponsesResponse
 	var streamErr *types.NewAPIError
 	seenTerminal := false
@@ -120,11 +121,20 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 			streamErr = types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 			break
 		}
+		usageAccumulator.captureResponseMetadata(streamResp)
 		accumulator.ProcessEvent(&streamResp)
 		switch streamResp.Type {
 		case "response.completed", "response.done", "response.incomplete":
 			seenTerminal = true
 			finalResponse = streamResp.Response
+			if finalResponse == nil && (usageAccumulator.usage != nil || len(accumulator.BuildOutput()) > 0) {
+				finalResponse = &dto.OpenAIResponsesResponse{
+					ID:        usageAccumulator.responseID,
+					Model:     usageAccumulator.model,
+					CreatedAt: int(usageAccumulator.createdAt),
+					Status:    []byte(`"completed"`),
+				}
+			}
 			if streamResp.Type == "response.incomplete" {
 				if finalResponse == nil {
 					finalResponse = &dto.OpenAIResponsesResponse{}
@@ -165,6 +175,9 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 			types.ErrorCodeBadResponse,
 			http.StatusBadGateway,
 		)
+	}
+	if usageAccumulator.usage != nil {
+		finalResponse.Usage = usageAccumulator.usage
 	}
 	accumulator.SupplementResponseOutput(finalResponse)
 	normalizeResponsesToolArguments(finalResponse, lunaReadToolArgumentsTransform(info))
@@ -233,6 +246,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	streamErr := (*types.NewAPIError)(nil)
 	seenTerminal := false
 	seenVisibleOutput := false
+	usageAccumulator := newResponsesStreamCtx()
 
 	if info.RelayFormat == types.RelayFormatClaude && info.ClaudeConvertInfo == nil {
 		info.ClaudeConvertInfo = &relaycommon.ClaudeConvertInfo{LastMessagesType: relaycommon.LastMessageTypeNone}
@@ -310,6 +324,10 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			sr.Stop(streamErr)
 			return
 		}
+		usageAccumulator.captureResponseMetadata(streamResp)
+		if usageAccumulator.usage != nil {
+			state.SetUsage(relayconvert.UsageFromResponsesUsage(usageAccumulator.usage))
+		}
 
 		if streamResp.Type == "response.error" || streamResp.Type == "response.failed" {
 			if streamResp.Response != nil {
@@ -330,8 +348,16 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		isTerminal := streamResp.Type == "response.completed" ||
 			streamResp.Type == "response.done" ||
 			streamResp.Type == "response.incomplete"
+		var terminalUsage *dto.Usage
 		if isTerminal {
 			seenTerminal = true
+			if usageAccumulator.usage != nil {
+				if streamResp.Response == nil {
+					streamResp.Response = &dto.OpenAIResponsesResponse{}
+				}
+				streamResp.Response.Usage = usageAccumulator.usage
+				terminalUsage = relayconvert.UsageFromResponsesUsage(usageAccumulator.usage)
+			}
 		}
 		if isTerminal && !seenVisibleOutput {
 			streamErr = types.NewOpenAIError(
@@ -357,6 +383,11 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 				sr.Stop(streamErr)
 				return
 			}
+		}
+		if terminalUsage != nil {
+			// The Chat-to-Claude hop canonicalizes usage as Chat usage; restore the
+			// Responses source/details used by settlement and cache observability.
+			state.SetUsage(terminalUsage)
 		}
 		if isTerminal {
 			sr.Done()
