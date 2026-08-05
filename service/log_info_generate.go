@@ -50,6 +50,30 @@ func attachQuotaSaturation(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, o
 		clamp.Op, clamp.Kind, clamp.Original, clamp.Clamped, relayInfo.UserId, relayInfo.OriginModelName))
 }
 
+func appendPromptCacheAdminInfo(other map[string]interface{}, relayInfo *relaycommon.RelayInfo, usage *dto.Usage) {
+	if other == nil || relayInfo == nil || relayInfo.PromptCacheKeySource == "" {
+		return
+	}
+	adminInfo, ok := other["admin_info"].(map[string]interface{})
+	if !ok || adminInfo == nil {
+		adminInfo = make(map[string]interface{})
+		other["admin_info"] = adminInfo
+	}
+
+	upstreamUsage := usage
+	if usage != nil && usage.BillingUsage != nil && usage.BillingUsage.OpenAIUsage != nil {
+		upstreamUsage = usage.BillingUsage.OpenAIUsage
+	}
+	upstreamCachedTokens := 0
+	if upstreamUsage != nil && upstreamUsage.InputTokensDetails != nil {
+		upstreamCachedTokens = upstreamUsage.InputTokensDetails.CachedTokens
+	}
+
+	adminInfo["prompt_cache_key_source"] = relayInfo.PromptCacheKeySource
+	adminInfo["prompt_cache_breakpoint_count"] = relayInfo.PromptCacheBreakpointCount
+	adminInfo["upstream_input_cached_tokens"] = upstreamCachedTokens
+}
+
 func appendRequestPath(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, other map[string]interface{}) {
 	if other == nil {
 		return

@@ -41,8 +41,9 @@ func TestChatCompletionsRequestToResponsesRequestMapsCacheBreakpointsStably(t *t
 	assert.True(t, bytes.Equal(firstJSON, secondJSON), "identical requests must serialize byte-for-byte identically")
 	assert.Equal(t, "claude-affinity-key", gjson.GetBytes(firstJSON, "prompt_cache_key").String())
 	assert.Equal(t, "explicit", gjson.GetBytes(firstJSON, "prompt_cache_options.mode").String())
-	assert.Equal(t, "system", gjson.GetBytes(firstJSON, "input.0.role").String())
+	assert.Equal(t, "developer", gjson.GetBytes(firstJSON, "input.0.role").String())
 	assert.Equal(t, "explicit", gjson.GetBytes(firstJSON, "input.0.content.0.prompt_cache_breakpoint.mode").String())
+	assert.False(t, gjson.GetBytes(firstJSON, "instructions").Exists())
 	assert.Equal(t, "variable question", gjson.GetBytes(firstJSON, "input.1.content").String())
 }
 
@@ -64,6 +65,26 @@ func TestChatCompletionsRequestToResponsesRequestDoesNotSendExplicitCachingToOld
 	require.NoError(t, err)
 	assert.False(t, gjson.GetBytes(encoded, "prompt_cache_options").Exists())
 	assert.False(t, gjson.GetBytes(encoded, "input.0.content.0.prompt_cache_breakpoint").Exists())
+}
+
+func TestChatCompletionsRequestToResponsesRequestKeepsSystemInstructionsForOlderModels(t *testing.T) {
+	system := dto.Message{Role: "system"}
+	system.SetMediaContent([]dto.MediaContent{{
+		Type:         dto.ContentTypeText,
+		Text:         "stable system prompt",
+		CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+	}})
+
+	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model:    "gpt-5.5",
+		Messages: []dto.Message{system, {Role: "user", Content: "hello"}},
+	})
+	require.NoError(t, err)
+
+	assert.JSONEq(t, `"stable system prompt"`, string(got.Instructions))
+	assert.Equal(t, "hello", gjson.GetBytes(got.Input, "0.content").String())
+	assert.Equal(t, "user", gjson.GetBytes(got.Input, "0.role").String())
+	assert.Empty(t, got.PromptCacheOptions)
 }
 
 func TestChatCompletionsRequestToResponsesRequestInstructionsAndTools(t *testing.T) {

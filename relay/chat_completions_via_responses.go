@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel"
 	openaichannel "github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -138,6 +139,9 @@ func chatCompletionsViaResponses(c *gin.Context, info *relaycommon.RelayInfo, ad
 	}
 	if err := helper.ValidateUnifiedImagePayload(info, jsonData); err != nil {
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+	}
+	if common.DebugEnabled {
+		logger.LogDebug(c, "responses bridge requestBody: %s", jsonData)
 	}
 	body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 	if err != nil {
@@ -294,6 +298,31 @@ func parseChatRequestForResponses(chatJSON []byte) (*dto.GeneralOpenAIRequest, e
 	var request dto.GeneralOpenAIRequest
 	if err := common.Unmarshal(cleanedJSON, &request); err != nil {
 		return nil, err
+	}
+	for i := range request.Messages {
+		message := &request.Messages[i]
+		if message.Content == nil || message.IsStringContent() {
+			continue
+		}
+		contentJSON, err := common.Marshal(message.Content)
+		if err != nil {
+			continue
+		}
+		var content []dto.MediaContent
+		if common.Unmarshal(contentJSON, &content) != nil {
+			continue
+		}
+		hasCacheControl := false
+		for _, part := range content {
+			if len(part.CacheControl) > 0 && string(part.CacheControl) != "null" {
+				hasCacheControl = true
+				break
+			}
+		}
+		if !hasCacheControl {
+			continue
+		}
+		message.SetMediaContent(content)
 	}
 	request.ResponsesTools = responsesTools
 	request.ResponsesToolChoice = responsesToolChoice

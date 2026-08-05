@@ -32,7 +32,13 @@ func applyClaudeResponsesEffort(claudeRequest *dto.ClaudeRequest, openAIRequest 
 }
 
 func getClaudeResponsesPromptCacheKey(c *gin.Context, request *dto.ClaudeRequest, info *relaycommon.RelayInfo) (string, bool) {
+	if info != nil {
+		info.PromptCacheKeySource = relaycommon.PromptCacheKeySourceNone
+	}
 	if promptCacheKey, ok := service.GetChannelAffinityPromptCacheKey(c); ok {
+		if info != nil {
+			info.PromptCacheKeySource = relaycommon.PromptCacheKeySourceAffinity
+		}
 		return promptCacheKey, true
 	}
 	if request == nil {
@@ -57,12 +63,16 @@ func getClaudeResponsesPromptCacheKey(c *gin.Context, request *dto.ClaudeRequest
 			if userID := strings.TrimSpace(metadata.UserId); userID != "" {
 				identitySource = "metadata.user_id"
 				identity = userID
+				if info != nil {
+					info.PromptCacheKeySource = relaycommon.PromptCacheKeySourceMetadataUserID
+				}
 			}
 		}
 	}
 	if identity == "" && info != nil && info.TokenId > 0 {
 		identitySource = "token_id"
 		identity = strconv.Itoa(info.TokenId)
+		info.PromptCacheKeySource = relaycommon.PromptCacheKeySourceTokenID
 	}
 	if identity == "" {
 		return "", false
@@ -152,6 +162,8 @@ func shouldRouteClaudeRequestViaResponses(
 func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 
 	info.InitChannelMeta(c)
+	info.PromptCacheKeySource = ""
+	info.PromptCacheBreakpointCount = 0
 
 	claudeReq, ok := info.Request.(*dto.ClaudeRequest)
 

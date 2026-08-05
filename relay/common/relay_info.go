@@ -32,6 +32,11 @@ const (
 	LastMessageTypeText     = "text"
 	LastMessageTypeTools    = "tools"
 	LastMessageTypeThinking = "thinking"
+
+	PromptCacheKeySourceAffinity       = "affinity"
+	PromptCacheKeySourceMetadataUserID = "metadata_user_id"
+	PromptCacheKeySourceTokenID        = "token_id"
+	PromptCacheKeySourceNone           = "none"
 )
 
 type ClaudeConvertInfo struct {
@@ -216,6 +221,11 @@ type RelayInfo struct {
 	// for slowness, so the channel serving it starts from a cold cache. See
 	// constant.ContextKeyAffinityColdStart for why this must not be scored.
 	AffinityColdStart bool
+
+	// PromptCacheKeySource and PromptCacheBreakpointCount describe the final
+	// upstream attempt's explicit prompt-cache request for consume-log auditing.
+	PromptCacheKeySource       string
+	PromptCacheBreakpointCount int
 
 	ThinkingContentInfo
 	TokenCountMeta

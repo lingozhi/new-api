@@ -170,8 +170,12 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 			parts := msg.ParseContent()
 			convertedParts, hasBreakpoint := chatContentPartsToResponses(parts, role, explicitPromptCaching)
 			if hasBreakpoint {
+				inputRole := role
+				if role == "system" {
+					inputRole = "developer"
+				}
 				inputItems = append(inputItems, map[string]any{
-					"role":    role,
+					"role":    inputRole,
 					"content": convertedParts,
 				})
 				hasCacheBreakpoint = true
@@ -422,6 +426,31 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 	}
 
 	return out, nil
+}
+
+func CountResponsesPromptCacheBreakpoints(input json.RawMessage) int {
+	var items []struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if err := common.Unmarshal(input, &items); err != nil {
+		return 0
+	}
+
+	count := 0
+	for _, item := range items {
+		var parts []struct {
+			PromptCacheBreakpoint json.RawMessage `json:"prompt_cache_breakpoint"`
+		}
+		if err := common.Unmarshal(item.Content, &parts); err != nil {
+			continue
+		}
+		for _, part := range parts {
+			if len(part.PromptCacheBreakpoint) > 0 && string(part.PromptCacheBreakpoint) != "null" {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 func chatToolOutputToResponses(message *dto.Message) any {

@@ -399,7 +399,10 @@ func isNilRequest(request any) bool {
 	}
 }
 
-func convertChatRequestToResponses(_ *gin.Context, _ *relaycommon.RelayInfo, request any) (any, error) {
+func convertChatRequestToResponses(_ *gin.Context, info *relaycommon.RelayInfo, request any) (any, error) {
+	if info != nil {
+		info.PromptCacheBreakpointCount = 0
+	}
 	chatRequest, ok := request.(*dto.GeneralOpenAIRequest)
 	if !ok {
 		if value, ok := request.(dto.GeneralOpenAIRequest); ok {
@@ -409,7 +412,11 @@ func convertChatRequestToResponses(_ *gin.Context, _ *relaycommon.RelayInfo, req
 	if chatRequest == nil {
 		return nil, fmt.Errorf("expected OpenAI chat completions request, got %T", request)
 	}
-	return oaichat.ChatCompletionsRequestToResponsesRequest(chatRequest)
+	responsesRequest, err := oaichat.ChatCompletionsRequestToResponsesRequest(chatRequest)
+	if err == nil && info != nil {
+		info.PromptCacheBreakpointCount = oaichat.CountResponsesPromptCacheBreakpoints(responsesRequest.Input)
+	}
+	return responsesRequest, err
 }
 
 func convertClaudeRequestToOpenAI(_ *gin.Context, info *relaycommon.RelayInfo, request any) (any, error) {

@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 func TestApplyClaudeResponsesEffortPreservesMax(t *testing.T) {
@@ -88,6 +89,7 @@ func TestClaudeResponsesPromptCacheKeyFallbackPrefersMetadataUserID(t *testing.T
 	assert.NotEqual(t, first, otherModel)
 	assert.Regexp(t, `^claude:[0-9a-f]{40}$`, first)
 	assert.NotContains(t, first, "session-123")
+	assert.Equal(t, "metadata_user_id", info.PromptCacheKeySource)
 }
 
 func TestClaudeResponsesPromptCacheKeyPreservesAffinityPriority(t *testing.T) {
@@ -134,6 +136,7 @@ func TestClaudeResponsesPromptCacheKeyPreservesAffinityPriority(t *testing.T) {
 
 	assert.Equal(t, expected, actual)
 	assert.NotEqual(t, fallback, actual)
+	assert.Equal(t, "affinity", info.PromptCacheKeySource)
 }
 
 func TestClaudeResponsesPromptCacheKeyFallbackUsesPositiveTokenID(t *testing.T) {
@@ -142,7 +145,8 @@ func TestClaudeResponsesPromptCacheKeyFallbackUsesPositiveTokenID(t *testing.T) 
 		Metadata: json.RawMessage(`{"user_id":42}`),
 	}
 
-	first, ok := getClaudeResponsesPromptCacheKey(nil, request, &relaycommon.RelayInfo{TokenId: 101})
+	info := &relaycommon.RelayInfo{TokenId: 101}
+	first, ok := getClaudeResponsesPromptCacheKey(nil, request, info)
 	require.True(t, ok)
 	second, ok := getClaudeResponsesPromptCacheKey(nil, request, &relaycommon.RelayInfo{TokenId: 101})
 	require.True(t, ok)
@@ -153,6 +157,7 @@ func TestClaudeResponsesPromptCacheKeyFallbackUsesPositiveTokenID(t *testing.T) 
 	assert.NotEqual(t, first, otherToken)
 	assert.Regexp(t, `^claude:[0-9a-f]{40}$`, first)
 	assert.NotContains(t, first, "101")
+	assert.Equal(t, "token_id", info.PromptCacheKeySource)
 }
 
 func TestClaudeResponsesPromptCacheKeyFallbackSkipsMissingIdentifier(t *testing.T) {
@@ -174,6 +179,9 @@ func TestClaudeResponsesPromptCacheKeyFallbackSkipsMissingIdentifier(t *testing.
 
 			assert.False(t, ok)
 			assert.Empty(t, key)
+			if tt.info != nil {
+				assert.Equal(t, "none", tt.info.PromptCacheKeySource)
+			}
 		})
 	}
 }
@@ -280,6 +288,117 @@ func TestClaudeLunaResponsesCompatibilityPreservesRequestControls(t *testing.T) 
 	assert.JSONEq(t, `{"user_id":"canvas-agent"}`, string(responsesRequest.Metadata))
 	require.NotNil(t, responsesRequest.Reasoning)
 	assert.Equal(t, "max", responsesRequest.Reasoning.Effort)
+}
+
+func TestClaudeLunaPromptCacheSystemBreakpointSurvivesResponsesConversion(t *testing.T) {
+	system := dto.ClaudeMediaMessage{
+		Type:         dto.ContentTypeText,
+		CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+	}
+	system.SetText("stable system prompt")
+	secondSystem := dto.ClaudeMediaMessage{
+		Type:         dto.ContentTypeText,
+		CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+	}
+	secondSystem.SetText("stable tool instructions")
+	claudeRequest := dto.ClaudeRequest{
+		Model:    "gpt-5.6-luna",
+		System:   []dto.ClaudeMediaMessage{system, secondSystem},
+		Messages: []dto.ClaudeMessage{{Role: "user", Content: "variable question"}},
+		Metadata: json.RawMessage(`{"user_id":"session-123"}`),
+		Tools: []map[string]any{{
+			"name":          "lookup",
+			"description":   "Look up a value",
+			"input_schema":  map[string]any{"type": "object"},
+			"cache_control": map[string]any{"type": "ephemeral"},
+		}},
+	}
+	info := &relaycommon.RelayInfo{OriginModelName: "gpt-5.6-luna", TokenId: 41}
+
+	chatRequest, err := service.ClaudeToOpenAIResponsesRequest(claudeRequest, info)
+	require.NoError(t, err)
+	cacheKey, ok := getClaudeResponsesPromptCacheKey(nil, &claudeRequest, info)
+	require.True(t, ok)
+	chatRequest.PromptCacheKey = cacheKey
+	chatJSON, err := common.Marshal(chatRequest)
+	require.NoError(t, err)
+	chatJSON, err = materializeResponsesOnlyRequestFields(chatJSON, chatRequest)
+	require.NoError(t, err)
+	chatJSON, err = relaycommon.RemoveDisabledFields(chatJSON, dto.ChannelOtherSettings{}, false)
+	require.NoError(t, err)
+	roundTrippedChatRequest, err := parseChatRequestForResponses(chatJSON)
+	require.NoError(t, err)
+
+	responsesResult, err := service.ConvertRequestVia(
+		nil,
+		info,
+		roundTrippedChatRequest,
+		types.RelayFormatOpenAI,
+		types.RelayFormatOpenAIResponses,
+	)
+	require.NoError(t, err)
+	responsesRequest, ok := responsesResult.Value.(*dto.OpenAIResponsesRequest)
+	require.True(t, ok)
+	encoded, err := common.Marshal(responsesRequest)
+	require.NoError(t, err)
+
+	assert.NotEmpty(t, gjson.GetBytes(encoded, "prompt_cache_key").String())
+	assert.Equal(t, "developer", gjson.GetBytes(encoded, "input.0.role").String())
+	assert.Equal(t, "stable system prompt", gjson.GetBytes(encoded, "input.0.content.0.text").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.0.content.0.prompt_cache_breakpoint.mode").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.0.content.1.prompt_cache_breakpoint.mode").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "prompt_cache_options.mode").String())
+	assert.False(t, gjson.GetBytes(encoded, "tools.0.cache_control").Exists())
+	assert.False(t, gjson.GetBytes(encoded, "tools.0.prompt_cache_breakpoint").Exists())
+	assert.False(t, gjson.GetBytes(encoded, "instructions").Exists())
+	assert.Equal(t, 2, info.PromptCacheBreakpointCount)
+}
+
+func TestClaudeOlderModelCacheControlKeepsResponsesInstructions(t *testing.T) {
+	system := dto.ClaudeMediaMessage{
+		Type:         dto.ContentTypeText,
+		CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+	}
+	system.SetText("stable system prompt")
+	claudeRequest := dto.ClaudeRequest{
+		Model:    "gpt-5.5",
+		System:   []dto.ClaudeMediaMessage{system},
+		Messages: []dto.ClaudeMessage{{Role: "user", Content: "variable question"}},
+	}
+	info := &relaycommon.RelayInfo{
+		OriginModelName:            "gpt-5.5",
+		TokenId:                    41,
+		PromptCacheBreakpointCount: 99,
+	}
+
+	chatRequest, err := service.ClaudeToOpenAIResponsesRequest(claudeRequest, info)
+	require.NoError(t, err)
+	chatJSON, err := common.Marshal(chatRequest)
+	require.NoError(t, err)
+	chatJSON, err = materializeResponsesOnlyRequestFields(chatJSON, chatRequest)
+	require.NoError(t, err)
+	chatJSON, err = relaycommon.RemoveDisabledFields(chatJSON, dto.ChannelOtherSettings{}, false)
+	require.NoError(t, err)
+	roundTrippedChatRequest, err := parseChatRequestForResponses(chatJSON)
+	require.NoError(t, err)
+
+	responsesResult, err := service.ConvertRequestVia(
+		nil,
+		info,
+		roundTrippedChatRequest,
+		types.RelayFormatOpenAI,
+		types.RelayFormatOpenAIResponses,
+	)
+	require.NoError(t, err)
+	responsesRequest, ok := responsesResult.Value.(*dto.OpenAIResponsesRequest)
+	require.True(t, ok)
+	encoded, err := common.Marshal(responsesRequest)
+	require.NoError(t, err)
+
+	assert.Equal(t, "stable system prompt", gjson.GetBytes(encoded, "instructions").String())
+	assert.Equal(t, "user", gjson.GetBytes(encoded, "input.0.role").String())
+	assert.False(t, gjson.GetBytes(encoded, "prompt_cache_options").Exists())
+	assert.Zero(t, info.PromptCacheBreakpointCount)
 }
 
 func TestClaudeLunaResponsesCompatibilityRejectsMalformedTools(t *testing.T) {

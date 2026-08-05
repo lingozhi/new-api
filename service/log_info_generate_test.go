@@ -6,10 +6,45 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAppendPromptCacheAdminInfoRecordsRawResponsesUsage(t *testing.T) {
+	rawUsage := &dto.Usage{
+		InputTokens:        28000,
+		InputTokensDetails: &dto.InputTokenDetails{CachedTokens: 16384},
+	}
+	bridgedUsage := &dto.Usage{
+		PromptTokensDetails: dto.InputTokenDetails{CachedTokens: 999},
+		BillingUsage:        dto.NewOpenAIResponsesBillingUsage(rawUsage),
+	}
+	other := map[string]interface{}{"admin_info": map[string]interface{}{}}
+	info := &relaycommon.RelayInfo{
+		PromptCacheKeySource:       "metadata_user_id",
+		PromptCacheBreakpointCount: 2,
+	}
+
+	appendPromptCacheAdminInfo(other, info, bridgedUsage)
+
+	adminInfo := other["admin_info"].(map[string]interface{})
+	require.Equal(t, "metadata_user_id", adminInfo["prompt_cache_key_source"])
+	require.Equal(t, 2, adminInfo["prompt_cache_breakpoint_count"])
+	require.Equal(t, 16384, adminInfo["upstream_input_cached_tokens"])
+}
+
+func TestAppendPromptCacheAdminInfoAlwaysRecordsDefaults(t *testing.T) {
+	other := map[string]interface{}{}
+
+	appendPromptCacheAdminInfo(other, &relaycommon.RelayInfo{PromptCacheKeySource: "none"}, nil)
+
+	adminInfo := other["admin_info"].(map[string]interface{})
+	require.Equal(t, "none", adminInfo["prompt_cache_key_source"])
+	require.Equal(t, 0, adminInfo["prompt_cache_breakpoint_count"])
+	require.Equal(t, 0, adminInfo["upstream_input_cached_tokens"])
+}
 
 func TestGenerateTextOtherInfoSeparatesRequestAndFinalAttemptFRT(t *testing.T) {
 	gin.SetMode(gin.TestMode)
