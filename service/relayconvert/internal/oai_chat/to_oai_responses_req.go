@@ -73,7 +73,11 @@ func chatContentPartsToResponses(parts []dto.MediaContent, role string, explicit
 }
 
 func supportsResponsesExplicitPromptCaching(model string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(model)), "gpt-5.6")
+	normalizedModel := strings.ToLower(strings.TrimSpace(model))
+	if separator := strings.LastIndexByte(normalizedModel, '/'); separator >= 0 {
+		normalizedModel = normalizedModel[separator+1:]
+	}
+	return strings.HasPrefix(normalizedModel, "gpt-5.6")
 }
 
 func convertChatResponseFormatToResponsesText(reqFormat *dto.ResponseFormat) json.RawMessage {

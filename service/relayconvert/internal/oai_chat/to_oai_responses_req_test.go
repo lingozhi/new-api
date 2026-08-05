@@ -14,37 +14,42 @@ import (
 )
 
 func TestChatCompletionsRequestToResponsesRequestMapsCacheBreakpointsStably(t *testing.T) {
-	system := dto.Message{Role: "system"}
-	system.SetMediaContent([]dto.MediaContent{{
-		Type:         dto.ContentTypeText,
-		Text:         "stable system prompt",
-		CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
-	}})
-	request := &dto.GeneralOpenAIRequest{
-		Model:          "gpt-5.6-luna",
-		PromptCacheKey: "claude-affinity-key",
-		Messages: []dto.Message{
-			system,
-			{Role: "user", Content: "variable question"},
-		},
+	for _, model := range []string{"gpt-5.6-luna", "openai/gpt-5.6-luna"} {
+		t.Run(model, func(t *testing.T) {
+			system := dto.Message{Role: "system"}
+			system.SetMediaContent([]dto.MediaContent{{
+				Type:         dto.ContentTypeText,
+				Text:         "stable system prompt",
+				CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+			}})
+			request := &dto.GeneralOpenAIRequest{
+				Model:          model,
+				PromptCacheKey: "claude-affinity-key",
+				Messages: []dto.Message{
+					system,
+					{Role: "user", Content: "variable question"},
+				},
+			}
+
+			first, err := ChatCompletionsRequestToResponsesRequest(request)
+			require.NoError(t, err)
+			second, err := ChatCompletionsRequestToResponsesRequest(request)
+			require.NoError(t, err)
+
+			firstJSON, err := common.Marshal(first)
+			require.NoError(t, err)
+			secondJSON, err := common.Marshal(second)
+			require.NoError(t, err)
+			assert.True(t, bytes.Equal(firstJSON, secondJSON), "identical requests must serialize byte-for-byte identically")
+			assert.Equal(t, model, gjson.GetBytes(firstJSON, "model").String())
+			assert.Equal(t, "claude-affinity-key", gjson.GetBytes(firstJSON, "prompt_cache_key").String())
+			assert.Equal(t, "explicit", gjson.GetBytes(firstJSON, "prompt_cache_options.mode").String())
+			assert.Equal(t, "developer", gjson.GetBytes(firstJSON, "input.0.role").String())
+			assert.Equal(t, "explicit", gjson.GetBytes(firstJSON, "input.0.content.0.prompt_cache_breakpoint.mode").String())
+			assert.False(t, gjson.GetBytes(firstJSON, "instructions").Exists())
+			assert.Equal(t, "variable question", gjson.GetBytes(firstJSON, "input.1.content").String())
+		})
 	}
-
-	first, err := ChatCompletionsRequestToResponsesRequest(request)
-	require.NoError(t, err)
-	second, err := ChatCompletionsRequestToResponsesRequest(request)
-	require.NoError(t, err)
-
-	firstJSON, err := common.Marshal(first)
-	require.NoError(t, err)
-	secondJSON, err := common.Marshal(second)
-	require.NoError(t, err)
-	assert.True(t, bytes.Equal(firstJSON, secondJSON), "identical requests must serialize byte-for-byte identically")
-	assert.Equal(t, "claude-affinity-key", gjson.GetBytes(firstJSON, "prompt_cache_key").String())
-	assert.Equal(t, "explicit", gjson.GetBytes(firstJSON, "prompt_cache_options.mode").String())
-	assert.Equal(t, "developer", gjson.GetBytes(firstJSON, "input.0.role").String())
-	assert.Equal(t, "explicit", gjson.GetBytes(firstJSON, "input.0.content.0.prompt_cache_breakpoint.mode").String())
-	assert.False(t, gjson.GetBytes(firstJSON, "instructions").Exists())
-	assert.Equal(t, "variable question", gjson.GetBytes(firstJSON, "input.1.content").String())
 }
 
 func TestChatCompletionsRequestToResponsesRequestDoesNotSendExplicitCachingToOlderModels(t *testing.T) {
@@ -56,7 +61,7 @@ func TestChatCompletionsRequestToResponsesRequestDoesNotSendExplicitCachingToOld
 	}})
 
 	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
-		Model:    "gpt-5.5",
+		Model:    "openai/gpt-5.2",
 		Messages: []dto.Message{message},
 	})
 	require.NoError(t, err)
