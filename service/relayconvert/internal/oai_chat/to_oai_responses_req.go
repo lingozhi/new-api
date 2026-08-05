@@ -11,6 +11,8 @@ import (
 	"github.com/samber/lo"
 )
 
+const maxResponsesPromptCacheBreakpoints = 4
+
 func normalizeChatImageURLToString(v any) any {
 	switch vv := v.(type) {
 	case string:
@@ -44,10 +46,9 @@ func chatContentPartsToResponses(parts []dto.MediaContent, role string, explicit
 		switch part.Type {
 		case dto.ContentTypeText:
 			textType := "input_text"
+			cacheable = role != "assistant"
 			if role == "assistant" {
 				textType = "output_text"
-			} else {
-				cacheable = true
 			}
 			converted = map[string]any{"type": textType, "text": part.Text}
 		case dto.ContentTypeImageURL:
@@ -63,7 +64,7 @@ func chatContentPartsToResponses(parts []dto.MediaContent, role string, explicit
 		default:
 			converted = map[string]any{"type": part.Type}
 		}
-		if explicitPromptCaching && cacheable && len(part.CacheControl) > 0 && string(part.CacheControl) != "null" {
+		if explicitPromptCaching && role != "assistant" && cacheable && hasChatCacheControl(part.CacheControl) {
 			converted["prompt_cache_breakpoint"] = map[string]string{"mode": "explicit"}
 			hasCacheBreakpoint = true
 		}
@@ -78,6 +79,36 @@ func supportsResponsesExplicitPromptCaching(model string) bool {
 		normalizedModel = normalizedModel[separator+1:]
 	}
 	return strings.HasPrefix(normalizedModel, "gpt-5.6")
+}
+
+func hasChatCacheControl(cacheControl json.RawMessage) bool {
+	return len(cacheControl) > 0 && strings.TrimSpace(string(cacheControl)) != "null"
+}
+
+func chatMessageHasInputText(message *dto.Message) bool {
+	if message == nil || message.Content == nil {
+		return false
+	}
+	if message.IsStringContent() {
+		return strings.TrimSpace(message.StringContent()) != ""
+	}
+	for _, part := range message.ParseContent() {
+		if part.Type == dto.ContentTypeText && strings.TrimSpace(part.Text) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func addPromptCacheBreakpointToFirstInputText(parts []map[string]any) bool {
+	for _, part := range parts {
+		if part["type"] != "input_text" {
+			continue
+		}
+		part["prompt_cache_breakpoint"] = map[string]string{"mode": "explicit"}
+		return true
+	}
+	return false
 }
 
 func convertChatResponseFormatToResponsesText(reqFormat *dto.ResponseFormat) json.RawMessage {
@@ -131,14 +162,77 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 
 	var instructionsParts []string
 	inputItems := make([]map[string]any, 0, len(req.Messages))
-	hasCacheBreakpoint := false
+	systemInputItemIndexes := make(map[int]struct{})
 	explicitPromptCaching := supportsResponsesExplicitPromptCaching(req.Model)
+	breakpointHostMessageIndexes := make(map[int]struct{})
+	if explicitPromptCaching {
+		// Responses cannot mark output_text; move assistant boundaries to nearby input messages.
+		lastAssistantMessageIndex := -1
+		for messageIndex := range req.Messages {
+			message := &req.Messages[messageIndex]
+			if strings.TrimSpace(message.Role) != "assistant" {
+				continue
+			}
+			lastAssistantMessageIndex = messageIndex
+			hasCacheControl := false
+			for _, part := range message.ParseContent() {
+				if hasChatCacheControl(part.CacheControl) {
+					hasCacheControl = true
+					break
+				}
+			}
+			if !hasCacheControl {
+				continue
+			}
 
-	for _, msg := range req.Messages {
+			hostIndex := -1
+			for candidateIndex := messageIndex + 1; candidateIndex < len(req.Messages); candidateIndex++ {
+				role := strings.TrimSpace(req.Messages[candidateIndex].Role)
+				if role != "user" && role != "developer" {
+					continue
+				}
+				if chatMessageHasInputText(&req.Messages[candidateIndex]) {
+					hostIndex = candidateIndex
+					break
+				}
+			}
+			if hostIndex < 0 {
+				for candidateIndex := messageIndex - 1; candidateIndex >= 0; candidateIndex-- {
+					role := strings.TrimSpace(req.Messages[candidateIndex].Role)
+					if role != "user" && role != "developer" && role != "system" {
+						continue
+					}
+					if chatMessageHasInputText(&req.Messages[candidateIndex]) {
+						hostIndex = candidateIndex
+						break
+					}
+				}
+			}
+			if hostIndex >= 0 {
+				breakpointHostMessageIndexes[hostIndex] = struct{}{}
+			}
+		}
+
+		if len(req.Messages) > 2 && lastAssistantMessageIndex >= 0 {
+			for messageIndex := lastAssistantMessageIndex + 1; messageIndex < len(req.Messages); messageIndex++ {
+				if strings.TrimSpace(req.Messages[messageIndex].Role) != "user" {
+					continue
+				}
+				if chatMessageHasInputText(&req.Messages[messageIndex]) {
+					breakpointHostMessageIndexes[messageIndex] = struct{}{}
+					break
+				}
+			}
+		}
+	}
+
+	instructionInputStarted := false
+	for messageIndex, msg := range req.Messages {
 		role := strings.TrimSpace(msg.Role)
 		if role == "" {
 			continue
 		}
+		_, breakpointHost := breakpointHostMessageIndexes[messageIndex]
 
 		if role == "tool" || role == "function" {
 			callID := strings.TrimSpace(msg.ToolCallId)
@@ -165,7 +259,8 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 			if msg.Content == nil {
 				continue
 			}
-			if msg.IsStringContent() {
+			keepInInput := instructionInputStarted || breakpointHost
+			if msg.IsStringContent() && !keepInInput {
 				if s := strings.TrimSpace(msg.StringContent()); s != "" {
 					instructionsParts = append(instructionsParts, s)
 				}
@@ -173,16 +268,20 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 			}
 			parts := msg.ParseContent()
 			convertedParts, hasBreakpoint := chatContentPartsToResponses(parts, role, explicitPromptCaching)
-			if hasBreakpoint {
+			if breakpointHost && addPromptCacheBreakpointToFirstInputText(convertedParts) {
+				hasBreakpoint = true
+			}
+			if hasBreakpoint || keepInInput {
 				inputRole := role
 				if role == "system" {
 					inputRole = "developer"
+					systemInputItemIndexes[len(inputItems)] = struct{}{}
 				}
 				inputItems = append(inputItems, map[string]any{
 					"role":    inputRole,
 					"content": convertedParts,
 				})
-				hasCacheBreakpoint = true
+				instructionInputStarted = true
 				continue
 			}
 			var sb strings.Builder
@@ -232,7 +331,13 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		}
 
 		if msg.IsStringContent() {
-			item["content"] = msg.StringContent()
+			if breakpointHost {
+				contentParts, _ := chatContentPartsToResponses(msg.ParseContent(), role, explicitPromptCaching)
+				addPromptCacheBreakpointToFirstInputText(contentParts)
+				item["content"] = contentParts
+			} else {
+				item["content"] = msg.StringContent()
+			}
 			inputItems = append(inputItems, item)
 
 			if role == "assistant" {
@@ -259,8 +364,10 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		}
 
 		parts := msg.ParseContent()
-		contentParts, hasBreakpoint := chatContentPartsToResponses(parts, role, explicitPromptCaching)
-		hasCacheBreakpoint = hasCacheBreakpoint || hasBreakpoint
+		contentParts, _ := chatContentPartsToResponses(parts, role, explicitPromptCaching)
+		if breakpointHost {
+			addPromptCacheBreakpointToFirstInputText(contentParts)
+		}
 		item["content"] = contentParts
 		inputItems = append(inputItems, item)
 
@@ -285,6 +392,57 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 			}
 		}
 	}
+
+	type promptCacheBreakpointPosition struct {
+		system bool
+		part   map[string]any
+	}
+	breakpoints := make([]promptCacheBreakpointPosition, 0, maxResponsesPromptCacheBreakpoints+1)
+	for itemIndex, item := range inputItems {
+		content, ok := item["content"].([]map[string]any)
+		if !ok {
+			continue
+		}
+		_, system := systemInputItemIndexes[itemIndex]
+		for _, part := range content {
+			breakpoint, exists := part["prompt_cache_breakpoint"]
+			if !exists || breakpoint == nil {
+				continue
+			}
+			breakpoints = append(breakpoints, promptCacheBreakpointPosition{
+				system: system,
+				part:   part,
+			})
+		}
+	}
+
+	remainingBreakpointCount := len(breakpoints)
+	if remainingBreakpointCount > maxResponsesPromptCacheBreakpoints {
+		// Keep the newest boundary and the latest system boundary, then fill from the suffix.
+		keep := make([]bool, len(breakpoints))
+		keptCount := 0
+		for index := len(breakpoints) - 1; index >= 0; index-- {
+			if breakpoints[index].system {
+				keep[index] = true
+				keptCount++
+				break
+			}
+		}
+		for index := len(breakpoints) - 1; index >= 0 && keptCount < maxResponsesPromptCacheBreakpoints; index-- {
+			if keep[index] {
+				continue
+			}
+			keep[index] = true
+			keptCount++
+		}
+		for index, breakpoint := range breakpoints {
+			if !keep[index] {
+				delete(breakpoint.part, "prompt_cache_breakpoint")
+			}
+		}
+		remainingBreakpointCount = keptCount
+	}
+	hasCacheBreakpoint := remainingBreakpointCount > 0
 
 	inputRaw, err := common.Marshal(inputItems)
 	if err != nil {

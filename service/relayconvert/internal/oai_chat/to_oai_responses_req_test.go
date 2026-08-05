@@ -92,6 +92,224 @@ func TestChatCompletionsRequestToResponsesRequestKeepsSystemInstructionsForOlder
 	assert.Empty(t, got.PromptCacheOptions)
 }
 
+func TestChatCompletionsRequestToResponsesRequestTransfersAssistantAndRollingCacheBreakpoints(t *testing.T) {
+	messages := []dto.Message{
+		cachedTextMessage("system", "stable system prompt"),
+		cachedTextMessage("user", "historical user 1"),
+		cachedTextMessage("assistant", "historical assistant 1"),
+		mediaTextMessage("user", "historical user 2", "historical user 2 tail"),
+		cachedTextMessage("assistant", "historical assistant 2"),
+		mediaTextMessage("user", "latest user message", "latest user tail"),
+	}
+
+	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model:    "openai/gpt-5.6-luna",
+		Messages: messages,
+	})
+	require.NoError(t, err)
+
+	encoded, err := common.Marshal(got)
+	require.NoError(t, err)
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "prompt_cache_options.mode").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.0.content.0.prompt_cache_breakpoint.mode").String())
+	assert.Equal(t, "output_text", gjson.GetBytes(encoded, "input.2.content.0.type").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.3.content.0.prompt_cache_breakpoint.mode").String())
+	assert.False(t, gjson.GetBytes(encoded, "input.3.content.1.prompt_cache_breakpoint").Exists())
+	assert.Equal(t, "output_text", gjson.GetBytes(encoded, "input.4.content.0.type").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.5.content.0.prompt_cache_breakpoint.mode").String())
+	assert.False(t, gjson.GetBytes(encoded, "input.5.content.1.prompt_cache_breakpoint").Exists())
+	assert.Equal(t, 4, CountResponsesPromptCacheBreakpoints(got.Input))
+	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
+}
+
+func TestChatCompletionsRequestToResponsesRequestAddsRollingBreakpointWithoutAssistantCacheControl(t *testing.T) {
+	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model: "gpt-5.6-terra",
+		Messages: []dto.Message{
+			{Role: "user", Content: "historical user"},
+			mediaTextMessage("assistant", "historical assistant"),
+			{Role: "developer", Content: "intervening developer"},
+			mediaTextMessage("user", "latest user", "latest user tail"),
+		},
+	})
+	require.NoError(t, err)
+
+	encoded, err := common.Marshal(got)
+	require.NoError(t, err)
+	assert.Equal(t, "output_text", gjson.GetBytes(encoded, "input.1.content.0.type").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.2.content.0.prompt_cache_breakpoint.mode").String())
+	assert.False(t, gjson.GetBytes(encoded, "input.2.content.1.prompt_cache_breakpoint").Exists())
+	assert.JSONEq(t, `"intervening developer"`, string(got.Instructions))
+	assert.Equal(t, 1, CountResponsesPromptCacheBreakpoints(got.Input))
+	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
+}
+
+func TestChatCompletionsRequestToResponsesRequestTransfersAssistantCacheBreakpointBackward(t *testing.T) {
+	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model: "gpt-5.6-luna",
+		Messages: []dto.Message{
+			mediaTextMessage("user", "preceding user"),
+			cachedTextMessage("assistant", "terminal assistant"),
+		},
+	})
+	require.NoError(t, err)
+
+	encoded, err := common.Marshal(got)
+	require.NoError(t, err)
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.0.content.0.prompt_cache_breakpoint.mode").String())
+	assert.Equal(t, "output_text", gjson.GetBytes(encoded, "input.1.content.0.type").String())
+	assert.Equal(t, 1, CountResponsesPromptCacheBreakpoints(got.Input))
+	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
+}
+
+func TestChatCompletionsRequestToResponsesRequestTransfersAssistantNonTextCacheControl(t *testing.T) {
+	assistant := dto.Message{Role: "assistant"}
+	assistant.SetMediaContent([]dto.MediaContent{
+		{
+			Type:         dto.ContentTypeImageURL,
+			ImageUrl:     "https://example.test/image.png",
+			CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+		},
+		{
+			Type: dto.ContentTypeText,
+			Text: "assistant text",
+		},
+	})
+
+	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model: "gpt-5.6-luna",
+		Messages: []dto.Message{
+			{Role: "user", Content: "preceding user"},
+			assistant,
+		},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, CountResponsesPromptCacheBreakpoints(got.Input))
+	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
+
+	encoded, err := common.Marshal(got)
+	require.NoError(t, err)
+	assert.False(t, gjson.GetBytes(encoded, "input.1.content.0.prompt_cache_breakpoint").Exists())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.0.content.0.prompt_cache_breakpoint.mode").String())
+}
+
+func TestChatCompletionsRequestToResponsesRequestTransfersAssistantCacheBreakpointToDeveloper(t *testing.T) {
+	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model: "gpt-5.6-luna",
+		Messages: []dto.Message{
+			{Role: "user", Content: "first user"},
+			cachedTextMessage("assistant", "assistant history"),
+			{Role: "developer", Content: "following developer"},
+			{Role: "developer", Content: "later developer"},
+		},
+	})
+	require.NoError(t, err)
+
+	encoded, err := common.Marshal(got)
+	require.NoError(t, err)
+	assert.Equal(t, "developer", gjson.GetBytes(encoded, "input.2.role").String())
+	assert.Equal(t, "input_text", gjson.GetBytes(encoded, "input.2.content.0.type").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.2.content.0.prompt_cache_breakpoint.mode").String())
+	assert.Equal(t, "developer", gjson.GetBytes(encoded, "input.3.role").String())
+	assert.Equal(t, "later developer", gjson.GetBytes(encoded, "input.3.content.0.text").String())
+	assert.Empty(t, got.Instructions)
+	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
+}
+
+func TestChatCompletionsRequestToResponsesRequestDeduplicatesTransferredBreakpoints(t *testing.T) {
+	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model: "gpt-5.6-sol",
+		Messages: []dto.Message{
+			{Role: "user", Content: "first user"},
+			cachedTextMessage("assistant", "first assistant"),
+			cachedTextMessage("assistant", "second assistant"),
+			mediaTextMessage("user", "following user"),
+		},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, CountResponsesPromptCacheBreakpoints(got.Input))
+	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
+
+	encoded, err := common.Marshal(got)
+	require.NoError(t, err)
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.3.content.0.prompt_cache_breakpoint.mode").String())
+}
+
+func TestChatCompletionsRequestToResponsesRequestLimitsBreakpointsAndKeepsSystem(t *testing.T) {
+	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model: "gpt-5.6-sol",
+		Messages: []dto.Message{
+			cachedTextMessage("system", "system prompt"),
+			cachedTextMessage("user", "old user 1"),
+			cachedTextMessage("user", "old user 2"),
+			cachedTextMessage("user", "old user 3"),
+			cachedTextMessage("user", "latest user"),
+			{Role: "assistant", Content: "latest assistant"},
+		},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, 4, CountResponsesPromptCacheBreakpoints(got.Input))
+
+	encoded, err := common.Marshal(got)
+	require.NoError(t, err)
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.0.content.0.prompt_cache_breakpoint.mode").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.4.content.0.prompt_cache_breakpoint.mode").String())
+	assert.False(t, gjson.GetBytes(encoded, "input.1.content.0.prompt_cache_breakpoint").Exists())
+	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
+}
+
+func TestChatCompletionsRequestToResponsesRequestRollingCacheBreakpointEligibility(t *testing.T) {
+	tests := []struct {
+		name     string
+		model    string
+		messages []dto.Message
+	}{
+		{
+			name:  "older model",
+			model: "gpt-5.5",
+			messages: []dto.Message{
+				{Role: "user", Content: "first user"},
+				cachedTextMessage("assistant", "assistant history"),
+				{Role: "user", Content: "latest user"},
+			},
+		},
+		{
+			name:  "short request",
+			model: "gpt-5.6-luna",
+			messages: []dto.Message{
+				mediaTextMessage("assistant", "assistant history"),
+				{Role: "user", Content: "latest user"},
+			},
+		},
+		{
+			name:  "no user after last assistant",
+			model: "gpt-5.6-luna",
+			messages: []dto.Message{
+				{Role: "user", Content: "first user"},
+				{Role: "assistant", Content: "first assistant"},
+				{Role: "assistant", Content: "terminal assistant"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+				Model:    tt.model,
+				Messages: tt.messages,
+			})
+			require.NoError(t, err)
+
+			assert.Zero(t, CountResponsesPromptCacheBreakpoints(got.Input))
+			assert.Empty(t, got.PromptCacheOptions)
+			assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
+		})
+	}
+}
+
 func TestChatCompletionsRequestToResponsesRequestInstructionsAndTools(t *testing.T) {
 	req := &dto.GeneralOpenAIRequest{
 		Model: "gpt-test",
@@ -167,4 +385,46 @@ func assistantMessageWithTool(content string, id string, name string, args strin
 		},
 	})
 	return msg
+}
+
+func cachedTextMessage(role string, text string) dto.Message {
+	message := dto.Message{Role: role}
+	message.SetMediaContent([]dto.MediaContent{{
+		Type:         dto.ContentTypeText,
+		Text:         text,
+		CacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+	}})
+	return message
+}
+
+func mediaTextMessage(role string, texts ...string) dto.Message {
+	parts := make([]dto.MediaContent, 0, len(texts))
+	for _, text := range texts {
+		parts = append(parts, dto.MediaContent{Type: dto.ContentTypeText, Text: text})
+	}
+	message := dto.Message{Role: role}
+	message.SetMediaContent(parts)
+	return message
+}
+
+func assertNoOutputTextPromptCacheBreakpoints(t *testing.T, input json.RawMessage) {
+	t.Helper()
+	var items []struct {
+		Content json.RawMessage `json:"content"`
+	}
+	require.NoError(t, common.Unmarshal(input, &items))
+	for _, item := range items {
+		var parts []struct {
+			Type                  string          `json:"type"`
+			PromptCacheBreakpoint json.RawMessage `json:"prompt_cache_breakpoint"`
+		}
+		if common.Unmarshal(item.Content, &parts) != nil {
+			continue
+		}
+		for _, part := range parts {
+			if part.Type == "output_text" {
+				assert.Empty(t, part.PromptCacheBreakpoint)
+			}
+		}
+	}
 }
