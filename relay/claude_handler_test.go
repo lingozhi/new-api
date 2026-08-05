@@ -2,6 +2,9 @@ package relay
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -9,7 +12,9 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -48,6 +53,129 @@ func TestApplyClaudeResponsesEffortKeepsExistingValueWhenMissing(t *testing.T) {
 	applyClaudeResponsesEffort(claudeRequest, openAIRequest)
 
 	assert.Equal(t, "high", openAIRequest.ReasoningEffort)
+}
+
+func TestClaudeResponsesPromptCacheKeyFallbackPrefersMetadataUserID(t *testing.T) {
+	request := &dto.ClaudeRequest{
+		Model:    "provider-luna-alias",
+		Metadata: json.RawMessage(`{"user_id":"session-123"}`),
+	}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.6-luna",
+		TokenId:         41,
+	}
+
+	first, ok := getClaudeResponsesPromptCacheKey(nil, request, info)
+	require.True(t, ok)
+	second, ok := getClaudeResponsesPromptCacheKey(nil, request, &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.6-luna",
+		TokenId:         42,
+	})
+	require.True(t, ok)
+	otherUser, ok := getClaudeResponsesPromptCacheKey(nil, &dto.ClaudeRequest{
+		Model:    request.Model,
+		Metadata: json.RawMessage(`{"user_id":"session-456"}`),
+	}, info)
+	require.True(t, ok)
+	otherModel, ok := getClaudeResponsesPromptCacheKey(nil, request, &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.6-luna-preview",
+		TokenId:         info.TokenId,
+	})
+	require.True(t, ok)
+
+	assert.Equal(t, first, second)
+	assert.NotEqual(t, first, otherUser)
+	assert.NotEqual(t, first, otherModel)
+	assert.Regexp(t, `^claude:[0-9a-f]{40}$`, first)
+	assert.NotContains(t, first, "session-123")
+}
+
+func TestClaudeResponsesPromptCacheKeyPreservesAffinityPriority(t *testing.T) {
+	setting := operation_setting.GetChannelAffinitySetting()
+	originalEnabled := setting.Enabled
+	originalRules := setting.Rules
+	setting.Enabled = true
+	setting.Rules = []operation_setting.ChannelAffinityRule{
+		{
+			Name:       "test luna affinity priority",
+			ModelRegex: []string{`^gpt-5\.6-luna$`},
+			PathRegex:  []string{`^/v1/messages$`},
+			KeySources: []operation_setting.ChannelAffinityKeySource{
+				{Type: "gjson", Path: "metadata.user_id"},
+			},
+			IncludeRuleName:  true,
+			IncludeModelName: true,
+		},
+	}
+	t.Cleanup(func() {
+		setting.Enabled = originalEnabled
+		setting.Rules = originalRules
+	})
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(
+		http.MethodPost,
+		"/v1/messages",
+		strings.NewReader(`{"metadata":{"user_id":"affinity-user"}}`),
+	)
+	_, _ = service.GetPreferredChannelByAffinity(ctx, "gpt-5.6-luna", "default")
+	expected, ok := service.GetChannelAffinityPromptCacheKey(ctx)
+	require.True(t, ok)
+
+	request := &dto.ClaudeRequest{
+		Model:    "gpt-5.6-luna",
+		Metadata: json.RawMessage(`{"user_id":"fallback-user"}`),
+	}
+	info := &relaycommon.RelayInfo{TokenId: 41}
+	fallback, ok := getClaudeResponsesPromptCacheKey(nil, request, info)
+	require.True(t, ok)
+	actual, ok := getClaudeResponsesPromptCacheKey(ctx, request, info)
+	require.True(t, ok)
+
+	assert.Equal(t, expected, actual)
+	assert.NotEqual(t, fallback, actual)
+}
+
+func TestClaudeResponsesPromptCacheKeyFallbackUsesPositiveTokenID(t *testing.T) {
+	request := &dto.ClaudeRequest{
+		Model:    "gpt-5.6-luna",
+		Metadata: json.RawMessage(`{"user_id":42}`),
+	}
+
+	first, ok := getClaudeResponsesPromptCacheKey(nil, request, &relaycommon.RelayInfo{TokenId: 101})
+	require.True(t, ok)
+	second, ok := getClaudeResponsesPromptCacheKey(nil, request, &relaycommon.RelayInfo{TokenId: 101})
+	require.True(t, ok)
+	otherToken, ok := getClaudeResponsesPromptCacheKey(nil, request, &relaycommon.RelayInfo{TokenId: 202})
+	require.True(t, ok)
+
+	assert.Equal(t, first, second)
+	assert.NotEqual(t, first, otherToken)
+	assert.Regexp(t, `^claude:[0-9a-f]{40}$`, first)
+	assert.NotContains(t, first, "101")
+}
+
+func TestClaudeResponsesPromptCacheKeyFallbackSkipsMissingIdentifier(t *testing.T) {
+	tests := []struct {
+		name    string
+		request *dto.ClaudeRequest
+		info    *relaycommon.RelayInfo
+	}{
+		{name: "nil request", info: &relaycommon.RelayInfo{TokenId: 1}},
+		{name: "missing metadata and token", request: &dto.ClaudeRequest{Model: "gpt-5.6-luna"}, info: &relaycommon.RelayInfo{}},
+		{name: "blank metadata and zero token", request: &dto.ClaudeRequest{Model: "gpt-5.6-luna", Metadata: json.RawMessage(`{"user_id":"  "}`)}, info: &relaycommon.RelayInfo{}},
+		{name: "negative token", request: &dto.ClaudeRequest{Model: "gpt-5.6-luna"}, info: &relaycommon.RelayInfo{TokenId: -1}},
+		{name: "missing model", request: &dto.ClaudeRequest{Metadata: json.RawMessage(`{"user_id":"session-123"}`)}, info: &relaycommon.RelayInfo{TokenId: 1}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key, ok := getClaudeResponsesPromptCacheKey(nil, tt.request, tt.info)
+
+			assert.False(t, ok)
+			assert.Empty(t, key)
+		})
+	}
 }
 
 func TestClaudeLunaResponsesCompatibilityPreservesRequestControls(t *testing.T) {

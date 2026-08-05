@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -28,6 +29,47 @@ func applyClaudeResponsesEffort(claudeRequest *dto.ClaudeRequest, openAIRequest 
 	if effort := claudeRequest.GetEfforts(); effort != "" {
 		openAIRequest.ReasoningEffort = effort
 	}
+}
+
+func getClaudeResponsesPromptCacheKey(c *gin.Context, request *dto.ClaudeRequest, info *relaycommon.RelayInfo) (string, bool) {
+	if promptCacheKey, ok := service.GetChannelAffinityPromptCacheKey(c); ok {
+		return promptCacheKey, true
+	}
+	if request == nil {
+		return "", false
+	}
+
+	model := strings.TrimSpace(request.Model)
+	if info != nil {
+		if originModel := strings.TrimSpace(info.OriginModelName); originModel != "" {
+			model = originModel
+		}
+	}
+	if model == "" {
+		return "", false
+	}
+
+	identitySource := ""
+	identity := ""
+	if len(request.Metadata) > 0 {
+		var metadata dto.ClaudeMetadata
+		if err := common.Unmarshal(request.Metadata, &metadata); err == nil {
+			if userID := strings.TrimSpace(metadata.UserId); userID != "" {
+				identitySource = "metadata.user_id"
+				identity = userID
+			}
+		}
+	}
+	if identity == "" && info != nil && info.TokenId > 0 {
+		identitySource = "token_id"
+		identity = strconv.Itoa(info.TokenId)
+	}
+	if identity == "" {
+		return "", false
+	}
+
+	hashInput := identitySource + "\x00" + identity + "\x00" + model
+	return "claude:" + common.Sha1([]byte(hashInput)), true
 }
 
 func requiresClaudeResponsesCompatibility(info *relaycommon.RelayInfo, request *dto.ClaudeRequest) bool {
@@ -234,7 +276,7 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if convErr != nil {
 			return types.NewError(convErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 		}
-		if promptCacheKey, ok := service.GetChannelAffinityPromptCacheKey(c); ok {
+		if promptCacheKey, ok := getClaudeResponsesPromptCacheKey(c, request, info); ok {
 			openAIRequest.PromptCacheKey = promptCacheKey
 		}
 		applyClaudeResponsesEffort(request, openAIRequest)
