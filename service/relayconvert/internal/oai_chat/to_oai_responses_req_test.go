@@ -122,14 +122,15 @@ func TestChatCompletionsRequestToResponsesRequestTransfersAssistantAndRollingCac
 	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
 }
 
-func TestChatCompletionsRequestToResponsesRequestAddsRollingBreakpointWithoutAssistantCacheControl(t *testing.T) {
+func TestChatCompletionsRequestToResponsesRequestAddsRollingBreakpointBeforeLastAssistant(t *testing.T) {
 	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
 		Model: "gpt-5.6-terra",
 		Messages: []dto.Message{
-			{Role: "user", Content: "historical user"},
-			mediaTextMessage("assistant", "historical assistant"),
-			{Role: "developer", Content: "intervening developer"},
-			mediaTextMessage("user", "latest user", "latest user tail"),
+			{Role: "user", Content: "historical user 1"},
+			mediaTextMessage("assistant", "historical assistant 1"),
+			mediaTextMessage("user", "historical user 2", "historical user 2 tail"),
+			mediaTextMessage("assistant", "historical assistant 2"),
+			cachedTextMessage("user", "latest user"),
 		},
 	})
 	require.NoError(t, err)
@@ -139,8 +140,9 @@ func TestChatCompletionsRequestToResponsesRequestAddsRollingBreakpointWithoutAss
 	assert.Equal(t, "output_text", gjson.GetBytes(encoded, "input.1.content.0.type").String())
 	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.2.content.0.prompt_cache_breakpoint.mode").String())
 	assert.False(t, gjson.GetBytes(encoded, "input.2.content.1.prompt_cache_breakpoint").Exists())
-	assert.JSONEq(t, `"intervening developer"`, string(got.Instructions))
-	assert.Equal(t, 1, CountResponsesPromptCacheBreakpoints(got.Input))
+	assert.Equal(t, "output_text", gjson.GetBytes(encoded, "input.3.content.0.type").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.4.content.0.prompt_cache_breakpoint.mode").String())
+	assert.Equal(t, 2, CountResponsesPromptCacheBreakpoints(got.Input))
 	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
 }
 
@@ -229,11 +231,12 @@ func TestChatCompletionsRequestToResponsesRequestDeduplicatesTransferredBreakpoi
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, CountResponsesPromptCacheBreakpoints(got.Input))
+	assert.Equal(t, 2, CountResponsesPromptCacheBreakpoints(got.Input))
 	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
 
 	encoded, err := common.Marshal(got)
 	require.NoError(t, err)
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.0.content.0.prompt_cache_breakpoint.mode").String())
 	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.3.content.0.prompt_cache_breakpoint.mode").String())
 }
 
@@ -285,12 +288,12 @@ func TestChatCompletionsRequestToResponsesRequestRollingCacheBreakpointEligibili
 			},
 		},
 		{
-			name:  "no user after last assistant",
+			name:  "no stable user before last assistant",
 			model: "gpt-5.6-luna",
 			messages: []dto.Message{
-				{Role: "user", Content: "first user"},
 				{Role: "assistant", Content: "first assistant"},
 				{Role: "assistant", Content: "terminal assistant"},
+				{Role: "user", Content: "latest user"},
 			},
 		},
 	}

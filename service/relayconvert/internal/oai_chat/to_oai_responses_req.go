@@ -214,8 +214,9 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		}
 
 		if len(req.Messages) > 2 && lastAssistantMessageIndex >= 0 {
-			for messageIndex := lastAssistantMessageIndex + 1; messageIndex < len(req.Messages); messageIndex++ {
-				if strings.TrimSpace(req.Messages[messageIndex].Role) != "user" {
+			for messageIndex := lastAssistantMessageIndex - 1; messageIndex >= 0; messageIndex-- {
+				role := strings.TrimSpace(req.Messages[messageIndex].Role)
+				if role != "user" && role != "developer" {
 					continue
 				}
 				if chatMessageHasInputText(&req.Messages[messageIndex]) {
