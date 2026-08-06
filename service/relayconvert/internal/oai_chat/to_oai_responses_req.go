@@ -11,7 +11,11 @@ import (
 	"github.com/samber/lo"
 )
 
-const maxResponsesPromptCacheBreakpoints = 4
+// OpenAI limits new cache writes per request, not the number of historical
+// breakpoints that may be replayed for cache reads. Keep the local replay
+// window within the documented read window while letting the upstream enforce
+// its four-write limit.
+const maxResponsesPromptCacheReadBreakpoints = 50
 
 func normalizeChatImageURLToString(v any) any {
 	switch vv := v.(type) {
@@ -398,7 +402,7 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		system bool
 		part   map[string]any
 	}
-	breakpoints := make([]promptCacheBreakpointPosition, 0, maxResponsesPromptCacheBreakpoints+1)
+	breakpoints := make([]promptCacheBreakpointPosition, 0, maxResponsesPromptCacheReadBreakpoints+1)
 	for itemIndex, item := range inputItems {
 		content, ok := item["content"].([]map[string]any)
 		if !ok {
@@ -418,7 +422,7 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 	}
 
 	remainingBreakpointCount := len(breakpoints)
-	if remainingBreakpointCount > maxResponsesPromptCacheBreakpoints {
+	if remainingBreakpointCount > maxResponsesPromptCacheReadBreakpoints {
 		// Keep the newest boundary and the latest system boundary, then fill from the suffix.
 		keep := make([]bool, len(breakpoints))
 		keptCount := 0
@@ -429,7 +433,7 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 				break
 			}
 		}
-		for index := len(breakpoints) - 1; index >= 0 && keptCount < maxResponsesPromptCacheBreakpoints; index-- {
+		for index := len(breakpoints) - 1; index >= 0 && keptCount < maxResponsesPromptCacheReadBreakpoints; index-- {
 			if keep[index] {
 				continue
 			}

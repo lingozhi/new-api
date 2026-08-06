@@ -3,6 +3,7 @@ package oaichat
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -240,7 +241,7 @@ func TestChatCompletionsRequestToResponsesRequestDeduplicatesTransferredBreakpoi
 	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.3.content.0.prompt_cache_breakpoint.mode").String())
 }
 
-func TestChatCompletionsRequestToResponsesRequestLimitsBreakpointsAndKeepsSystem(t *testing.T) {
+func TestChatCompletionsRequestToResponsesRequestKeepsExplicitBreakpointsForReads(t *testing.T) {
 	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
 		Model: "gpt-5.6-sol",
 		Messages: []dto.Message{
@@ -254,14 +255,35 @@ func TestChatCompletionsRequestToResponsesRequestLimitsBreakpointsAndKeepsSystem
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, 4, CountResponsesPromptCacheBreakpoints(got.Input))
+	assert.Equal(t, 5, CountResponsesPromptCacheBreakpoints(got.Input))
 
 	encoded, err := common.Marshal(got)
 	require.NoError(t, err)
 	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.0.content.0.prompt_cache_breakpoint.mode").String())
 	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.4.content.0.prompt_cache_breakpoint.mode").String())
-	assert.False(t, gjson.GetBytes(encoded, "input.1.content.0.prompt_cache_breakpoint").Exists())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.1.content.0.prompt_cache_breakpoint.mode").String())
 	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
+}
+
+func TestChatCompletionsRequestToResponsesRequestKeepsHistoricalReadWindow(t *testing.T) {
+	messages := []dto.Message{cachedTextMessage("system", "system prompt")}
+	for index := 0; index < 52; index++ {
+		messages = append(messages, cachedTextMessage("user", fmt.Sprintf("user turn %d", index)))
+	}
+	messages = append(messages, dto.Message{Role: "assistant", Content: "latest assistant"})
+
+	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model:    "gpt-5.6-sol",
+		Messages: messages,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, 50, CountResponsesPromptCacheBreakpoints(got.Input))
+	encoded, err := common.Marshal(got)
+	require.NoError(t, err)
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.0.content.0.prompt_cache_breakpoint.mode").String())
+	assert.False(t, gjson.GetBytes(encoded, "input.1.content.0.prompt_cache_breakpoint").Exists())
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.52.content.0.prompt_cache_breakpoint.mode").String())
 }
 
 func TestChatCompletionsRequestToResponsesRequestRollingCacheBreakpointEligibility(t *testing.T) {
@@ -414,19 +436,22 @@ func assertNoOutputTextPromptCacheBreakpoints(t *testing.T, input json.RawMessag
 	t.Helper()
 	var items []struct {
 		Content json.RawMessage `json:"content"`
+		Output  json.RawMessage `json:"output"`
 	}
 	require.NoError(t, common.Unmarshal(input, &items))
 	for _, item := range items {
-		var parts []struct {
-			Type                  string          `json:"type"`
-			PromptCacheBreakpoint json.RawMessage `json:"prompt_cache_breakpoint"`
-		}
-		if common.Unmarshal(item.Content, &parts) != nil {
-			continue
-		}
-		for _, part := range parts {
-			if part.Type == "output_text" {
-				assert.Empty(t, part.PromptCacheBreakpoint)
+		for _, rawParts := range []json.RawMessage{item.Content, item.Output} {
+			var parts []struct {
+				Type                  string          `json:"type"`
+				PromptCacheBreakpoint json.RawMessage `json:"prompt_cache_breakpoint"`
+			}
+			if common.Unmarshal(rawParts, &parts) != nil {
+				continue
+			}
+			for _, part := range parts {
+				if part.Type == "output_text" {
+					assert.Empty(t, part.PromptCacheBreakpoint)
+				}
 			}
 		}
 	}
