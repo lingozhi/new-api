@@ -171,12 +171,14 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 	breakpointHostMessageIndexes := make(map[int]struct{})
 	if explicitPromptCaching {
 		// Responses cannot mark output_text; move assistant boundaries to nearby input messages.
+		previousAssistantMessageIndex := -1
 		lastAssistantMessageIndex := -1
 		for messageIndex := range req.Messages {
 			message := &req.Messages[messageIndex]
 			if strings.TrimSpace(message.Role) != "assistant" {
 				continue
 			}
+			previousAssistantMessageIndex = lastAssistantMessageIndex
 			lastAssistantMessageIndex = messageIndex
 			hasCacheControl := false
 			for _, part := range message.ParseContent() {
@@ -217,15 +219,22 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 			}
 		}
 
-		if len(req.Messages) > 2 && lastAssistantMessageIndex >= 0 {
-			for messageIndex := lastAssistantMessageIndex - 1; messageIndex >= 0; messageIndex-- {
-				role := strings.TrimSpace(req.Messages[messageIndex].Role)
-				if role != "user" && role != "developer" {
+		if len(req.Messages) > 2 {
+			// The previous request's last assistant becomes second-to-last after a turn
+			// boundary. Keep both rolling hosts so that cached prefix remains readable.
+			for _, assistantMessageIndex := range [...]int{lastAssistantMessageIndex, previousAssistantMessageIndex} {
+				if assistantMessageIndex < 0 {
 					continue
 				}
-				if chatMessageHasInputText(&req.Messages[messageIndex]) {
-					breakpointHostMessageIndexes[messageIndex] = struct{}{}
-					break
+				for messageIndex := assistantMessageIndex - 1; messageIndex >= 0; messageIndex-- {
+					role := strings.TrimSpace(req.Messages[messageIndex].Role)
+					if role != "user" && role != "developer" {
+						continue
+					}
+					if chatMessageHasInputText(&req.Messages[messageIndex]) {
+						breakpointHostMessageIndexes[messageIndex] = struct{}{}
+						break
+					}
 				}
 			}
 		}

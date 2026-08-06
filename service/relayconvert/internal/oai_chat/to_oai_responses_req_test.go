@@ -123,7 +123,7 @@ func TestChatCompletionsRequestToResponsesRequestTransfersAssistantAndRollingCac
 	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
 }
 
-func TestChatCompletionsRequestToResponsesRequestAddsRollingBreakpointBeforeLastAssistant(t *testing.T) {
+func TestChatCompletionsRequestToResponsesRequestAddsRollingBreakpointsBeforeLastTwoAssistants(t *testing.T) {
 	got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
 		Model: "gpt-5.6-terra",
 		Messages: []dto.Message{
@@ -138,13 +138,54 @@ func TestChatCompletionsRequestToResponsesRequestAddsRollingBreakpointBeforeLast
 
 	encoded, err := common.Marshal(got)
 	require.NoError(t, err)
+	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.0.content.0.prompt_cache_breakpoint.mode").String())
 	assert.Equal(t, "output_text", gjson.GetBytes(encoded, "input.1.content.0.type").String())
 	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.2.content.0.prompt_cache_breakpoint.mode").String())
 	assert.False(t, gjson.GetBytes(encoded, "input.2.content.1.prompt_cache_breakpoint").Exists())
 	assert.Equal(t, "output_text", gjson.GetBytes(encoded, "input.3.content.0.type").String())
 	assert.Equal(t, "explicit", gjson.GetBytes(encoded, "input.4.content.0.prompt_cache_breakpoint.mode").String())
-	assert.Equal(t, 2, CountResponsesPromptCacheBreakpoints(got.Input))
+	assert.Equal(t, 3, CountResponsesPromptCacheBreakpoints(got.Input))
 	assertNoOutputTextPromptCacheBreakpoints(t, got.Input)
+}
+
+func TestChatCompletionsRequestToResponsesRequestKeepsPreviousRollingBreakpointAcrossTurnBoundary(t *testing.T) {
+	previousRequest, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model: "gpt-5.6-luna",
+		Messages: []dto.Message{
+			cachedTextMessage("system", "stable system prompt"),
+			mediaTextMessage("user", "previous rolling host"),
+			assistantMessageWithTool("tool-use assistant", "call_1", "canvas_read", `{}`),
+			{Role: "tool", ToolCallId: "call_1", Content: "tool output"},
+			mediaTextMessage("user", "tool-result companion text"),
+		},
+	})
+	require.NoError(t, err)
+
+	boundaryRequest, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		Model: "gpt-5.6-luna",
+		Messages: []dto.Message{
+			cachedTextMessage("system", "stable system prompt"),
+			mediaTextMessage("user", "previous rolling host"),
+			assistantMessageWithTool("tool-use assistant", "call_1", "canvas_read", `{}`),
+			{Role: "tool", ToolCallId: "call_1", Content: "tool output"},
+			mediaTextMessage("user", "tool-result companion text"),
+			mediaTextMessage("assistant", "terminal assistant"),
+			cachedTextMessage("user", "next turn user"),
+		},
+	})
+	require.NoError(t, err)
+
+	previousJSON, err := common.Marshal(previousRequest)
+	require.NoError(t, err)
+	boundaryJSON, err := common.Marshal(boundaryRequest)
+	require.NoError(t, err)
+	assert.Equal(t, "explicit", gjson.GetBytes(previousJSON, "input.1.content.0.prompt_cache_breakpoint.mode").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(boundaryJSON, "input.1.content.0.prompt_cache_breakpoint.mode").String())
+	assert.Equal(t, "function_call_output", gjson.GetBytes(boundaryJSON, "input.4.type").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(boundaryJSON, "input.5.content.0.prompt_cache_breakpoint.mode").String())
+	assert.Equal(t, "explicit", gjson.GetBytes(boundaryJSON, "input.7.content.0.prompt_cache_breakpoint.mode").String())
+	assert.Equal(t, 4, CountResponsesPromptCacheBreakpoints(boundaryRequest.Input))
+	assertNoOutputTextPromptCacheBreakpoints(t, boundaryRequest.Input)
 }
 
 func TestChatCompletionsRequestToResponsesRequestTransfersAssistantCacheBreakpointBackward(t *testing.T) {
