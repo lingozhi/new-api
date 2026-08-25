@@ -34,6 +34,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/siliconflow"
 	"github.com/QuantumNous/new-api/relay/channel/submodel"
 	taskali "github.com/QuantumNous/new-api/relay/channel/task/ali"
+	taskautodl "github.com/QuantumNous/new-api/relay/channel/task/autodl"
 	taskdepthmedia "github.com/QuantumNous/new-api/relay/channel/task/depthmedia"
 	taskdoubao "github.com/QuantumNous/new-api/relay/channel/task/doubao"
 	taskGemini "github.com/QuantumNous/new-api/relay/channel/task/gemini"
@@ -182,6 +183,8 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &hailuo.TaskAdaptor{}
 		case constant.ChannelTypeDepthMedia:
 			return &taskdepthmedia.TaskAdaptor{}
+		case constant.ChannelTypeAutoDL:
+			return &taskautodl.TaskAdaptor{}
 		}
 	}
 	return nil

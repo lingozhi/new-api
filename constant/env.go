@@ -30,6 +30,7 @@ var TaskPricePatches []string
 // TaskPricePerSecondModels use a fixed per-second price but reconcile the
 // maximum submit-time precharge to the provider-reported duration on completion.
 var TaskPricePerSecondModels = []string{
+	"MiniMax-H3",
 	"depth-anything-v2-small-video",
 	"subtitle-remove",
 	"video-upscale-quality-2x",

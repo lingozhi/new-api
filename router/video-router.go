@@ -8,10 +8,38 @@ import (
 )
 
 func SetVideoRouter(router *gin.Engine) {
+	miniMaxV2CreateRouter := router.Group("/v2")
+	miniMaxV2CreateRouter.Use(middleware.RouteTag("relay"))
+	miniMaxV2CreateRouter.Use(
+		middleware.SystemPerformanceCheck(),
+		middleware.TokenAuth(),
+		middleware.ModelRequestRateLimit(),
+		controller.ReplayAutoDLVideoGeneration,
+		middleware.Distribute(),
+	)
+	{
+		miniMaxV2CreateRouter.POST("/video_generation", controller.RelayTask)
+	}
+
+	miniMaxV2QueryRouter := router.Group("/v2")
+	miniMaxV2QueryRouter.Use(middleware.RouteTag("relay"))
+	miniMaxV2QueryRouter.Use(
+		middleware.SystemPerformanceCheck(),
+		middleware.TokenAuthReadOnly(),
+		middleware.ModelRequestRateLimit(),
+	)
+	{
+		miniMaxV2QueryRouter.GET("/query/video_generation/:task_id", controller.RelayTaskFetch)
+	}
+
 	// Video proxy: accepts either session auth (dashboard) or token auth (API clients)
 	videoProxyRouter := router.Group("/v1")
 	videoProxyRouter.Use(middleware.RouteTag("relay"))
-	videoProxyRouter.Use(middleware.TokenOrUserAuth())
+	videoProxyRouter.Use(
+		middleware.SystemPerformanceCheck(),
+		middleware.TokenOrUserAuth(),
+		middleware.ModelRequestRateLimit(),
+	)
 	{
 		videoProxyRouter.GET("/videos/:task_id/content", controller.VideoProxy)
 	}

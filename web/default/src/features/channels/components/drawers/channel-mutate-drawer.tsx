@@ -166,6 +166,7 @@ import {
   validateModelMappingJson,
   hasAdvancedSettingsErrors,
 } from '../../lib'
+import { getRelatedModelsForChannelType } from '../../lib/channel-type-config'
 import {
   collectInvalidStatusCodeEntries,
   collectNewDisallowedStatusCodeRedirects,
@@ -877,14 +878,7 @@ export function ChannelMutateDrawer({
 
   // Get basic models for the current channel type
   const basicModels = useMemo(() => {
-    if (!allModelsList.length) return []
-    // Filter models based on common patterns for specific types
-    if (currentType === 1) {
-      return allModelsList.filter(
-        (model) => model.startsWith('gpt-') || model.startsWith('text-')
-      )
-    }
-    return allModelsList
+    return getRelatedModelsForChannelType(currentType, allModelsList)
   }, [allModelsList, currentType])
 
   // Get prefill groups

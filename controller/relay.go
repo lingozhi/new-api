@@ -679,6 +679,93 @@ func ReplayAsyncImageGeneration(c *gin.Context) {
 	c.Abort()
 }
 
+const (
+	autoDLClientRequestIDContextKey   = "autodl_client_request_id"
+	autoDLClientRequestHashContextKey = "autodl_client_request_hash"
+	autoDLClientRequestIDDomain       = "autodl-video-idempotency:v1:"
+	autoDLClientRequestHashDomain     = "autodl-video-request:v1:"
+)
+
+// ReplayAutoDLVideoGeneration reuses the async-image idempotency contract for
+// MiniMax-compatible video submissions. It runs after authentication/rate
+// limiting and before channel selection or billing.
+func ReplayAutoDLVideoGeneration(c *gin.Context) {
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if idempotencyKey == "" {
+		c.Next()
+		return
+	}
+	if len(idempotencyKey) > 256 {
+		c.JSON(http.StatusBadRequest, dto.NewMiniMaxAPIErrorResponse(
+			http.StatusBadRequest,
+			"Idempotency-Key is too long",
+			c.GetString(common.RequestIdKey),
+		))
+		c.Abort()
+		return
+	}
+
+	var request dto.MiniMaxVideoGenerationV2Request
+	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
+		// Let the normal request validator produce the canonical API error.
+		c.Next()
+		return
+	}
+	canonicalRequest, err := common.Marshal(request)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.NewMiniMaxAPIErrorResponse(
+			http.StatusInternalServerError,
+			http.StatusText(http.StatusInternalServerError),
+			c.GetString(common.RequestIdKey),
+		))
+		c.Abort()
+		return
+	}
+	// These identities are persisted and therefore must remain stable across
+	// restarts and replicas even when CRYPTO_SECRET is not configured. The task
+	// uniqueness constraint is scoped by platform and user; domain-separated
+	// SHA-256 keeps the raw idempotency key and request body out of the database.
+	clientRequestID := common.Sha256([]byte(autoDLClientRequestIDDomain + idempotencyKey))
+	requestHash := common.Sha256(append([]byte(autoDLClientRequestHashDomain), canonicalRequest...))
+	c.Set(autoDLClientRequestIDContextKey, clientRequestID)
+	c.Set(autoDLClientRequestHashContextKey, requestHash)
+
+	existing, exists, err := model.GetTaskByClientRequestID(constant.TaskPlatformAutoDL, c.GetInt("id"), clientRequestID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.NewMiniMaxAPIErrorResponse(
+			http.StatusInternalServerError,
+			http.StatusText(http.StatusInternalServerError),
+			c.GetString(common.RequestIdKey),
+		))
+		c.Abort()
+		return
+	}
+	if !exists {
+		c.Next()
+		return
+	}
+	if existing.PrivateData.ClientRequestHash != requestHash {
+		c.JSON(http.StatusConflict, dto.NewMiniMaxAPIErrorResponse(
+			http.StatusConflict,
+			"Idempotency-Key was already used with a different request",
+			c.GetString(common.RequestIdKey),
+		))
+		c.Abort()
+		return
+	}
+	writeReplayedAutoDLVideoTask(c, existing)
+}
+
+func writeReplayedAutoDLVideoTask(c *gin.Context, task *model.Task) {
+	c.Header("Idempotency-Replayed", "true")
+	c.Header("Location", "/v2/query/video_generation/"+task.TaskID)
+	if task.Status == model.TaskStatusReserving || task.Status == model.TaskStatusCheckpointPending {
+		c.Header("Retry-After", "2")
+	}
+	c.JSON(http.StatusOK, dto.MiniMaxVideoGenerationV2CreateResponse{TaskID: task.TaskID})
+	c.Abort()
+}
+
 func asyncImageEditIdentityRequest(formData url.Values) *dto.ImageRequest {
 	request := &dto.ImageRequest{
 		Model:          formData.Get("model"),
@@ -1324,8 +1411,18 @@ func RelayNotImplemented(c *gin.Context) {
 }
 
 func RelayNotFound(c *gin.Context) {
+	message := fmt.Sprintf("Invalid URL (%s %s)", c.Request.Method, c.Request.URL.Path)
+	normalizedPath := strings.ToLower(c.Request.URL.Path)
+	if strings.HasPrefix(normalizedPath, "/v2/") || normalizedPath == "/v2" {
+		c.JSON(http.StatusNotFound, dto.NewMiniMaxAPIErrorResponse(
+			http.StatusNotFound,
+			message,
+			c.GetString(common.RequestIdKey),
+		))
+		return
+	}
 	err := types.OpenAIError{
-		Message: fmt.Sprintf("Invalid URL (%s %s)", c.Request.Method, c.Request.URL.Path),
+		Message: message,
 		Type:    "invalid_request_error",
 		Param:   "",
 		Code:    "",
@@ -1338,7 +1435,7 @@ func RelayNotFound(c *gin.Context) {
 func RelayTaskFetch(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, &dto.TaskError{
+		respondTaskError(c, &dto.TaskError{
 			Code:       "gen_relay_info_failed",
 			Message:    err.Error(),
 			StatusCode: http.StatusInternalServerError,
@@ -1379,7 +1476,7 @@ func buildTaskBillingContext(relayInfo *relaycommon.RelayInfo) *model.TaskBillin
 func RelayTask(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, &dto.TaskError{
+		respondTaskError(c, &dto.TaskError{
 			Code:       "gen_relay_info_failed",
 			Message:    err.Error(),
 			StatusCode: http.StatusInternalServerError,
@@ -1394,11 +1491,128 @@ func RelayTask(c *gin.Context) {
 
 	var result *relay.TaskSubmitResult
 	var taskErr *dto.TaskError
+	isMiniMaxVideoV2 := c.Request.URL.Path == "/v2/video_generation"
+	var checkpointTask *model.Task
+	var replayedAutoDLTask *model.Task
 	defer func() {
-		if taskErr != nil && relayInfo.Billing != nil {
+		if taskErr == nil {
+			return
+		}
+		if checkpointTask != nil {
+			switch checkpointTask.Status {
+			case model.TaskStatusReserving:
+				if _, err := model.RefundTaskBillingReservation(checkpointTask.TaskID, "AutoDL video submission did not start"); err != nil {
+					common.SysError(fmt.Sprintf("refund AutoDL submission reservation: task_id=%s channel_id=%d error=%v", checkpointTask.TaskID, checkpointTask.ChannelId, err))
+				}
+			}
+			return
+		}
+		if relayInfo.Billing != nil {
 			relayInfo.Billing.Refund(c)
 		}
 	}()
+
+	var submissionCheckpoint *relay.TaskSubmissionCheckpoint
+	if isMiniMaxVideoV2 {
+		submissionCheckpoint = &relay.TaskSubmissionCheckpoint{}
+		submissionCheckpoint.Prepare = func(platform constant.TaskPlatform, expectedQuota int) *dto.TaskError {
+			task := model.InitTask(platform, relayInfo)
+			task.Status = model.TaskStatusReserving
+			task.Action = relayInfo.Action
+			task.Quota = expectedQuota
+			task.PrivateData.TokenId = relayInfo.TokenId
+			task.PrivateData.TokenBillingEnabled = expectedQuota > 0 && !relayInfo.IsPlayground && relayInfo.TokenId > 0
+			task.PrivateData.NodeName = common.NodeName
+			task.PrivateData.BillingContext = buildTaskBillingContext(relayInfo)
+			if clientRequestID := c.GetString(autoDLClientRequestIDContextKey); clientRequestID != "" {
+				task.ClientRequestID = common.GetPointer(clientRequestID)
+				task.PrivateData.ClientRequestHash = c.GetString(autoDLClientRequestHashContextKey)
+			}
+			reservation := &model.ImageBillingReservation{
+				TaskID:        task.TaskID,
+				RequestID:     relayInfo.RequestId,
+				UserID:        relayInfo.UserId,
+				TokenID:       relayInfo.TokenId,
+				TokenRequired: task.PrivateData.TokenBillingEnabled,
+				ExpectedQuota: expectedQuota,
+			}
+			if err := model.InsertPreparedTaskBillingReservation(task, nil, reservation); err != nil {
+				if task.ClientRequestID != nil {
+					existing, exists, lookupErr := model.GetTaskByClientRequestID(platform, relayInfo.UserId, *task.ClientRequestID)
+					if lookupErr != nil {
+						return service.TaskErrorWrapperLocal(lookupErr, "idempotency_lookup_failed", http.StatusInternalServerError)
+					}
+					// A matching row with this same generated task ID can be our own
+					// ambiguously committed insert. Verify it below and continue the
+					// original submission; only a different task is a concurrent replay.
+					if exists && existing.TaskID != task.TaskID {
+						if existing.PrivateData.ClientRequestHash != task.PrivateData.ClientRequestHash {
+							return service.TaskErrorWrapperLocal(
+								errors.New("Idempotency-Key was already used with a different request"),
+								"idempotency_conflict",
+								http.StatusConflict,
+							)
+						}
+						replayedAutoDLTask = existing
+						return service.TaskErrorWrapperLocal(errors.New("replay accepted AutoDL task"), "idempotency_replay", http.StatusOK)
+					}
+				}
+				durableTask, durableReservation, exists, lookupErr := model.GetPreparedTaskBillingReservation(task.TaskID, platform)
+				matchesCommittedInsert := lookupErr == nil && exists &&
+					durableTask.Status == model.TaskStatusReserving &&
+					durableTask.UserId == task.UserId &&
+					durableTask.ChannelId == task.ChannelId &&
+					durableTask.Action == task.Action &&
+					durableTask.Quota == expectedQuota &&
+					((task.ClientRequestID == nil && durableTask.ClientRequestID == nil) ||
+						(task.ClientRequestID != nil && durableTask.ClientRequestID != nil && *task.ClientRequestID == *durableTask.ClientRequestID)) &&
+					durableTask.PrivateData.ClientRequestHash == task.PrivateData.ClientRequestHash &&
+					durableReservation.Status == model.ImageBillingReservationPreparing &&
+					durableReservation.RequestID == reservation.RequestID &&
+					durableReservation.UserID == reservation.UserID &&
+					durableReservation.TokenID == reservation.TokenID &&
+					durableReservation.TokenRequired == reservation.TokenRequired &&
+					durableReservation.ExpectedQuota == reservation.ExpectedQuota
+				if !matchesCommittedInsert {
+					return service.TaskErrorWrapperLocal(
+						fmt.Errorf("persist video billing reservation: %w", err),
+						"persist_task_reservation_failed",
+						http.StatusInternalServerError,
+					)
+				}
+				task = durableTask
+			}
+			checkpointTask = task
+			relayInfo.BillingReservationTaskID = task.TaskID
+			return nil
+		}
+		submissionCheckpoint.Activate = func(preConsumedQuota int) *dto.TaskError {
+			if checkpointTask == nil {
+				return service.TaskErrorWrapperLocal(
+					errors.New("video billing reservation is unavailable"),
+					"persist_task_checkpoint_failed",
+					http.StatusInternalServerError,
+				)
+			}
+			checkpointTask.Quota = preConsumedQuota
+			activated, err := model.ActivatePreparedAutoDLTaskCheckpoint(checkpointTask)
+			if err != nil {
+				return service.TaskErrorWrapperLocal(
+					fmt.Errorf("activate video submission checkpoint: %w", err),
+					"persist_task_checkpoint_failed",
+					http.StatusInternalServerError,
+				)
+			}
+			if !activated && checkpointTask.Status != model.TaskStatusCheckpointPending {
+				return service.TaskErrorWrapperLocal(
+					errors.New("video submission checkpoint activation was not durable"),
+					"persist_task_checkpoint_failed",
+					http.StatusInternalServerError,
+				)
+			}
+			return nil
+		}
+	}
 
 	retryParam := &service.RetryParam{
 		Ctx:         c,
@@ -1448,7 +1662,7 @@ func RelayTask(c *gin.Context) {
 		c.Request.Body = io.NopCloser(bodyStorage)
 
 		attemptStart := relayInfo.BeginChannelAttempt()
-		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
+		result, taskErr = relay.RelayTaskSubmit(c, relayInfo, submissionCheckpoint)
 		taskAPIError := taskRelayAPIError(taskErr)
 		service.RecordChannelHealthOutcome(channel.Id, relayInfo.OriginModelName, c.Request.URL.Path, relayInfo, attemptStart, taskAPIError, false)
 		if taskErr == nil {
@@ -1473,40 +1687,170 @@ func RelayTask(c *gin.Context) {
 		logger.LogInfo(c, retryLogStr)
 	}
 
-	// ── 成功：结算 + 日志 + 插入任务 ──
-	if taskErr == nil {
-		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
-			common.SysError("settle task billing error: " + settleErr.Error())
-		}
-		service.LogTaskConsumption(c, relayInfo)
+	if replayedAutoDLTask != nil {
+		taskErr = nil
+		writeReplayedAutoDLVideoTask(c, replayedAutoDLTask)
+		return
+	}
 
-		task := model.InitTask(result.Platform, relayInfo)
-		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
-		task.PrivateData.BillingSource = relayInfo.BillingSource
-		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
-		task.PrivateData.TokenId = relayInfo.TokenId
-		task.PrivateData.NodeName = common.NodeName
-		task.PrivateData.BillingContext = buildTaskBillingContext(relayInfo)
-		task.Quota = result.Quota
-		task.Data = result.TaskData
-		task.Action = relayInfo.Action
-		var webhook *model.TaskWebhook
-		if value, exists := c.Get("task_request"); exists {
-			if request, ok := value.(relaycommon.TaskSubmitReq); ok && request.WebhookURL != "" {
-				webhook = &model.TaskWebhook{
-					TaskID: task.TaskID,
-					URL:    request.WebhookURL,
-					Secret: request.WebhookSecret,
+	// ── 成功：持久化任务 + 结算 + 日志 ──
+	if taskErr == nil {
+		if checkpointTask != nil {
+			// AutoDL pricing is fully determined from the validated request before
+			// submission. Keep the accepted task at the durable reservation amount
+			// so making it pollable never races a post-submit wallet/subscription/
+			// token adjustment. The adaptor currently has no submit-time pricing
+			// adjustment; this guard also keeps future changes fail-safe.
+			if result.Quota != relayInfo.FinalPreConsumedQuota {
+				common.SysLog(fmt.Sprintf(
+					"normalize AutoDL accepted task quota to reservation: task_id=%s calculated=%d reserved=%d",
+					checkpointTask.TaskID,
+					result.Quota,
+					relayInfo.FinalPreConsumedQuota,
+				))
+				result.Quota = relayInfo.FinalPreConsumedQuota
+				relayInfo.PriceData.Quota = result.Quota
+			}
+			completed, completeErr := checkpointTask.CompleteSubmissionCheckpoint(result.UpstreamTaskID, result.TaskData, result.Quota)
+			if completeErr != nil || !completed {
+				common.SysError(fmt.Sprintf(
+					"complete accepted task checkpoint failed: public_task_id=%s upstream_task_id=%s channel_id=%d completed=%t error=%v",
+					checkpointTask.TaskID,
+					result.UpstreamTaskID,
+					checkpointTask.ChannelId,
+					completed,
+					completeErr,
+				))
+				taskErr = service.TaskErrorWrapperLocal(
+					errors.New("failed to persist accepted video task"),
+					"persist_task_failed",
+					http.StatusInternalServerError,
+				)
+			}
+		} else {
+			task := model.InitTask(result.Platform, relayInfo)
+			task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
+			task.PrivateData.BillingSource = relayInfo.BillingSource
+			task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
+			task.PrivateData.TokenId = relayInfo.TokenId
+			task.PrivateData.NodeName = common.NodeName
+			task.PrivateData.BillingContext = buildTaskBillingContext(relayInfo)
+			task.Quota = result.Quota
+			task.Data = result.TaskData
+			task.Action = relayInfo.Action
+			var webhook *model.TaskWebhook
+			if value, exists := c.Get("task_request"); exists {
+				if request, ok := value.(relaycommon.TaskSubmitReq); ok && request.WebhookURL != "" {
+					webhook = &model.TaskWebhook{
+						TaskID: task.TaskID,
+						URL:    request.WebhookURL,
+						Secret: request.WebhookSecret,
+					}
+				}
+			}
+			if insertErr := model.InsertTaskWithWebhook(task, webhook); insertErr != nil {
+				common.SysError(fmt.Sprintf(
+					"insert accepted task failed: public_task_id=%s upstream_task_id=%s channel_id=%d error=%v",
+					task.TaskID,
+					result.UpstreamTaskID,
+					task.ChannelId,
+					insertErr,
+				))
+			}
+		}
+		if taskErr == nil {
+			if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+				common.SysError("settle task billing error: " + settleErr.Error())
+			}
+			service.LogTaskConsumption(c, relayInfo)
+		}
+		if taskErr == nil && isMiniMaxVideoV2 {
+			c.JSON(http.StatusOK, dto.MiniMaxVideoGenerationV2CreateResponse{TaskID: relayInfo.PublicTaskID})
+		}
+	}
+
+	submissionExplicitlyRejected := taskErr != nil && checkpointTask != nil &&
+		checkpointTask.Status == model.TaskStatusCheckpointPending &&
+		autoDLSubmissionWasExplicitlyRejected(taskErr)
+	if submissionExplicitlyRejected {
+		const rejectionReason = "AutoDL video submission was rejected"
+		marked, markErr := checkpointTask.MarkSubmissionRejected(rejectionReason)
+		if markErr == nil && marked {
+			if refundErr := service.FailTaskWithRefund(context.WithoutCancel(c.Request.Context()), checkpointTask, rejectionReason); refundErr != nil {
+				// The refund helper mutates its in-memory target before the
+				// transaction. The durable marker leaves the sweep responsible for
+				// retrying the refund, so restore the durable source state locally.
+				checkpointTask.Status = model.TaskStatusCheckpointPending
+				common.SysError(fmt.Sprintf("deferred rejected AutoDL submission refund: task_id=%s channel_id=%d error=%v", checkpointTask.TaskID, checkpointTask.ChannelId, refundErr))
+			}
+		} else {
+			// If recording the marker failed, the atomic failure/refund transition
+			// can still make the rejection durable. A final marker retry covers a
+			// transient or ambiguously committed database write.
+			checkpointTask.Status = model.TaskStatusCheckpointPending
+			refundErr := service.FailTaskWithRefund(context.WithoutCancel(c.Request.Context()), checkpointTask, rejectionReason)
+			if refundErr != nil {
+				checkpointTask.Status = model.TaskStatusCheckpointPending
+				retryMarked, retryMarkErr := checkpointTask.MarkSubmissionRejected(rejectionReason)
+				if retryMarkErr != nil || !retryMarked {
+					common.SysError(fmt.Sprintf("refund and mark rejected AutoDL submission failed: task_id=%s channel_id=%d refund_error=%v marked=%t mark_error=%v retry_marked=%t retry_mark_error=%v", checkpointTask.TaskID, checkpointTask.ChannelId, refundErr, marked, markErr, retryMarked, retryMarkErr))
+					taskErr = service.TaskErrorWrapperLocal(
+						errors.New("failed to persist rejected video submission refund"),
+						"persist_refund_marker_failed",
+						http.StatusInternalServerError,
+					)
+				} else {
+					common.SysError(fmt.Sprintf("deferred rejected AutoDL submission refund after marker retry: task_id=%s channel_id=%d refund_error=%v initial_marked=%t initial_mark_error=%v", checkpointTask.TaskID, checkpointTask.ChannelId, refundErr, marked, markErr))
 				}
 			}
 		}
-		if insertErr := model.InsertTaskWithWebhook(task, webhook); insertErr != nil {
-			common.SysError("insert task error: " + insertErr.Error())
-		}
+	}
+
+	if taskErr != nil && checkpointTask != nil && checkpointTask.Status == model.TaskStatusCheckpointPending &&
+		!submissionExplicitlyRejected {
+		logger.LogWarn(c, fmt.Sprintf(
+			"AutoDL submission outcome is ambiguous; returning durable task handle without refund: task_id=%s channel_id=%d error_code=%s",
+			checkpointTask.TaskID,
+			checkpointTask.ChannelId,
+			taskErr.Code,
+		))
+		service.LogTaskConsumption(c, relayInfo)
+		taskErr = nil
+		c.Header("Retry-After", "2")
+		c.JSON(http.StatusOK, dto.MiniMaxVideoGenerationV2CreateResponse{TaskID: checkpointTask.TaskID})
+		return
 	}
 
 	if taskErr != nil {
 		respondTaskError(c, taskErr)
+	}
+}
+
+func autoDLSubmissionWasExplicitlyRejected(taskErr *dto.TaskError) bool {
+	if taskErr == nil || taskErr.LocalError {
+		return false
+	}
+	switch taskErr.Code {
+	case "fail_to_fetch_task":
+		// AutoDL does not publish a blanket guarantee for custom 4xx statuses.
+		// Refund only standard responses that unambiguously reject the request
+		// itself. Timeouts, throttling, conflicts, and custom proxy statuses such
+		// as 499 remain ambiguous because the provider may have created a task.
+		switch taskErr.StatusCode {
+		case http.StatusBadRequest,
+			http.StatusUnauthorized,
+			http.StatusPaymentRequired,
+			http.StatusForbidden,
+			http.StatusNotFound,
+			http.StatusMethodNotAllowed,
+			http.StatusRequestEntityTooLarge,
+			http.StatusUnsupportedMediaType,
+			http.StatusUnprocessableEntity:
+			return true
+		}
+		return false
+	default:
+		return false
 	}
 }
 
@@ -1515,11 +1859,41 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
+	if c.Request.URL.Path == "/v2/video_generation" || strings.HasPrefix(c.Request.URL.Path, "/v2/query/video_generation/") {
+		statusCode := taskErr.StatusCode
+		if taskErr.Code == string(types.ErrorCodeInsufficientUserQuota) {
+			statusCode = http.StatusPaymentRequired
+		}
+		message := taskErr.Message
+		if statusCode >= http.StatusInternalServerError {
+			logger.LogError(c, fmt.Sprintf(
+				"MiniMax V2 internal error: status=%d code=%s detail=%s",
+				statusCode,
+				taskErr.Code,
+				common.MaskSensitiveInfo(taskErr.Message),
+			))
+			message = http.StatusText(statusCode)
+			if message == "" {
+				message = "Internal server error"
+			}
+		}
+		c.JSON(statusCode, dto.NewMiniMaxAPIErrorResponse(
+			statusCode,
+			message,
+			c.GetString(common.RequestIdKey),
+		))
+		return
+	}
 	c.JSON(taskErr.StatusCode, taskErr)
 }
 
 func shouldRetryTaskRelay(c *gin.Context, channelLocked bool, taskErr *dto.TaskError, retryTimes int) bool {
 	if taskErr == nil {
+		return false
+	}
+	// AutoDL does not expose an idempotency key for workflow submissions. Once a
+	// POST outcome is uncertain, retrying can create a second paid video.
+	if c.Request.URL.Path == "/v2/video_generation" && taskErr.Code != "dispatch_preflight_failed" {
 		return false
 	}
 	if retryTimes <= 0 {

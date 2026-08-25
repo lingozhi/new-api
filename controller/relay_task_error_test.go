@@ -66,3 +66,47 @@ func TestTaskRelayAPIErrorLeavesLocal429Unattributed(t *testing.T) {
 	affinity.Set("channel_affinity_skip_retry_on_failure", true)
 	assert.False(t, shouldRetryTaskRelay(affinity, false, localErr, 1), "local 429 must preserve the existing affinity policy")
 }
+
+func TestAutoDLSubmissionRefundDecisionMatchesUpstreamHTTPContract(t *testing.T) {
+	tests := []struct {
+		name       string
+		code       string
+		statusCode int
+		local      bool
+		wantRefund bool
+	}{
+		{name: "400 request rejected", code: "fail_to_fetch_task", statusCode: http.StatusBadRequest, wantRefund: true},
+		{name: "401 authentication rejected", code: "fail_to_fetch_task", statusCode: http.StatusUnauthorized, wantRefund: true},
+		{name: "402 payment rejected", code: "fail_to_fetch_task", statusCode: http.StatusPaymentRequired, wantRefund: true},
+		{name: "403 authorization rejected", code: "fail_to_fetch_task", statusCode: http.StatusForbidden, wantRefund: true},
+		{name: "404 endpoint rejected", code: "fail_to_fetch_task", statusCode: http.StatusNotFound, wantRefund: true},
+		{name: "405 method rejected", code: "fail_to_fetch_task", statusCode: http.StatusMethodNotAllowed, wantRefund: true},
+		{name: "413 body rejected", code: "fail_to_fetch_task", statusCode: http.StatusRequestEntityTooLarge, wantRefund: true},
+		{name: "415 media type rejected", code: "fail_to_fetch_task", statusCode: http.StatusUnsupportedMediaType, wantRefund: true},
+		{name: "422 content rejected", code: "fail_to_fetch_task", statusCode: http.StatusUnprocessableEntity, wantRefund: true},
+		{name: "408 response timeout is ambiguous", code: "fail_to_fetch_task", statusCode: http.StatusRequestTimeout},
+		{name: "409 conflict may refer to an existing task", code: "fail_to_fetch_task", statusCode: http.StatusConflict},
+		{name: "418 unrecognised standard 4xx is ambiguous", code: "fail_to_fetch_task", statusCode: http.StatusTeapot},
+		{name: "429 throttling response is ambiguous", code: "fail_to_fetch_task", statusCode: http.StatusTooManyRequests},
+		{name: "499 custom proxy status is ambiguous", code: "fail_to_fetch_task", statusCode: 499},
+		{name: "598 custom proxy status is ambiguous", code: "fail_to_fetch_task", statusCode: 598},
+		{name: "local lookalike cannot prove rejection", code: "fail_to_fetch_task", statusCode: http.StatusBadRequest, local: true},
+		{name: "response read failure is ambiguous", code: "read_upstream_error_failed", statusCode: http.StatusBadGateway},
+		{name: "malformed success response is ambiguous", code: "invalid_upstream_response", statusCode: http.StatusBadGateway},
+		{name: "nil error is ambiguous"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var taskErr *dto.TaskError
+			if test.code != "" {
+				if test.local {
+					taskErr = service.TaskErrorWrapperLocal(errors.New("local response"), test.code, test.statusCode)
+				} else {
+					taskErr = service.TaskErrorWrapper(errors.New("upstream response"), test.code, test.statusCode)
+				}
+			}
+			assert.Equal(t, test.wantRefund, autoDLSubmissionWasExplicitlyRejected(taskErr))
+		})
+	}
+}

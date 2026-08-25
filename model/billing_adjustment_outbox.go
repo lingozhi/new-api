@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -477,12 +476,14 @@ func pendingImageTokenReservationQuota(tx *gorm.DB, tokenID int) (int64, error) 
 
 func outstandingImageReservationQuery(tx *gorm.DB) *gorm.DB {
 	return tx.Table("image_billing_reservations AS reservations").
-		Joins(
-			"LEFT JOIN tasks AS reservation_tasks ON reservation_tasks.task_id = reservations.task_id AND reservation_tasks.platform = ?",
-			constant.TaskPlatformOpenAIImage,
-		).
 		Where(
-			"reservations.status = ? OR (reservations.status = ? AND (reservation_tasks.id IS NULL OR reservation_tasks.status NOT IN ?))",
+			`reservations.status = ? OR (
+				reservations.status = ? AND NOT EXISTS (
+					SELECT 1 FROM tasks AS reservation_tasks
+					WHERE reservation_tasks.task_id = reservations.task_id
+					AND reservation_tasks.status IN ?
+				)
+			)`,
 			ImageBillingReservationPreparing,
 			ImageBillingReservationActive,
 			[]TaskStatus{TaskStatusSuccess, TaskStatusFailure},

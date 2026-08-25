@@ -1,0 +1,635 @@
+package autodl
+
+import (
+	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
+	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+type reportedSizeBodyStorage struct {
+	*bytes.Reader
+	data []byte
+	size int64
+}
+
+func newReportedSizeBodyStorage(data []byte, size int64) *reportedSizeBodyStorage {
+	return &reportedSizeBodyStorage{Reader: bytes.NewReader(data), data: data, size: size}
+}
+
+func (s *reportedSizeBodyStorage) Close() error           { return nil }
+func (s *reportedSizeBodyStorage) Bytes() ([]byte, error) { return s.data, nil }
+func (s *reportedSizeBodyStorage) Size() int64            { return s.size }
+func (s *reportedSizeBodyStorage) IsDisk() bool           { return false }
+
+func pointer[T any](value T) *T {
+	return &value
+}
+
+func newMiniMaxRequest(duration int, ratio string, content ...dto.MiniMaxVideoContentItem) *dto.MiniMaxVideoGenerationV2Request {
+	return &dto.MiniMaxVideoGenerationV2Request{
+		Model:      "MiniMax-H3",
+		Content:    dto.MiniMaxVideoContentItems(content),
+		Resolution: pointer("768P"),
+		Duration:   pointer(duration),
+		Ratio:      pointer(ratio),
+	}
+}
+
+func textContent(prompt string) dto.MiniMaxVideoContentItem {
+	return dto.MiniMaxVideoContentItem{Type: "text", Text: prompt}
+}
+
+func imageContent(role, mediaURL string) dto.MiniMaxVideoContentItem {
+	return dto.MiniMaxVideoContentItem{
+		Type:     "image_url",
+		Role:     role,
+		ImageURL: &dto.MiniMaxVideoMedia{URL: mediaURL},
+	}
+}
+
+func audioContent(mediaURL string) dto.MiniMaxVideoContentItem {
+	return dto.MiniMaxVideoContentItem{
+		Type:     "audio_url",
+		Role:     miniMaxRoleReferenceAudio,
+		AudioURL: &dto.MiniMaxVideoMedia{URL: mediaURL},
+	}
+}
+
+func TestTaskAdaptorMapsMiniMaxTextToVideoRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v2/video_generation", strings.NewReader(`{
+		"model":"MiniMax-H3",
+		"content":[{"type":"text","text":"A paper boat"},{"type":"text","text":"floating at sunset"}],
+		"resolution":"768P",
+		"duration":6,
+		"ratio":"16:9"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelBaseUrl: "https://autodl.example/",
+			ApiKey:         "autodl-token",
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+	}
+	adaptor := &TaskAdaptor{}
+	adaptor.Init(info)
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	assert.Equal(t, constant.TaskActionVideoGenerationV2, info.Action)
+	assert.Equal(t, workflowTextToVideo, adaptor.workflowID)
+	assert.Equal(t, &relaycommon.TaskVideoProperties{
+		Resolution: "768P",
+		Duration:   6,
+		Ratio:      "16:9",
+	}, info.Video)
+	assert.Equal(t, map[string]float64{"seconds": 6}, adaptor.EstimateBilling(c, info))
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var payload map[string]any
+	require.NoError(t, common.Unmarshal(data, &payload))
+	assert.Equal(t, "A paper boat\nfloating at sunset", payload["prompt"])
+	assert.Equal(t, float64(6), payload["duration"])
+	assert.Equal(t, "768p横", payload["resolution"])
+	assert.NotContains(t, payload, "first_frame")
+	assert.NotContains(t, payload, "last_frame")
+}
+
+func TestTaskAdaptorEnforcesOfficialRequestBodySizeLimit(t *testing.T) {
+	requestBody := []byte(`{
+		"model":"MiniMax-H3",
+		"content":[{"type":"text","text":"A paper boat"}],
+		"resolution":"768P",
+		"duration":6,
+		"ratio":"16:9"
+	}`)
+
+	newContext := func(reportedSize int64) (*gin.Context, *relaycommon.RelayInfo) {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v2/video_generation", nil)
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Set(common.KeyBodyStorage, newReportedSizeBodyStorage(requestBody, reportedSize))
+		return c, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	}
+
+	overLimitContext, overLimitInfo := newContext(maxRequestBodyBytes + 1)
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(overLimitContext, overLimitInfo)
+	require.NotNil(t, taskErr)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, taskErr.StatusCode)
+	assert.Contains(t, taskErr.Message, "64 MiB")
+
+	atLimitContext, atLimitInfo := newContext(maxRequestBodyBytes)
+	assert.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(atLimitContext, atLimitInfo))
+}
+
+func TestBuildWorkflowRequestRejectsFirstAndLastFramesWithoutAdaptiveRatioSupport(t *testing.T) {
+	request := newMiniMaxRequest(
+		8,
+		"16:9",
+		textContent("The camera moves through the scene"),
+		imageContent(miniMaxRoleFirstFrame, "https://cdn.example.com/first.png"),
+		imageContent(miniMaxRoleLastFrame, "https://cdn.example.com/last.png"),
+	)
+
+	_, _, _, err := buildWorkflowRequest(request)
+	require.ErrorContains(t, err, "cannot preserve MiniMax V2 adaptive aspect-ratio semantics")
+}
+
+func TestBuildWorkflowRequestSelectsReferenceMediaWorkflowByDuration(t *testing.T) {
+	tests := []struct {
+		name       string
+		duration   int
+		ratio      string
+		content    []dto.MiniMaxVideoContentItem
+		workflowID string
+		resolution string
+	}{
+		{
+			name:       "reference image up to ten seconds",
+			duration:   10,
+			ratio:      "1:1",
+			content:    []dto.MiniMaxVideoContentItem{textContent("Animate the subject"), imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png")},
+			workflowID: workflowReferenceImages,
+			resolution: "768p(1:1)",
+		},
+		{
+			name:       "reference image over ten seconds",
+			duration:   15,
+			ratio:      "1:1",
+			content:    []dto.MiniMaxVideoContentItem{textContent("Animate the subject"), imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png")},
+			workflowID: workflowReferenceImages15s,
+			resolution: "768p(1:1)",
+		},
+		{
+			name:     "reference image and audio up to ten seconds",
+			duration: 10,
+			ratio:    "16:9",
+			content: []dto.MiniMaxVideoContentItem{
+				textContent("Make the character speak"),
+				imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png"),
+				audioContent("https://cdn.example.com/voice.wav"),
+			},
+			workflowID: workflowReferenceImageAudio,
+			resolution: "768p横",
+		},
+		{
+			name:     "reference image and audio over ten seconds",
+			duration: 15,
+			ratio:    "9:16",
+			content: []dto.MiniMaxVideoContentItem{
+				textContent("Make the character speak"),
+				imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png"),
+				audioContent("https://cdn.example.com/voice.wav"),
+			},
+			workflowID: workflowReferenceImageAudio15s,
+			resolution: "768p竖",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			workflowID, payload, properties, err := buildWorkflowRequest(newMiniMaxRequest(test.duration, test.ratio, test.content...))
+			require.NoError(t, err)
+			assert.Equal(t, test.workflowID, workflowID)
+			assert.Equal(t, test.resolution, payload["resolution"])
+			assert.Equal(t, test.duration, payload["duration"])
+			assert.Equal(t, test.ratio, properties.Ratio)
+			assert.Equal(t, 1, properties.InputImageCount)
+			assert.Equal(t, "https://cdn.example.com/ref.png", payload["ref_image_0"])
+			if strings.Contains(test.name, "audio") {
+				assert.Equal(t, "https://cdn.example.com/voice.wav", payload["ref_audio_0"])
+			} else {
+				assert.NotContains(t, payload, "ref_audio_0")
+			}
+		})
+	}
+}
+
+func TestBuildWorkflowRequestRejectsUnsupportedMiniMaxCapabilities(t *testing.T) {
+	tests := []struct {
+		name      string
+		request   *dto.MiniMaxVideoGenerationV2Request
+		wantError string
+	}{
+		{
+			name: "2K resolution",
+			request: func() *dto.MiniMaxVideoGenerationV2Request {
+				request := newMiniMaxRequest(6, "16:9", textContent("A city skyline"))
+				request.Resolution = pointer("2K")
+				return request
+			}(),
+			wantError: "supports resolution 768P only",
+		},
+		{
+			name: "reference video",
+			request: newMiniMaxRequest(6, "16:9", textContent("Follow the reference"), dto.MiniMaxVideoContentItem{
+				Type:     "video_url",
+				Role:     miniMaxRoleReferenceVideo,
+				VideoURL: &dto.MiniMaxVideoMedia{URL: "https://cdn.example.com/reference.mp4"},
+			}),
+			wantError: "reference_video is not supported",
+		},
+		{
+			name:      "single first frame",
+			request:   newMiniMaxRequest(6, "16:9", textContent("Start here"), imageContent(miniMaxRoleFirstFrame, "https://cdn.example.com/first.png")),
+			wantError: "cannot preserve MiniMax V2 adaptive aspect-ratio semantics",
+		},
+		{
+			name:      "adaptive reference ratio",
+			request:   newMiniMaxRequest(6, "adaptive", textContent("Animate this"), imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/reference.png")),
+			wantError: "explicit non-adaptive ratio",
+		},
+		{
+			name: "omitted reference ratio",
+			request: func() *dto.MiniMaxVideoGenerationV2Request {
+				request := newMiniMaxRequest(6, "16:9", textContent("Animate this"), imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/reference.png"))
+				request.Ratio = nil
+				return request
+			}(),
+			wantError: "explicit non-adaptive ratio",
+		},
+		{
+			name:      "unsupported ratio",
+			request:   newMiniMaxRequest(6, "4:3", textContent("A city skyline")),
+			wantError: "ratio is not available",
+		},
+		{
+			name:      "duration above billing boundary",
+			request:   newMiniMaxRequest(16, "16:9", textContent("A city skyline")),
+			wantError: "between 4 and 15",
+		},
+		{
+			name:      "reference audio without image",
+			request:   newMiniMaxRequest(6, "16:9", textContent("Follow the voice"), audioContent("https://cdn.example.com/voice.wav")),
+			wantError: "requires at least one reference_image",
+		},
+		{
+			name: "callback URL",
+			request: func() *dto.MiniMaxVideoGenerationV2Request {
+				request := newMiniMaxRequest(6, "16:9", textContent("A city skyline"))
+				request.CallbackURL = pointer("https://example.com/callback")
+				return request
+			}(),
+			wantError: "callback_url is not supported",
+		},
+		{
+			name: "AIGC watermark",
+			request: func() *dto.MiniMaxVideoGenerationV2Request {
+				request := newMiniMaxRequest(6, "16:9", textContent("A city skyline"))
+				request.AIGCWatermark = pointer(true)
+				return request
+			}(),
+			wantError: "aigc_watermark=true is not supported",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, _, err := buildWorkflowRequest(test.request)
+			require.ErrorContains(t, err, test.wantError)
+		})
+	}
+}
+
+func TestBuildWorkflowRequestBoundsReferenceMediaCounts(t *testing.T) {
+	images := []dto.MiniMaxVideoContentItem{textContent("Animate the references")}
+	for range 10 {
+		images = append(images, imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png"))
+	}
+	_, _, _, err := buildWorkflowRequest(newMiniMaxRequest(6, "16:9", images...))
+	require.ErrorContains(t, err, "at most 9 reference images")
+
+	audios := []dto.MiniMaxVideoContentItem{textContent("Animate the references")}
+	for range 4 {
+		audios = append(audios, audioContent("https://cdn.example.com/ref.wav"))
+	}
+	_, _, _, err = buildWorkflowRequest(newMiniMaxRequest(6, "16:9", audios...))
+	require.ErrorContains(t, err, "at most 3 reference audio files")
+}
+
+func TestMiniMaxVideoRequestBoundsDecodedContentItems(t *testing.T) {
+	body := `{"model":"MiniMax-H3","content":[` +
+		strings.TrimSuffix(strings.Repeat(`{"type":"text","text":"x"},`, dto.MaxMiniMaxVideoContentItems+1), ",") +
+		`],"resolution":"768P","duration":4,"ratio":"16:9"}`
+	var request dto.MiniMaxVideoGenerationV2Request
+	err := common.Unmarshal([]byte(body), &request)
+	require.ErrorContains(t, err, "must not contain more than")
+}
+
+func TestTaskAdaptorBuildsAutoDLURLAndRawAuthorizationHeader(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelBaseUrl: "https://autodl.example/",
+			ApiKey:         "autodl-token",
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+	}
+	adaptor := &TaskAdaptor{workflowID: workflowTextToVideo}
+	adaptor.Init(info)
+
+	requestURL, err := adaptor.BuildRequestURL(info)
+	require.NoError(t, err)
+	assert.Equal(t, "https://autodl.example/api/v1/comfyui/comfyui_workflow/minimax_h3_lightx2v_no_pic", requestURL)
+
+	req := httptest.NewRequest(http.MethodPost, requestURL, strings.NewReader("{}"))
+	require.NoError(t, adaptor.BuildRequestHeader(c, req, info))
+	assert.Equal(t, "autodl-token", req.Header.Get("Authorization"))
+	assert.Equal(t, "application/json", req.Header.Get("Content-Type"))
+	assert.Equal(t, "application/json", req.Header.Get("Accept"))
+}
+
+func TestTaskAdaptorPreflightRejectsLocalDispatchConfiguration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	testCases := []struct {
+		name      string
+		baseURL   string
+		proxy     string
+		wantError string
+	}{
+		{name: "invalid base URL", baseURL: "http://autodl.example", wantError: "absolute HTTPS"},
+		{name: "invalid proxy URL", baseURL: "https://autodl.example", proxy: "://bad-proxy", wantError: "proxy"},
+	}
+	for _, test := range testCases {
+		t.Run(test.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v2/video_generation", nil)
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+				ChannelBaseUrl: test.baseURL,
+				ApiKey:         "autodl-token",
+				ChannelSetting: dto.ChannelSettings{Proxy: test.proxy},
+			}}
+			adaptor := &TaskAdaptor{workflowID: workflowTextToVideo}
+			adaptor.Init(info)
+
+			err := adaptor.PreflightDispatch(c, info)
+
+			require.ErrorContains(t, err, test.wantError)
+		})
+	}
+}
+
+func TestTaskAdaptorFetchesAutoDLWorkflowResult(t *testing.T) {
+	originalTLSInsecureSkipVerify := common.TLSInsecureSkipVerify
+	common.TLSInsecureSkipVerify = true
+	service.InitHttpClient()
+	t.Cleanup(func() {
+		common.TLSInsecureSkipVerify = originalTLSInsecureSkipVerify
+		service.InitHttpClient()
+	})
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		assert.Equal(t, http.MethodGet, req.Method)
+		assert.Equal(t, "/api/v1/comfyui/comfyui_workflow/result/upstream-task", req.URL.Path)
+		assert.Equal(t, "autodl-token", req.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":"Success","data":{"task_id":"upstream-task","status":"QUEUED"}}`))
+	}))
+	defer server.Close()
+
+	adaptor := &TaskAdaptor{}
+	response, err := adaptor.FetchTask(server.URL+"/", "autodl-token", map[string]any{"task_id": "upstream-task"}, "")
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+}
+
+func TestTaskAdaptorDefersClientResponseAndSanitizesPersistedTaskData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:   &relaycommon.ChannelMeta{},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+	}
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(
+			`{"code":"Success","data":{"task_id":"upstream-secret","status":"QUEUED"},"msg":""}`,
+		)),
+	}
+
+	upstreamTaskID, taskData, taskErr := (&TaskAdaptor{}).DoResponse(c, response, info)
+	require.Nil(t, taskErr)
+	assert.Equal(t, "upstream-secret", upstreamTaskID)
+	assert.JSONEq(t, `{"code":"Success","data":{"status":"QUEUED"}}`, string(taskData))
+	assert.NotContains(t, string(taskData), "upstream-secret")
+	assert.Empty(t, recorder.Body.String())
+}
+
+func TestTaskAdaptorTreatsNonSuccessJSONAsAmbiguous(t *testing.T) {
+	testCases := []struct {
+		name     string
+		body     string
+		wantCode string
+	}{
+		{name: "known-looking rejection", body: `{"code":"InvalidParameter","data":{}}`, wantCode: "invalid_upstream_response"},
+		{name: "empty code", body: `{}`, wantCode: "invalid_upstream_response"},
+		{name: "unknown code", body: `{"code":"Error","data":{}}`, wantCode: "invalid_upstream_response"},
+		{name: "task id makes outcome ambiguous", body: `{"code":"InvalidParameter","data":{"task_id":"possibly-created"}}`, wantCode: "invalid_upstream_response"},
+	}
+	for _, test := range testCases {
+		t.Run(test.name, func(t *testing.T) {
+			response := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(test.body))}
+			_, _, taskErr := (&TaskAdaptor{}).DoResponse(nil, response, nil)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, test.wantCode, taskErr.Code)
+		})
+	}
+}
+
+func TestTaskAdaptorMapsAutoDLTaskStatuses(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+
+	queued, err := adaptor.ParseTaskResult([]byte(`{"code":"Success","data":{"task_id":"upstream-task","status":"QUEUED"}}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusQueued, queued.Status)
+	assert.Equal(t, taskcommon.ProgressQueued, queued.Progress)
+
+	running, err := adaptor.ParseTaskResult([]byte(`{"code":"Success","data":{"task_id":"upstream-task","status":"RUNNING"}}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusInProgress, running.Status)
+	assert.Equal(t, taskcommon.ProgressInProgress, running.Progress)
+
+	succeeded, err := adaptor.ParseTaskResult([]byte(`{
+		"code":"Success",
+		"data":{
+			"task_id":"upstream-task",
+			"status":"SUCCESS",
+			"results":[
+				{"url":"https://cdn.example.com/preview.png","type":"image"},
+				{"url":"https://cdn.example.com/result.mp4","type":"video"}
+			]
+		}
+	}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusSuccess, succeeded.Status)
+	assert.Equal(t, taskcommon.ProgressComplete, succeeded.Progress)
+	assert.Equal(t, "https://cdn.example.com/result.mp4", succeeded.Url)
+
+	failed, err := adaptor.ParseTaskResult([]byte(`{"code":"Success","data":{"task_id":"upstream-task","status":"FAILED","error":"generation failed"}}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailure, failed.Status)
+	assert.Equal(t, taskcommon.ProgressComplete, failed.Progress)
+	assert.Equal(t, "AutoDL task failed", failed.Reason)
+
+	cancelled, err := adaptor.ParseTaskResult([]byte(`{"code":"Success","data":{"task_id":"upstream-task","status":"CANCELLED"}}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusFailure, cancelled.Status)
+	assert.Equal(t, taskcommon.ProgressComplete, cancelled.Progress)
+	assert.Equal(t, "AutoDL task cancelled", cancelled.Reason)
+}
+
+func TestTaskAdaptorRejectsSuccessfulResultWithoutVideoMetadata(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+
+	result, err := adaptor.ParseTaskResult([]byte(`{
+		"code":"Success",
+		"data":{
+			"task_id":"upstream-task",
+			"status":"SUCCESS",
+			"results":[{"url":"https://cdn.example.com/preview.png","type":"image"}]
+		}
+	}`))
+
+	require.ErrorContains(t, err, "without a video result")
+	assert.Nil(t, result)
+}
+
+func TestTaskAdaptorSanitizesPolledTaskData(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	raw := []byte(`{
+		"code":"Success",
+		"request_id":"provider-request",
+		"data":{
+			"task_id":"upstream-secret",
+			"status":"SUCCESS",
+			"results":[{"url":"https://cdn.example.com/result.mp4","type":"video"}]
+		}
+	}`)
+
+	stored := adaptor.SanitizeTaskResult(raw)
+
+	assert.NotContains(t, string(stored), "upstream-secret")
+	assert.NotContains(t, string(stored), "provider-request")
+	assert.Contains(t, string(stored), "https://cdn.example.com/result.mp4")
+}
+
+func TestTaskAdaptorConvertsTaskToMiniMaxVideoV2Response(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	t.Run("durable submission checkpoints are queued", func(t *testing.T) {
+		for _, status := range []model.TaskStatus{model.TaskStatusReserving, model.TaskStatusCheckpointPending} {
+			task := &model.Task{
+				SubmitTime: 100,
+				TaskID:     "task_checkpoint",
+				Status:     status,
+				Properties: model.Properties{OriginModelName: "MiniMax-H3"},
+			}
+
+			data, err := adaptor.ConvertToMiniMaxVideoV2(task)
+			require.NoError(t, err)
+			var response dto.MiniMaxVideoGenerationV2QueryResponse
+			require.NoError(t, common.Unmarshal(data, &response))
+			assert.Equal(t, "queued", response.Task.Status)
+		}
+	})
+
+	t.Run("successful task", func(t *testing.T) {
+		task := &model.Task{
+			CreatedAt: 100,
+			UpdatedAt: 200,
+			TaskID:    "task_public",
+			Status:    model.TaskStatusSuccess,
+			Properties: model.Properties{
+				OriginModelName: "MiniMax-H3",
+				Video: &relaycommon.TaskVideoProperties{
+					Resolution:      "768P",
+					Duration:        12,
+					Ratio:           "16:9",
+					InputImageCount: 2,
+				},
+			},
+			PrivateData: model.TaskPrivateData{ResultURL: "https://cdn.example.com/result.mp4"},
+		}
+
+		data, err := adaptor.ConvertToMiniMaxVideoV2(task)
+		require.NoError(t, err)
+		var response dto.MiniMaxVideoGenerationV2QueryResponse
+		require.NoError(t, common.Unmarshal(data, &response))
+		assert.Equal(t, "task_public", response.Task.ID)
+		assert.Equal(t, "MiniMax-H3", response.Task.Model)
+		assert.Equal(t, "succeeded", response.Task.Status)
+		assert.Equal(t, int64(100), response.Task.CreatedAt)
+		assert.Equal(t, int64(200), response.Task.UpdatedAt)
+		assert.Equal(t, "768P", response.Task.Resolution)
+		assert.Equal(t, 12, response.Task.Duration)
+		assert.Equal(t, "16:9", response.Task.Ratio)
+		assert.Equal(t, "generation", response.Task.TaskType)
+		assert.Equal(t, "video", response.Task.Modality)
+		require.NotNil(t, response.Task.Content)
+		assert.Equal(t, "https://cdn.example.com/result.mp4", response.Task.Content.URL)
+		require.NotNil(t, response.Task.Usage)
+		assert.Equal(t, 12, response.Task.Usage.TotalSeconds)
+		assert.Equal(t, 12, response.Task.Usage.OutputSeconds)
+		assert.Equal(t, 2, response.Task.Usage.InputImageCount)
+	})
+
+	t.Run("failed task", func(t *testing.T) {
+		task := &model.Task{
+			SubmitTime: 100,
+			TaskID:     "task_failed",
+			Status:     model.TaskStatusFailure,
+			FailReason: "provider rejected the prompt",
+			Properties: model.Properties{OriginModelName: "MiniMax-H3"},
+		}
+
+		data, err := adaptor.ConvertToMiniMaxVideoV2(task)
+		require.NoError(t, err)
+		var response dto.MiniMaxVideoGenerationV2QueryResponse
+		require.NoError(t, common.Unmarshal(data, &response))
+		assert.Equal(t, "failed", response.Task.Status)
+		require.NotNil(t, response.Task.Error)
+		assert.Equal(t, "generation_failed", response.Task.Error.Code)
+		assert.Equal(t, "provider rejected the prompt", response.Task.Error.Message)
+		assert.Nil(t, response.Task.Content)
+		assert.Nil(t, response.Task.Usage)
+	})
+
+	t.Run("cancelled task", func(t *testing.T) {
+		task := &model.Task{
+			SubmitTime: 100,
+			TaskID:     "task_cancelled",
+			Status:     model.TaskStatusFailure,
+			FailReason: "AutoDL task cancelled",
+			Data:       []byte(`{"code":"Success","data":{"status":"CANCELLED"}}`),
+			Properties: model.Properties{OriginModelName: "MiniMax-H3"},
+		}
+
+		data, err := adaptor.ConvertToMiniMaxVideoV2(task)
+		require.NoError(t, err)
+		var response dto.MiniMaxVideoGenerationV2QueryResponse
+		require.NoError(t, common.Unmarshal(data, &response))
+		assert.Equal(t, "cancelled", response.Task.Status)
+		assert.Nil(t, response.Task.Error)
+	})
+}

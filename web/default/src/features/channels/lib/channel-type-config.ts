@@ -148,8 +148,7 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     id: 59,
     name: CHANNEL_TYPES[59],
     icon: 'replicate',
-    defaultBaseUrl:
-      'https://chenlingzhiclz--depth-video-api-web-api.modal.run',
+    defaultBaseUrl: 'https://chenlingzhiclz--depth-video-api-web-api.modal.run',
     hints: {
       baseUrl:
         'Default: https://chenlingzhiclz--depth-video-api-web-api.modal.run',
@@ -157,6 +156,13 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models:
         'depth-anything-v2-small-video and background/image processing profiles',
     },
+  },
+  60: {
+    id: 60,
+    name: CHANNEL_TYPES[60],
+    icon: 'comfyui',
+    defaultBaseUrl: 'https://autodl.art',
+    supportedModels: ['MiniMax-H3'],
   },
 }
 
@@ -171,6 +177,29 @@ export function getChannelTypeConfig(type: number): ChannelTypeConfig {
       icon: 'openai',
     }
   )
+}
+
+/**
+ * Get the model preset used by the channel editor's "Fill Related Models"
+ * action. A channel-specific list is authoritative, even when its models are
+ * not present in the instance-wide model catalog.
+ */
+export function getRelatedModelsForChannelType(
+  type: number,
+  allModels: string[]
+): string[] {
+  const supportedModels = getChannelTypeConfig(type).supportedModels
+  if (supportedModels?.length) {
+    return supportedModels
+  }
+
+  if (type === 1) {
+    return allModels.filter(
+      (model) => model.startsWith('gpt-') || model.startsWith('text-')
+    )
+  }
+
+  return allModels
 }
 
 /**

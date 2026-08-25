@@ -213,6 +213,20 @@ func TestGetSSRFProtectedHTTPClientFallsBackToDefaultClientWhenProtectionDisable
 	require.Same(t, expected, GetSSRFProtectedHTTPClient())
 }
 
+func TestStrictHTTPSProtectedFetchRejectsRedirectDowngradeAndAlternatePort(t *testing.T) {
+	configureSSRFTestFetchSetting(t)
+
+	require.NoError(t, ValidateStrictHTTPSProtectedFetchURL("https://93.184.216.34/video.mp4?signature=test"))
+	require.ErrorContains(t, ValidateStrictHTTPSProtectedFetchURL("http://93.184.216.34/video.mp4"), "only absolute HTTPS")
+	require.ErrorContains(t, ValidateStrictHTTPSProtectedFetchURL("https://93.184.216.34:8443/video.mp4"), "port 8443")
+
+	initialRequest, err := http.NewRequest(http.MethodGet, "https://93.184.216.34/video.mp4", nil)
+	require.NoError(t, err)
+	redirectRequest, err := http.NewRequest(http.MethodGet, "http://93.184.216.34/video.mp4", nil)
+	require.NoError(t, err)
+	require.ErrorContains(t, checkStrictHTTPSProtectedFetchRedirect(redirectRequest, []*http.Request{initialRequest}), "blocked")
+}
+
 func TestProtectedFetchRoundTripperUsesConfiguredProxy(t *testing.T) {
 	configureSSRFTestFetchSetting(t)
 	proxyURL := mustParseURL(t, "http://127.0.0.1:3128")

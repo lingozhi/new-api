@@ -296,12 +296,16 @@ var defaultModelPrice = map[string]float64{
 	"mj_upload":                      0.05,
 	"sora-2":                         0.3,
 	"sora-2-pro":                     0.5,
-	"gpt-4o-mini-tts":                0.3,
-	"veo-3.0-generate-001":           0.4,
-	"veo-3.0-fast-generate-001":      0.15,
-	"veo-3.1-generate-preview":       0.4,
-	"veo-3.1-fast-generate-preview":  0.15,
-	"subtitle-remove":                0.02,
+	// AutoDL's standard 768P list price is ¥0.06/second. Promotional prices
+	// are time-dependent, so keep the conservative list price as the default;
+	// operators can override ModelPrice without changing the relay contract.
+	"MiniMax-H3":                    0.06 / USD2RMB,
+	"gpt-4o-mini-tts":               0.3,
+	"veo-3.0-generate-001":          0.4,
+	"veo-3.0-fast-generate-001":     0.15,
+	"veo-3.1-generate-preview":      0.4,
+	"veo-3.1-fast-generate-preview": 0.15,
+	"subtitle-remove":               0.02,
 }
 
 var defaultAudioRatio = map[string]float64{

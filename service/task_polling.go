@@ -33,6 +33,19 @@ type TaskPollingAdaptor interface {
 	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
 }
 
+type contextTaskPollingAdaptor interface {
+	FetchTaskWithContext(ctx context.Context, baseURL, key string, body map[string]any, proxy string) (*http.Response, error)
+}
+
+type taskResultSanitizer interface {
+	SanitizeTaskResult(body []byte) []byte
+}
+
+const (
+	taskSubmissionReservationTimeout = 3 * time.Minute
+	taskSubmissionCheckpointTimeout  = 10 * time.Minute
+)
+
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
@@ -69,6 +82,101 @@ func failTasksWithRefund(ctx context.Context, tasks []*model.Task, reason string
 	return combinedErr
 }
 
+// FailTaskWithRefund atomically moves one persisted asynchronous task to a
+// terminal failure and records its refund adjustments in the same transaction.
+func FailTaskWithRefund(ctx context.Context, task *model.Task, reason string) error {
+	return failTasksWithRefund(ctx, []*model.Task{task}, reason)
+}
+
+func failTasksWithoutRefund(ctx context.Context, tasks []*model.Task, reason string) error {
+	var combinedErr error
+	now := time.Now().Unix()
+	for _, task := range tasks {
+		if task == nil || task.Status == model.TaskStatusFailure || task.Status == model.TaskStatusSuccess {
+			continue
+		}
+		oldStatus := task.Status
+		task.Status = model.TaskStatusFailure
+		task.Progress = taskcommon.ProgressComplete
+		task.FailReason = reason
+		if task.FinishTime == 0 {
+			task.FinishTime = now
+		}
+		won, err := task.UpdateWithStatus(oldStatus)
+		if err != nil {
+			combinedErr = errors.Join(combinedErr, fmt.Errorf("fail task %s without refund: %w", task.TaskID, err))
+			continue
+		}
+		if !won {
+			logger.LogWarn(ctx, fmt.Sprintf("Task %s already transitioned, skip ambiguous submission terminalization", task.TaskID))
+		}
+	}
+	return combinedErr
+}
+
+// sweepStaleTaskSubmissionReservations refunds AutoDL submissions that never
+// reached the provider-call fence. The reservation row owns every debit, so a
+// crash before or during pre-consume remains exactly-once recoverable.
+func sweepStaleTaskSubmissionReservations(ctx context.Context) {
+	cutoff := time.Now().Add(-taskSubmissionReservationTimeout).Unix()
+	taskIDs := model.GetStalePreparedTaskBillingReservationIDs(constant.TaskPlatformAutoDL, cutoff, 100)
+	if len(taskIDs) == 0 {
+		return
+	}
+	recovered := 0
+	for _, taskID := range taskIDs {
+		if ctx.Err() != nil {
+			return
+		}
+		applied, err := model.RefundTaskBillingReservation(taskID, "AutoDL 视频提交未开始，已退款")
+		if err != nil {
+			logger.LogError(ctx, fmt.Sprintf("sweep stale AutoDL submission reservation %s: %v", taskID, err))
+			continue
+		}
+		if applied {
+			recovered++
+		}
+	}
+	if recovered > 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("swept %d stale AutoDL submission reservation(s)", recovered))
+	}
+}
+
+// sweepPendingTaskSubmissionRefunds retries explicit provider rejections whose
+// durable refund could not finish in the request that observed the rejection.
+func sweepPendingTaskSubmissionRefunds(ctx context.Context) {
+	tasks := model.GetPendingTaskSubmissionRefunds(constant.TaskPlatformAutoDL, 100)
+	for _, task := range tasks {
+		reason := task.ProviderError
+		if reason == "" {
+			reason = "AutoDL video submission was rejected"
+		}
+		if err := failTasksWithRefund(ctx, []*model.Task{task}, reason); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("retry rejected AutoDL submission refund for task %s: %v", task.TaskID, err))
+		}
+	}
+}
+
+// sweepStaleTaskSubmissionCheckpoints resolves the only safe recovery state
+// after a crash between an asynchronous provider call and response persistence.
+// The upstream outcome is ambiguous and AutoDL has no provider idempotency key,
+// so the task is terminalized without an automatic refund. Refunding here would
+// let a caller repeatedly disconnect after dispatch while the gateway absorbs
+// every accepted provider job.
+func sweepStaleTaskSubmissionCheckpoints(ctx context.Context) {
+	cutoff := time.Now().Add(-taskSubmissionCheckpointTimeout).Unix()
+	tasks := model.GetStaleTaskSubmissionCheckpoints(constant.TaskPlatformAutoDL, cutoff, 100)
+	if len(tasks) == 0 {
+		return
+	}
+	reason := "AutoDL 视频提交结果不确定，已停止重试；为避免重复生成未自动退款"
+	if err := failTasksWithoutRefund(ctx, tasks, reason); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("sweep stale AutoDL submission checkpoints: %v", err))
+		return
+	}
+	logger.LogInfo(ctx, fmt.Sprintf("swept %d stale AutoDL submission checkpoint(s)", len(tasks)))
+}
+
 // sweepTimedOutTasks 在主轮询之前独立清理超时任务。
 // 每次最多处理 100 条，剩余的下个周期继续处理。
 // 使用 per-task CAS (UpdateWithStatus) 防止覆盖被正常轮询已推进的任务。
@@ -90,6 +198,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 
 	for _, task := range tasks {
 		isLegacy := task.SubmitTime > 0 && task.SubmitTime < legacyTaskCutoff
+		isAmbiguousAutoDL := task.Platform == constant.TaskPlatformAutoDL
 
 		oldStatus := task.Status
 		task.Status = model.TaskStatusFailure
@@ -97,8 +206,23 @@ func sweepTimedOutTasks(ctx context.Context) {
 		task.FinishTime = now
 		if isLegacy {
 			task.FailReason = legacyReason
+		} else if isAmbiguousAutoDL {
+			task.FailReason = fmt.Sprintf("AutoDL 任务轮询超时（%d分钟）；上游结果不确定，未自动退款", constant.TaskTimeoutMinutes)
 		} else {
 			task.FailReason = reason
+		}
+		if isAmbiguousAutoDL {
+			won, err := task.UpdateWithStatus(oldStatus)
+			if err != nil {
+				logger.LogError(ctx, fmt.Sprintf("sweepTimedOutTasks terminal transition error for task %s: %v", task.TaskID, err))
+				continue
+			}
+			if !won {
+				logger.LogInfo(ctx, fmt.Sprintf("sweepTimedOutTasks: task %s already transitioned, skip", task.TaskID))
+				continue
+			}
+			timedOutCount++
+			continue
 		}
 
 		phase := ""
@@ -150,6 +274,9 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 	}
 
 	common.SysLog("任务进度轮询开始")
+	sweepStaleTaskSubmissionReservations(ctx)
+	sweepPendingTaskSubmissionRefunds(ctx)
+	sweepStaleTaskSubmissionCheckpoints(ctx)
 	sweepTimedOutTasks(ctx)
 	allTasks := model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit)
 	summary.UnfinishedTasks = len(allTasks)
@@ -182,12 +309,22 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 				nullTasks = append(nullTasks, task)
 				continue
 			}
-			taskM[upstreamID] = task
+			taskM[taskPollingMapKey(task.ChannelId, upstreamID)] = task
 			taskChannelM[task.ChannelId] = append(taskChannelM[task.ChannelId], upstreamID)
 		}
 		if len(nullTasks) > 0 {
 			summary.NullTasksFailed += len(nullTasks)
-			err := failTasksWithRefund(ctx, nullTasks, "upstream task id is missing")
+			refundableTasks := make([]*model.Task, 0, len(nullTasks))
+			ambiguousAutoDLTasks := make([]*model.Task, 0, len(nullTasks))
+			for _, task := range nullTasks {
+				if task.Platform == constant.TaskPlatformAutoDL {
+					ambiguousAutoDLTasks = append(ambiguousAutoDLTasks, task)
+				} else {
+					refundableTasks = append(refundableTasks, task)
+				}
+			}
+			err := failTasksWithRefund(ctx, refundableTasks, "upstream task id is missing")
+			err = errors.Join(err, failTasksWithoutRefund(ctx, ambiguousAutoDLTasks, "AutoDL upstream task id is missing; no automatic refund was issued"))
 			if err != nil {
 				logger.LogError(ctx, fmt.Sprintf("Fix null task_id task error: %v", err))
 			} else {
@@ -205,6 +342,19 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 	}
 	common.SysLog("任务进度轮询完成")
 	return summary
+}
+
+func taskPollingMapKey(channelID int, upstreamTaskID string) string {
+	return fmt.Sprintf("%d\x00%s", channelID, upstreamTaskID)
+}
+
+func taskFromPollingMap(taskM map[string]*model.Task, channelID int, upstreamTaskID string) *model.Task {
+	if task := taskM[taskPollingMapKey(channelID, upstreamTaskID)]; task != nil {
+		return task
+	}
+	// Keep direct-call compatibility for focused tests and legacy internal
+	// callers that pass a channel-local map.
+	return taskM[upstreamTaskID]
 }
 
 // DispatchPlatformUpdate 按平台分发轮询更新
@@ -251,7 +401,7 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		common.SysLog(fmt.Sprintf("CacheGetChannel: %v", err))
 		failedTasks := make([]*model.Task, 0, len(taskIds))
 		for _, upstreamID := range taskIds {
-			if t, ok := taskM[upstreamID]; ok {
+			if t := taskFromPollingMap(taskM, channelId, upstreamID); t != nil {
 				failedTasks = append(failedTasks, t)
 			}
 		}
@@ -298,7 +448,7 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		task := taskM[responseItem.TaskID]
+		task := taskFromPollingMap(taskM, channelId, responseItem.TaskID)
 		if task == nil {
 			logger.LogWarn(ctx, fmt.Sprintf("Suno task response ignored: unknown task_id=%s", responseItem.TaskID))
 			continue
@@ -434,9 +584,12 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	}
 	cacheGetChannel, err := model.CacheGetChannel(channelId)
 	if err != nil {
+		if platform == constant.TaskPlatformAutoDL {
+			return fmt.Errorf("CacheGetChannel failed for AutoDL channel %d; provider outcome remains unknown: %w", channelId, err)
+		}
 		failedTasks := make([]*model.Task, 0, len(taskIds))
 		for _, upstreamID := range taskIds {
-			if t, ok := taskM[upstreamID]; ok {
+			if t := taskFromPollingMap(taskM, channelId, upstreamID); t != nil {
 				failedTasks = append(failedTasks, t)
 			}
 		}
@@ -450,12 +603,6 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	if adaptor == nil {
 		return fmt.Errorf("video adaptor not found")
 	}
-	info := &relaycommon.RelayInfo{}
-	info.ChannelMeta = &relaycommon.ChannelMeta{
-		ChannelBaseUrl: cacheGetChannel.GetBaseURL(),
-	}
-	info.ApiKey = cacheGetChannel.Key
-	adaptor.Init(info)
 	disablePollingSleep := cacheGetChannel.GetOtherSettings().DisableTaskPollingSleep
 	for i, taskId := range taskIds {
 		if ctx.Err() != nil {
@@ -482,44 +629,83 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	baseURL := constant.ChannelBaseURLs[ch.Type]
+	task := taskFromPollingMap(taskM, ch.Id, taskId)
+	if task == nil {
+		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
+		return fmt.Errorf("task %s not found", taskId)
+	}
+	isAutoDLTask := task.Platform == constant.TaskPlatformAutoDL
+	channelType := ch.Type
+	if isAutoDLTask {
+		channelType = constant.ChannelTypeAutoDL
+	}
+	baseURL := constant.ChannelBaseURLs[channelType]
 	if ch.GetBaseURL() != "" {
 		baseURL = ch.GetBaseURL()
 	}
 	proxy := ch.GetSetting().Proxy
 
-	task := taskM[taskId]
-	if task == nil {
-		logger.LogError(ctx, fmt.Sprintf("Task %s not found in taskM", taskId))
-		return fmt.Errorf("task %s not found", taskId)
+	key, err := ResolveTaskPollingChannelKey(ch, task.PrivateData)
+	if err != nil {
+		cause := fmt.Errorf("resolve channel key for task %s: %w", taskId, err)
+		return cause
 	}
-	key := ch.Key
-
-	privateData := task.PrivateData
-	if privateData.Key != "" {
-		key = privateData.Key
-	}
-	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
+	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		ChannelType:          channelType,
+		ChannelId:            ch.Id,
+		ChannelIsMultiKey:    ch.ChannelInfo.IsMultiKey,
+		ChannelMultiKeyIndex: task.PrivateData.ChannelMultiKeyIndex,
+		ChannelBaseUrl:       baseURL,
+		ApiKey:               key,
+		ChannelSetting:       ch.GetSetting(),
+		ChannelOtherSettings: ch.GetOtherSettings(),
+	}})
+	fetchBody := map[string]any{
 		"task_id": task.GetUpstreamTaskID(),
 		"action":  task.Action,
-	}, proxy)
+	}
+	var resp *http.Response
+	if contextAdaptor, ok := adaptor.(contextTaskPollingAdaptor); ok {
+		resp, err = contextAdaptor.FetchTaskWithContext(ctx, baseURL, key, fetchBody, proxy)
+	} else {
+		resp, err = adaptor.FetchTask(baseURL, key, fetchBody, proxy)
+	}
 	if err != nil {
 		return fmt.Errorf("fetchTask failed for task %s: %w", taskId, err)
 	}
+	if resp == nil {
+		return fmt.Errorf("fetchTask returned no response for task %s", taskId)
+	}
 	defer resp.Body.Close()
-	responseBody, err := io.ReadAll(resp.Body)
+	responseReader := io.Reader(resp.Body)
+	const maxAutoDLPollResponseBytes = 1 << 20
+	if isAutoDLTask {
+		responseReader = io.LimitReader(resp.Body, maxAutoDLPollResponseBytes+1)
+	}
+	responseBody, err := io.ReadAll(responseReader)
 	if err != nil {
 		return fmt.Errorf("readAll failed for task %s: %w", taskId, err)
 	}
+	if isAutoDLTask && len(responseBody) > maxAutoDLPollResponseBytes {
+		return fmt.Errorf("AutoDL poll response exceeded 1 MiB for task %s", taskId)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		cause := fmt.Errorf("task %s poll returned HTTP %d", taskId, resp.StatusCode)
+		return cause
+	}
 
-	logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
+	if isAutoDLTask {
+		logger.LogDebug(ctx, "updateVideoSingleTask AutoDL response: status=%d bytes=%d", resp.StatusCode, len(responseBody))
+	} else {
+		logger.LogDebug(ctx, "updateVideoSingleTask response: %s", responseBody)
+	}
 
 	snap := task.Snapshot()
 
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
 	var responseItems dto.TaskResponse[model.Task]
-	if err = common.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
+	if err = common.Unmarshal(responseBody, &responseItems); !isAutoDLTask && err == nil && responseItems.IsSuccess() {
 		logger.LogDebug(ctx, "updateVideoSingleTask parsed as new api response format: %+v", responseItems)
 		t := responseItems.Data
 		taskResult.TaskID = t.TaskID
@@ -529,12 +715,24 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		taskResult.Reason = t.FailReason
 		task.Data = t.Data
 	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
-		return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
+		cause := fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
+		return cause
+	}
+
+	if isAutoDLTask && taskResult.TaskID != task.GetUpstreamTaskID() {
+		return fmt.Errorf("AutoDL task identity mismatch: expected %q, got %q", task.GetUpstreamTaskID(), taskResult.TaskID)
 	}
 
 	task.Data = redactVideoResponseBody(responseBody)
+	if sanitizer, ok := adaptor.(taskResultSanitizer); ok {
+		task.Data = sanitizer.SanitizeTaskResult(responseBody)
+	}
 
-	logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
+	if isAutoDLTask {
+		logger.LogDebug(ctx, "AutoDL task result parsed: status=%s progress=%s", taskResult.Status, taskResult.Progress)
+	} else {
+		logger.LogDebug(ctx, "updateVideoSingleTask taskResult: %+v", taskResult)
+	}
 
 	now := time.Now().Unix()
 	if taskResult.Status == "" {
@@ -667,6 +865,48 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	return nil
+}
+
+// ResolveTaskPollingChannelKey recovers the exact credential selected when an
+// asynchronous task was submitted without persisting that credential in cleartext.
+func ResolveTaskPollingChannelKey(channel *model.Channel, privateData model.TaskPrivateData) (string, error) {
+	if channel == nil {
+		return "", errors.New("task channel is required")
+	}
+	keys := channel.GetKeys()
+	if len(keys) == 0 {
+		return "", errors.New("task channel has no keys")
+	}
+
+	if privateData.ChannelKeyHash != "" {
+		if privateData.ChannelMultiKeyIndex >= 0 && privateData.ChannelMultiKeyIndex < len(keys) {
+			candidate := keys[privateData.ChannelMultiKeyIndex]
+			if common.Sha256([]byte(candidate)) == privateData.ChannelKeyHash {
+				return candidate, nil
+			}
+		}
+		for _, candidate := range keys {
+			if common.Sha256([]byte(candidate)) == privateData.ChannelKeyHash {
+				return candidate, nil
+			}
+		}
+		return "", errors.New("task channel key changed after task submission")
+	}
+
+	// Compatibility for Gemini/Vertex rows that still carry provider
+	// credentials in Key. Polling selection metadata uses ChannelKeyHash.
+	if privateData.Key != "" {
+		for _, candidate := range keys {
+			if candidate == privateData.Key {
+				return candidate, nil
+			}
+		}
+		return "", errors.New("legacy task channel key changed after task submission")
+	}
+	if len(keys) == 1 {
+		return keys[0], nil
+	}
+	return "", errors.New("task channel key selection is missing")
 }
 
 func redactVideoResponseBody(body []byte) []byte {

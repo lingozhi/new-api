@@ -3,7 +3,6 @@ package router
 import (
 	"embed"
 	"net/http"
-	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/controller"
@@ -43,9 +42,13 @@ func SetWebRouter(router *gin.Engine, assets ThemeAssets) {
 	router.Use(middleware.GlobalWebRateLimit())
 	router.Use(middleware.Cache())
 	router.Use(static.Serve("/", themeFS))
-	router.NoRoute(func(c *gin.Context) {
+	router.NoRoute(webNoRouteHandler(assets))
+}
+
+func webNoRouteHandler(assets ThemeAssets) gin.HandlerFunc {
+	return func(c *gin.Context) {
 		c.Set(middleware.RouteTagKey, "web")
-		if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
+		if isBackendPath(c.Request.URL.Path) || middleware.HasServerCredentialQuery(c.Request.URL.RawQuery) {
 			controller.RelayNotFound(c)
 			return
 		}
@@ -55,5 +58,5 @@ func SetWebRouter(router *gin.Engine, assets ThemeAssets) {
 		} else {
 			c.Data(http.StatusOK, "text/html; charset=utf-8", assets.DefaultIndexPage)
 		}
-	})
+	}
 }

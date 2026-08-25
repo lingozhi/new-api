@@ -65,6 +65,24 @@ func TestModelPriceHelperTieredUsesPreloadedRequestInput(t *testing.T) {
 	require.Equal(t, common.QuotaPerUnit, info.TieredBillingSnapshot.QuotaPerUnit)
 }
 
+func TestModelPriceHelperPerCallHasDefaultMiniMaxH3PerSecondPrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("group", "default")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "MiniMax-H3",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+	}
+
+	priceData, err := ModelPriceHelperPerCall(ctx, info)
+
+	require.NoError(t, err)
+	require.True(t, priceData.UsePrice)
+	require.InDelta(t, 0.06/ratio_setting.USD2RMB, priceData.ModelPrice, 1e-12)
+	require.Greater(t, priceData.Quota, 0)
+}
+
 func TestModelPriceHelperTieredAllowsOrdinaryModelPriceWithImageResolution(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -6,6 +6,7 @@ const (
 	TaskPlatformSuno        TaskPlatform = "suno"
 	TaskPlatformMidjourney               = "mj"
 	TaskPlatformOpenAIImage              = "openai_image"
+	TaskPlatformAutoDL                   = "60"
 )
 
 const (
@@ -17,6 +18,7 @@ const (
 	TaskActionFirstTailGenerate = "firstTailGenerate"
 	TaskActionReferenceGenerate = "referenceGenerate"
 	TaskActionRemix             = "remixGenerate"
+	TaskActionVideoGenerationV2 = "videoGenerationV2"
 )
 
 var SunoModel2Action = map[string]string{

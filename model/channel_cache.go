@@ -724,9 +724,9 @@ func normalizeImageSelectionRequirement(requirement *dto.ImageSelectionRequireme
 }
 
 // filterChannelsByRequestPathAndModel restricts candidates by request path and
-// model. Only Advanced Custom (type 58) channels are path-checked: they are kept
-// only when one of their configured routes matches requestPath and model. All
-// other channel types always pass. When requestPath is empty, filtering is skipped.
+// model. MiniMax V2 video generation is implemented only by AutoDL channels.
+// Advanced Custom channels are kept only when one of their configured routes
+// matches requestPath and model. When requestPath is empty, filtering is skipped.
 // Caller must hold channelSyncLock (read lock). The cached slice is never mutated.
 func filterChannelsByRequestPathAndModel(channels []int, requestPath string, model string) []int {
 	if requestPath == "" || len(channels) == 0 {
@@ -738,6 +738,15 @@ func filterChannelsByRequestPathAndModel(channels []int, requestPath string, mod
 		if !ok {
 			// keep it so the downstream consistency error is raised as before
 			filtered = append(filtered, channelId)
+			continue
+		}
+		if requestPath == "/v2/video_generation" {
+			if channel.Type == constant.ChannelTypeAutoDL {
+				filtered = append(filtered, channelId)
+			}
+			continue
+		}
+		if channel.Type == constant.ChannelTypeAutoDL {
 			continue
 		}
 		if channel.Type != constant.ChannelTypeAdvancedCustom {

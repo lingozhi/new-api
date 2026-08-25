@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -220,6 +221,157 @@ func TestUpdateWithStatus_Lose(t *testing.T) {
 	var reloaded Task
 	require.NoError(t, DB.First(&reloaded, task.ID).Error)
 	assert.EqualValues(t, TaskStatusFailure, reloaded.Status) // unchanged
+}
+
+func TestRefreshSuccessResultMergesLatestPrivateData(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID:   "task_refresh_result",
+		Status:   TaskStatusSuccess,
+		Progress: "100%",
+		PrivateData: TaskPrivateData{
+			UpstreamTaskID: "upstream-refresh",
+			ResultURL:      "https://cdn.example.com/old.mp4",
+			TokenId:        10,
+		},
+		Data: json.RawMessage(`{"data":{"status":"SUCCESS"}}`),
+	}
+	insertTask(t, task)
+
+	stale := *task
+	latestPrivateData := task.PrivateData
+	latestPrivateData.TokenId = 99
+	latestPrivateData.BillingSource = "subscription"
+	terminalUpdatedAt := time.Now().Add(-time.Hour).Unix()
+	require.NoError(t, DB.Model(&Task{}).Where("id = ?", task.ID).UpdateColumns(map[string]any{
+		"private_data": latestPrivateData,
+		"updated_at":   terminalUpdatedAt,
+	}).Error)
+
+	updated, err := stale.RefreshSuccessResult(
+		"https://cdn.example.com/fresh.mp4",
+		json.RawMessage(`{"code":"Success","data":{"status":"SUCCESS"}}`),
+		1700000100,
+	)
+	require.NoError(t, err)
+	assert.True(t, updated)
+
+	var stored Task
+	require.NoError(t, DB.First(&stored, task.ID).Error)
+	assert.Equal(t, "https://cdn.example.com/fresh.mp4", stored.PrivateData.ResultURL)
+	assert.Equal(t, 99, stored.PrivateData.TokenId)
+	assert.Equal(t, "subscription", stored.PrivateData.BillingSource)
+	assert.EqualValues(t, 1700000100, stored.PrivateData.ResultRefreshedAt)
+	assert.JSONEq(t, `{"code":"Success","data":{"status":"SUCCESS"}}`, string(stored.Data))
+	assert.Equal(t, terminalUpdatedAt, stored.UpdatedAt)
+
+	unchanged, err := stored.RefreshSuccessResult(stored.PrivateData.ResultURL, stored.Data, stored.PrivateData.ResultRefreshedAt)
+	require.NoError(t, err)
+	assert.False(t, unchanged)
+
+	var queriedAgain Task
+	require.NoError(t, DB.First(&queriedAgain, task.ID).Error)
+	assert.Equal(t, terminalUpdatedAt, queriedAgain.UpdatedAt)
+}
+
+func TestClaimSuccessResultRefreshFencesIndependentGatewayInstances(t *testing.T) {
+	truncateTables(t)
+
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:    "task_result_refresh_claim",
+		Platform:  constant.TaskPlatformAutoDL,
+		Status:    TaskStatusSuccess,
+		UpdatedAt: now - 60,
+		PrivateData: TaskPrivateData{
+			ResultURL:         "https://cdn.example.com/expired.mp4",
+			ResultRefreshedAt: now - 60,
+		},
+	}
+	require.NoError(t, DB.Create(task).Error)
+	terminalUpdatedAt := task.UpdatedAt
+
+	firstInstance := *task
+	secondInstance := *task
+	claimed, err := firstInstance.ClaimSuccessResultRefresh(now-30, now)
+	require.NoError(t, err)
+	assert.True(t, claimed)
+	claimed, err = secondInstance.ClaimSuccessResultRefresh(now-30, now)
+	require.NoError(t, err)
+	assert.False(t, claimed)
+	assert.EqualValues(t, now, secondInstance.PrivateData.ResultRefreshedAt)
+
+	var stored Task
+	require.NoError(t, DB.First(&stored, task.ID).Error)
+	assert.EqualValues(t, now, stored.PrivateData.ResultRefreshedAt)
+	assert.Equal(t, terminalUpdatedAt, stored.UpdatedAt)
+}
+
+func TestCompleteSubmissionCheckpointMakesTaskPollableAtomically(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID:    "task_submission_checkpoint",
+		Platform:  constant.TaskPlatformAutoDL,
+		ChannelId: 60,
+		Status:    TaskStatusCheckpointPending,
+		Progress:  "0%",
+		Quota:     321,
+		PrivateData: TaskPrivateData{
+			ChannelKeyHash: "stable-key-fingerprint",
+		},
+	}
+	insertTask(t, task)
+	assert.Empty(t, GetAllUnFinishSyncTasks(10))
+
+	completed, err := task.CompleteSubmissionCheckpoint(
+		"upstream-task-id",
+		json.RawMessage(`{"code":"Success","data":{"status":"QUEUED"}}`),
+		654,
+	)
+	require.NoError(t, err)
+	assert.True(t, completed)
+
+	var stored Task
+	require.NoError(t, DB.First(&stored, task.ID).Error)
+	assert.EqualValues(t, TaskStatusNotStart, stored.Status)
+	assert.Equal(t, "upstream-task-id", stored.PrivateData.UpstreamTaskID)
+	assert.Equal(t, "stable-key-fingerprint", stored.PrivateData.ChannelKeyHash)
+	assert.Equal(t, 654, stored.Quota)
+	assert.JSONEq(t, `{"code":"Success","data":{"status":"QUEUED"}}`, string(stored.Data))
+	require.Len(t, GetAllUnFinishSyncTasks(10), 1)
+
+	completed, err = task.CompleteSubmissionCheckpoint(
+		"upstream-task-id",
+		json.RawMessage(`{"code":"Success","data":{"status":"QUEUED"}}`),
+		654,
+	)
+	require.NoError(t, err)
+	assert.True(t, completed)
+}
+
+func TestFreshlyActivatedSubmissionCheckpointUsesActivationTimeForRecovery(t *testing.T) {
+	truncateTables(t)
+
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:     "task_fresh_activation_old_submission",
+		Platform:   constant.TaskPlatformAutoDL,
+		Status:     TaskStatusCheckpointPending,
+		Progress:   "0%",
+		SubmitTime: now - int64((20*time.Minute)/time.Second),
+		CreatedAt:  now - int64((20*time.Minute)/time.Second),
+		UpdatedAt:  now,
+	}
+	require.NoError(t, DB.Create(task).Error)
+
+	stale := GetStaleTaskSubmissionCheckpoints(
+		constant.TaskPlatformAutoDL,
+		now-int64((10*time.Minute)/time.Second),
+		10,
+	)
+	assert.Empty(t, stale)
 }
 
 func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {

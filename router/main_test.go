@@ -7,8 +7,10 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSplitFrontendFallbackKeepsBackendRequestsLocal(t *testing.T) {
@@ -44,6 +46,18 @@ func TestSplitFrontendFallbackKeepsBackendRequestsLocal(t *testing.T) {
 			name:           "unknown relay path",
 			method:         http.MethodGet,
 			target:         "/v1/unknown?key=relay-secret",
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "unknown minimax v2 path",
+			method:         http.MethodGet,
+			target:         "/v2/unknown?key=relay-secret",
+			expectedStatus: http.StatusNotFound,
+		},
+		{
+			name:           "unsupported minimax v2 method",
+			method:         http.MethodDelete,
+			target:         "/v2/video_generation?key=relay-secret",
 			expectedStatus: http.StatusNotFound,
 		},
 		{
@@ -160,6 +174,40 @@ func TestSplitFrontendFallbackKeepsBackendRequestsLocal(t *testing.T) {
 			assert.Equal(t, tc.expectedStatus, recorder.Code)
 			assert.Equal(t, tc.expectedLocation, recorder.Header().Get("Location"))
 			assert.NotContains(t, recorder.Header().Get("Location"), "secret")
+			if strings.HasPrefix(tc.target, "/v2/") {
+				var response dto.MiniMaxAPIErrorResponse
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+				assert.Equal(t, "error", response.Type)
+				assert.Equal(t, "bad_request_error", response.Error.Type)
+				assert.Equal(t, "404", response.Error.HTTPCode)
+			}
 		})
+	}
+}
+
+func TestEmbeddedFrontendFallbackKeepsMiniMaxV2RequestsLocal(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.NoRoute(webNoRouteHandler(ThemeAssets{DefaultIndexPage: []byte("frontend shell")}))
+
+	testCases := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodGet, path: "/v2/unknown"},
+		{method: http.MethodDelete, path: "/v2/video_generation"},
+	}
+	for _, tc := range testCases {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(tc.method, tc.path, nil)
+		engine.ServeHTTP(recorder, request)
+
+		assert.Equal(t, http.StatusNotFound, recorder.Code)
+		assert.NotContains(t, recorder.Body.String(), "frontend shell")
+		var response dto.MiniMaxAPIErrorResponse
+		require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+		assert.Equal(t, "error", response.Type)
+		assert.Equal(t, "bad_request_error", response.Error.Type)
+		assert.Equal(t, "404", response.Error.HTTPCode)
 	}
 }

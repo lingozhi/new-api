@@ -509,6 +509,13 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	} else {
 		client = service.GetRelayHttpClient(info.IsStream)
 	}
+	if info.ChannelType == baseconstant.ChannelTypeAutoDL {
+		noRedirectClient := *client
+		noRedirectClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+		client = &noRedirectClient
+	}
 
 	const (
 		capacityDeadlinePending int32 = iota

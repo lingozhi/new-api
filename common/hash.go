@@ -13,6 +13,10 @@ func Sha256Raw(data []byte) []byte {
 	return h.Sum(nil)
 }
 
+func Sha256(data []byte) string {
+	return hex.EncodeToString(Sha256Raw(data))
+}
+
 func Sha1Raw(data []byte) []byte {
 	h := sha1.New()
 	h.Write(data)

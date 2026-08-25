@@ -638,20 +638,29 @@ func (reservation *ImageBillingReservation) BeforeCreate(_ *gorm.DB) error {
 // InsertPreparedImageTask persists the non-runnable task, optional webhook,
 // and reservation owner in one transaction before any quota is deducted.
 func InsertPreparedImageTask(task *Task, webhook *TaskWebhook, reservation *ImageBillingReservation) error {
+	if task == nil || task.Platform != constant.TaskPlatformOpenAIImage {
+		return errors.New("prepared image task platform is invalid")
+	}
+	return InsertPreparedTaskBillingReservation(task, webhook, reservation)
+}
+
+// InsertPreparedTaskBillingReservation persists a non-runnable asynchronous
+// task and its durable billing owner before any quota is deducted.
+func InsertPreparedTaskBillingReservation(task *Task, webhook *TaskWebhook, reservation *ImageBillingReservation) error {
 	if task == nil || reservation == nil {
-		return errors.New("prepared image task and billing reservation are required")
+		return errors.New("prepared task and billing reservation are required")
 	}
 	if task.TaskID == "" || task.Status != TaskStatusReserving {
-		return errors.New("prepared image task must have a task id and RESERVING status")
+		return errors.New("prepared task must have a task id and RESERVING status")
 	}
 	if reservation.TaskID == "" {
 		reservation.TaskID = task.TaskID
 	}
 	if reservation.TaskID != task.TaskID || reservation.UserID != task.UserId {
-		return errors.New("image billing reservation identity does not match task")
+		return errors.New("billing reservation identity does not match task")
 	}
 	if reservation.ExpectedQuota < 0 || reservation.ExpectedQuota > common.MaxQuota {
-		return errors.New("image billing reservation quota is out of range")
+		return errors.New("billing reservation quota is out of range")
 	}
 	reservation.Status = ImageBillingReservationPreparing
 	reservation.CacheReconciledAt = 0
@@ -692,6 +701,48 @@ func GetImageBillingReservation(taskID string) (*ImageBillingReservation, error)
 		return nil, err
 	}
 	return &reservation, nil
+}
+
+// GetPreparedTaskBillingReservation reloads both rows written by
+// InsertPreparedTaskBillingReservation. It is used to resolve an ambiguous
+// transaction commit without creating another task or refunding a real debit.
+func GetPreparedTaskBillingReservation(taskID string, platform constant.TaskPlatform) (*Task, *ImageBillingReservation, bool, error) {
+	if strings.TrimSpace(taskID) == "" || platform == "" {
+		return nil, nil, false, errors.New("task id and platform are required")
+	}
+	var reservation ImageBillingReservation
+	if err := DB.Where("task_id = ?", taskID).First(&reservation).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, false, nil
+		}
+		return nil, nil, false, err
+	}
+	var task Task
+	if err := DB.Where("task_id = ? AND platform = ?", taskID, platform).First(&task).Error; err != nil {
+		return nil, nil, false, err
+	}
+	return &task, &reservation, true, nil
+}
+
+// GetStalePreparedTaskBillingReservationIDs lists platform-scoped RESERVING
+// tasks whose provider call never began. The caller refunds each reservation
+// through the ledger's idempotent terminal transition.
+func GetStalePreparedTaskBillingReservationIDs(platform constant.TaskPlatform, cutoff int64, limit int) []string {
+	if platform == "" || cutoff <= 0 {
+		return nil
+	}
+	if limit <= 0 {
+		limit = 1
+	}
+	var taskIDs []string
+	if err := DB.Model(&Task{}).
+		Where("platform = ? AND status = ? AND submit_time < ?", platform, TaskStatusReserving, cutoff).
+		Order("submit_time asc, id asc").
+		Limit(limit).
+		Pluck("task_id", &taskIDs).Error; err != nil {
+		return nil
+	}
+	return taskIDs
 }
 
 func reconcileImageReservationUserCacheAfterDBNoop(taskID string, userID int, amount int, legacyDebit bool) error {
@@ -1502,23 +1553,59 @@ func ActivatePreparedImageTask(task *Task, cleanups ...*ImageInputCleanup) (bool
 	if len(cleanups) == 1 {
 		cleanup = cleanups[0]
 	}
+	return activatePreparedTaskBillingReservation(
+		task,
+		constant.TaskPlatformOpenAIImage,
+		TaskStatusNotStart,
+		cleanup,
+	)
+}
+
+// ActivatePreparedAutoDLTaskCheckpoint atomically transfers the durable
+// reservation to a provider-call fence. The checkpoint is intentionally not
+// pollable until CompleteSubmissionCheckpoint stores the upstream task ID.
+func ActivatePreparedAutoDLTaskCheckpoint(task *Task) (bool, error) {
+	return activatePreparedTaskBillingReservation(
+		task,
+		constant.TaskPlatformAutoDL,
+		TaskStatusCheckpointPending,
+		nil,
+	)
+}
+
+func activatePreparedTaskBillingReservation(task *Task, expectedPlatform constant.TaskPlatform, targetStatus TaskStatus, cleanup *ImageInputCleanup) (bool, error) {
+	if task == nil || task.ID == 0 || task.TaskID == "" {
+		return false, errors.New("persisted prepared task is required")
+	}
+	if expectedPlatform == "" || (targetStatus != TaskStatusNotStart && targetStatus != TaskStatusCheckpointPending) {
+		return false, errors.New("prepared task activation target is invalid")
+	}
+	if cleanup != nil && expectedPlatform != constant.TaskPlatformOpenAIImage {
+		return false, errors.New("prepared task input cleanup is only valid for image tasks")
+	}
 	activated := false
+	var activatedTask Task
+	hasActivatedTask := false
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var lockedTask Task
 		if err := lockForUpdate(tx).
-			Select("id", "task_id", "platform", "status").
 			Where("id = ? AND task_id = ?", task.ID, task.TaskID).
 			First(&lockedTask).Error; err != nil {
 			return err
 		}
-		if lockedTask.Platform != constant.TaskPlatformOpenAIImage {
-			return errors.New("prepared image task platform is invalid")
+		if lockedTask.Platform != expectedPlatform {
+			return errors.New("prepared task platform is invalid")
 		}
 		var reservation ImageBillingReservation
 		if err := lockForUpdate(tx).Where("task_id = ?", task.TaskID).First(&reservation).Error; err != nil {
 			return err
 		}
 		if reservation.Status == ImageBillingReservationActive {
+			if lockedTask.Status != targetStatus || lockedTask.Quota != task.Quota {
+				return errors.New("active billing reservation does not match prepared task")
+			}
+			activatedTask = lockedTask
+			hasActivatedTask = true
 			return nil
 		}
 		if reservation.Status != ImageBillingReservationPreparing {
@@ -1557,7 +1644,7 @@ func ActivatePreparedImageTask(task *Task, cleanups ...*ImageInputCleanup) (bool
 		}
 
 		candidate := *task
-		candidate.Status = TaskStatusNotStart
+		candidate.Status = targetStatus
 		candidate.Progress = "0%"
 		candidate.PrivateData.BillingSource = reservation.FundingSource
 		candidate.PrivateData.SubscriptionId = reservation.SubscriptionID
@@ -1568,7 +1655,7 @@ func ActivatePreparedImageTask(task *Task, cleanups ...*ImageInputCleanup) (bool
 		candidate.PrivateData.TokenLegacyDebit = reservation.TokenLegacyDebit
 		candidate.UpdatedAt = common.GetTimestamp()
 		update := tx.Model(&Task{}).
-			Where("id = ? AND task_id = ? AND platform = ? AND status = ?", task.ID, task.TaskID, constant.TaskPlatformOpenAIImage, TaskStatusReserving).
+			Where("id = ? AND task_id = ? AND platform = ? AND status = ?", task.ID, task.TaskID, expectedPlatform, TaskStatusReserving).
 			Select("*").
 			Updates(&candidate)
 		if update.Error != nil {
@@ -1591,15 +1678,31 @@ func ActivatePreparedImageTask(task *Task, cleanups ...*ImageInputCleanup) (bool
 		if ledger.RowsAffected != 1 {
 			return errors.New("image billing reservation activation lost")
 		}
-		if err := activateImageInputCleanupTx(tx, &candidate, cleanup, candidate.UpdatedAt); err != nil {
-			return err
+		if expectedPlatform == constant.TaskPlatformOpenAIImage {
+			if err := activateImageInputCleanupTx(tx, &candidate, cleanup, candidate.UpdatedAt); err != nil {
+				return err
+			}
 		}
-		*task = candidate
+		activatedTask = candidate
+		hasActivatedTask = true
 		activated = true
 		return nil
 	})
 	if err != nil {
+		var durableTask Task
+		var durableReservation ImageBillingReservation
+		taskErr := DB.Where("id = ? AND task_id = ? AND platform = ?", task.ID, task.TaskID, expectedPlatform).First(&durableTask).Error
+		reservationErr := DB.Where("task_id = ?", task.TaskID).First(&durableReservation).Error
+		if taskErr == nil && reservationErr == nil &&
+			durableTask.Status == targetStatus && durableTask.Quota == task.Quota &&
+			durableReservation.Status == ImageBillingReservationActive {
+			*task = durableTask
+			return false, nil
+		}
 		return false, err
+	}
+	if hasActivatedTask {
+		*task = activatedTask
 	}
 	activeReservation, queryErr := GetImageBillingReservation(task.TaskID)
 	if queryErr != nil {
@@ -1794,6 +1897,206 @@ func RefundImageBillingReservation(taskID string, reason string) (bool, error) {
 	return applied, nil
 }
 
+// RefundTaskBillingReservation is the platform-neutral name for refunding a
+// task that never completed reservation activation.
+func RefundTaskBillingReservation(taskID string, reason string) (bool, error) {
+	return RefundImageBillingReservation(taskID, reason)
+}
+
+// FailActiveAutoDLTaskBillingReservation atomically terminalizes an AutoDL
+// task and refunds the exact reservation debits that funded it. Keeping the
+// active reservation as the refund owner preserves the recorded legacy-balance
+// modes; a generic positive quota adjustment cannot safely reconstruct those
+// modes after a debit crosses back below MaxQuota.
+//
+// handled is false only when the task has no active/refunded reservation and
+// the caller should use the legacy task-billing path. won follows the task CAS:
+// it is true only when this call changed the task to FAILURE.
+func FailActiveAutoDLTaskBillingReservation(task *Task, fromStatus TaskStatus) (handled bool, won bool, err error) {
+	if task == nil || task.ID == 0 || strings.TrimSpace(task.TaskID) == "" {
+		return false, false, errors.New("persisted AutoDL task is required")
+	}
+	if task.Platform != constant.TaskPlatformAutoDL || task.Status != TaskStatusFailure {
+		return false, false, errors.New("AutoDL task refund requires a failure transition")
+	}
+	if fromStatus == TaskStatusSuccess || fromStatus == TaskStatusFailure {
+		return false, false, errors.New("AutoDL task refund source status is terminal")
+	}
+
+	var reservation ImageBillingReservation
+	if err := DB.Where("task_id = ?", task.TaskID).First(&reservation).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, false, nil
+		}
+		return false, false, err
+	}
+	if reservation.Status != ImageBillingReservationActive && reservation.Status != ImageBillingReservationRefunded {
+		return false, false, nil
+	}
+	handled = true
+	if reservation.UserID != task.UserId {
+		return true, false, errors.New("AutoDL billing reservation user mismatch")
+	}
+
+	tokenKey := ""
+	if reservation.TokenID > 0 {
+		var token Token
+		if queryErr := DB.Unscoped().Select("id", "key").Where("id = ?", reservation.TokenID).First(&token).Error; queryErr != nil {
+			return true, false, queryErr
+		}
+		tokenKey = token.Key
+		if tokenKey == "" {
+			return true, false, errors.New("AutoDL billing reservation token key is empty")
+		}
+	}
+
+	var refundedReservation *ImageBillingReservation
+	refund := func() error {
+		txErr := DB.Transaction(func(tx *gorm.DB) error {
+			var lockedTask Task
+			if err := lockForUpdate(tx).
+				Where("id = ? AND task_id = ? AND platform = ?", task.ID, task.TaskID, constant.TaskPlatformAutoDL).
+				First(&lockedTask).Error; err != nil {
+				return err
+			}
+			var lockedReservation ImageBillingReservation
+			if err := lockForUpdate(tx).Where("task_id = ?", task.TaskID).First(&lockedReservation).Error; err != nil {
+				return err
+			}
+			if lockedReservation.UserID != lockedTask.UserId {
+				return errors.New("AutoDL billing reservation user mismatch")
+			}
+			if lockedReservation.Status == ImageBillingReservationRefunded {
+				if lockedTask.Status != TaskStatusFailure {
+					return errors.New("refunded AutoDL reservation has a non-failed task")
+				}
+				copy := lockedReservation
+				refundedReservation = &copy
+				return nil
+			}
+			if lockedReservation.Status != ImageBillingReservationActive {
+				return errors.New("AutoDL billing reservation is not active")
+			}
+			if lockedTask.Status != fromStatus {
+				return nil
+			}
+			if lockedReservation.WalletReserved < 0 || lockedReservation.WalletReserved > common.MaxQuota ||
+				lockedReservation.TokenReserved < 0 || lockedReservation.TokenReserved > common.MaxQuota {
+				return errors.New("AutoDL billing reservation refund is out of range")
+			}
+			if err := normalizeImageReservationQuotaModeTx(tx, &lockedReservation); err != nil {
+				return err
+			}
+			if lockedReservation.SubscriptionReserved > 0 {
+				if err := refundSubscriptionPreConsumeTx(tx, lockedReservation.RequestID); err != nil {
+					return err
+				}
+			}
+			if lockedReservation.WalletReserved > 0 {
+				if err := refundImageTaskWalletQuotaBalanceTx(
+					tx,
+					lockedReservation.UserID,
+					lockedReservation.WalletReserved,
+					lockedReservation.WalletLegacyDebit,
+					lockedReservation.QuotaModeVersion,
+				); err != nil {
+					return err
+				}
+			}
+			if lockedReservation.TokenReserved > 0 {
+				if err := refundImageTaskTokenQuotaBalanceTx(
+					tx,
+					lockedReservation.TokenID,
+					lockedReservation.TokenReserved,
+					lockedReservation.TokenLegacyDebit,
+					lockedReservation.QuotaModeVersion,
+				); err != nil {
+					return err
+				}
+			}
+
+			now := common.GetTimestamp()
+			reason := task.FailReason
+			if len(reason) > 2000 {
+				reason = reason[:2000]
+			}
+			taskUpdate := tx.Model(&Task{}).
+				Where("id = ? AND task_id = ? AND platform = ? AND status = ?", lockedTask.ID, lockedTask.TaskID, constant.TaskPlatformAutoDL, fromStatus).
+				Updates(map[string]any{
+					"status":      TaskStatusFailure,
+					"progress":    task.Progress,
+					"fail_reason": reason,
+					"finish_time": task.FinishTime,
+					"data":        task.Data,
+					"updated_at":  now,
+				})
+			if taskUpdate.Error != nil {
+				return taskUpdate.Error
+			}
+			if taskUpdate.RowsAffected != 1 {
+				return errors.New("AutoDL task refund transition lost")
+			}
+
+			ledger := tx.Model(&ImageBillingReservation{}).
+				Where("id = ? AND status = ?", lockedReservation.ID, ImageBillingReservationActive).
+				Updates(map[string]any{
+					"status":                ImageBillingReservationRefunded,
+					"wallet_reserved":       0,
+					"wallet_legacy_debit":   lockedReservation.WalletLegacyDebit,
+					"token_reserved":        0,
+					"token_legacy_debit":    lockedReservation.TokenLegacyDebit,
+					"quota_mode_version":    imageBillingReservationQuotaModeVersion,
+					"subscription_reserved": 0,
+					"failure_reason":        reason,
+					"cache_reconciled_at":   0,
+					"updated_at":            now,
+				})
+			if ledger.Error != nil {
+				return ledger.Error
+			}
+			if ledger.RowsAffected != 1 {
+				return errors.New("AutoDL billing reservation refund lost")
+			}
+
+			lockedReservation.Status = ImageBillingReservationRefunded
+			lockedReservation.WalletReserved = 0
+			lockedReservation.TokenReserved = 0
+			lockedReservation.SubscriptionReserved = 0
+			lockedReservation.QuotaModeVersion = imageBillingReservationQuotaModeVersion
+			lockedReservation.FailureReason = reason
+			lockedReservation.CacheReconciledAt = 0
+			lockedReservation.UpdatedAt = now
+			copy := lockedReservation
+			refundedReservation = &copy
+			won = true
+			return nil
+		})
+		if txErr != nil {
+			var durableTask Task
+			var durableReservation ImageBillingReservation
+			taskErr := DB.Where("id = ? AND task_id = ? AND platform = ?", task.ID, task.TaskID, constant.TaskPlatformAutoDL).First(&durableTask).Error
+			reservationErr := DB.Where("task_id = ?", task.TaskID).First(&durableReservation).Error
+			if taskErr == nil && reservationErr == nil &&
+				durableTask.Status == TaskStatusFailure && durableReservation.Status == ImageBillingReservationRefunded {
+				refundedReservation = &durableReservation
+				return nil
+			}
+			return txErr
+		}
+		if refundedReservation != nil && refundedReservation.CacheReconciledAt == 0 {
+			if cacheErr := reconcileRefundedImageBillingReservationCache(refundedReservation, tokenKey); cacheErr != nil {
+				common.SysLog("failed to reconcile refunded AutoDL reservation cache: " + cacheErr.Error())
+			}
+		}
+		return nil
+	}
+
+	if err := withImageTaskQuotaCacheLocks(reservation.UserID, tokenKey, refund); err != nil {
+		return true, won, err
+	}
+	return true, won, nil
+}
+
 func refundImageBillingReservationDB(taskID string, reason string) (bool, int, int, error) {
 	applied := false
 	walletRefunded := 0
@@ -1806,8 +2109,8 @@ func refundImageBillingReservationDB(taskID string, reason string) (bool, int, i
 			First(&task).Error; err != nil {
 			return err
 		}
-		if task.Platform != constant.TaskPlatformOpenAIImage {
-			return errors.New("image billing reservation task platform is invalid")
+		if task.Platform != constant.TaskPlatformOpenAIImage && task.Platform != constant.TaskPlatformAutoDL {
+			return errors.New("billing reservation task platform is invalid")
 		}
 		var reservation ImageBillingReservation
 		if err := lockForUpdate(tx).Where("task_id = ?", taskID).First(&reservation).Error; err != nil {
@@ -1884,7 +2187,7 @@ func refundImageBillingReservationDB(taskID string, reason string) (bool, int, i
 			return errors.New("image billing reservation refund lost")
 		}
 		taskUpdate := tx.Model(&Task{}).
-			Where("id = ? AND task_id = ? AND platform = ? AND status = ?", task.ID, taskID, constant.TaskPlatformOpenAIImage, TaskStatusReserving).
+			Where("id = ? AND task_id = ? AND platform = ? AND status = ?", task.ID, taskID, task.Platform, TaskStatusReserving).
 			Updates(map[string]any{
 				"status":      TaskStatusFailure,
 				"progress":    "100%",
@@ -1898,8 +2201,10 @@ func refundImageBillingReservationDB(taskID string, reason string) (bool, int, i
 		if taskUpdate.RowsAffected != 1 {
 			return errors.New("image billing reservation task terminalization lost")
 		}
-		if err := scheduleImageInputCleanupTx(tx, taskID, now); err != nil {
-			return err
+		if task.Platform == constant.TaskPlatformOpenAIImage {
+			if err := scheduleImageInputCleanupTx(tx, taskID, now); err != nil {
+				return err
+			}
 		}
 		applied = true
 		return nil

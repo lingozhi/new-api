@@ -30,6 +30,8 @@ const keyAsyncImageMultipartStorage = "key_async_image_multipart_storage"
 
 const maxAsyncImageEditBodyBytes int64 = 64 << 20
 
+const MaxMiniMaxVideoGenerationV2BodyBytes int64 = 64 << 20
+
 var ErrRequestBodyTooLarge = errors.New("request body too large")
 
 // ErrUploadIdleTimeout means the client stopped delivering request-body bytes
@@ -123,6 +125,10 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
 		maxMB = 128 // 默认 128MB
 	}
 	maxBytes := int64(maxMB) << 20
+	isMiniMaxVideoGenerationV2 := c.Request != nil && c.Request.URL.Path == "/v2/video_generation"
+	if isMiniMaxVideoGenerationV2 && maxBytes > MaxMiniMaxVideoGenerationV2BodyBytes {
+		maxBytes = MaxMiniMaxVideoGenerationV2BodyBytes
+	}
 	isAsyncImageEditMultipart := c.Request != nil &&
 		(c.Request.URL.Path == "/v1/images/edits" || c.Request.URL.Path == "/v1/edits") &&
 		strings.Contains(strings.ToLower(c.Request.Header.Get("Content-Type")), "multipart/form-data")
@@ -140,7 +146,7 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
 	counter := &countingReader{r: c.Request.Body}
 	var storage BodyStorage
 	var err error
-	if isAsyncImageEditMultipart {
+	if isAsyncImageEditMultipart || isMiniMaxVideoGenerationV2 {
 		storage, err = CreateDiskBodyStorageFromReader(counter, maxBytes)
 	} else {
 		storage, err = CreateBodyStorageFromReader(counter, contentLength, maxBytes)

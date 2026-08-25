@@ -50,6 +50,7 @@ func isBackendPath(requestPath string) bool {
 		"/pg",
 		"/suno",
 		"/v1",
+		"/v2",
 		"/v1beta",
 	} {
 		if normalizedPath == prefix || strings.HasPrefix(normalizedPath, prefix+"/") {

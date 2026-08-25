@@ -795,11 +795,19 @@ type TaskRelayInfo struct {
 	PublicTaskID string
 
 	ConsumeQuota bool
+	Video        *TaskVideoProperties
 
 	// LockedChannel holds the full channel object when the request is bound to
 	// a specific channel (e.g., remix on origin task's channel). Stored as any
 	// to avoid an import cycle with model; callers type-assert to *model.Channel.
 	LockedChannel any
+}
+
+type TaskVideoProperties struct {
+	Resolution      string `json:"resolution,omitempty"`
+	Duration        int    `json:"duration,omitempty"`
+	Ratio           string `json:"ratio,omitempty"`
+	InputImageCount int    `json:"input_image_count,omitempty"`
 }
 
 type TaskSubmitReq struct {

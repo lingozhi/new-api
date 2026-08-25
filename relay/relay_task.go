@@ -2,12 +2,14 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -20,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/sync/singleflight"
 )
 
 type TaskSubmitResult struct {
@@ -28,6 +31,39 @@ type TaskSubmitResult struct {
 	Platform       constant.TaskPlatform
 	Quota          int
 	//PerCallPrice   types.PriceData
+}
+
+type TaskSubmissionCheckpoint struct {
+	Prepare  func(platform constant.TaskPlatform, expectedQuota int) *dto.TaskError
+	Activate func(preConsumedQuota int) *dto.TaskError
+}
+
+type taskDispatchPreflighter interface {
+	PreflightDispatch(c *gin.Context, info *relaycommon.RelayInfo) error
+}
+
+const autoDLSubmissionTimeout = 2 * time.Minute
+
+const autoDLResultRefreshTTL = 30 * time.Second
+
+const autoDLTaskQueryWindow = 7 * 24 * time.Hour
+
+var autoDLResultRefreshGroup singleflight.Group
+
+var getTaskAdaptorForResultRefresh = GetTaskAdaptor
+
+// IsAutoDLTaskWithinQueryWindow applies the MiniMax-compatible seven-day
+// lookup window to every public route that can expose or refresh an AutoDL
+// result.
+func IsAutoDLTaskWithinQueryWindow(task *model.Task, now time.Time) bool {
+	if task == nil || task.Platform != constant.TaskPlatformAutoDL {
+		return false
+	}
+	taskTimestamp := task.SubmitTime
+	if taskTimestamp == 0 {
+		taskTimestamp = task.CreatedAt
+	}
+	return taskTimestamp > 0 && taskTimestamp >= now.Add(-autoDLTaskQueryWindow).Unix()
 }
 
 // ResolveOriginTask 处理基于已有任务的提交（remix / continuation）：
@@ -139,10 +175,11 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 
 // RelayTaskSubmit 完成 task 提交的全部流程（每次尝试调用一次）：
 // 刷新渠道元数据 → 确定 platform/adaptor → 验证请求 →
-// 估算计费(EstimateBilling) → 计算价格 → 预扣费（仅首次）→
-// 构建/发送/解析上游请求 → 提交后计费调整(AdjustBillingOnSubmit)。
+// 估算计费(EstimateBilling) → 计算价格 → 构建请求 → 持久化计费预留 →
+// 预扣费（仅首次）→ 激活 provider-call checkpoint → 发送/解析上游请求
+// → 提交后计费调整(AdjustBillingOnSubmit)。
 // 控制器负责 defer Refund 和成功后 Settle。
-func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitResult, *dto.TaskError) {
+func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, checkpoint *TaskSubmissionCheckpoint) (*TaskSubmitResult, *dto.TaskError) {
 	info.InitChannelMeta(c)
 
 	// 1. 确定 platform → 创建适配器 → 验证请求
@@ -201,8 +238,34 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		info.PriceData.Quota = quota
 		noteTaskQuotaClamp(info, clamp)
 	}
+	// A configured paid task must never collapse to a free request through
+	// integer truncation. Besides undercharging, zero makes subscription billing
+	// reserve its mandatory one-unit minimum while the task later tries to
+	// settle back to zero after its reservation has become active.
+	if !info.PriceData.FreeModel && info.PriceData.Quota == 0 {
+		info.PriceData.Quota = 1
+	}
 
-	// 7. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
+	// 7. 先构建请求体。任何本地转换失败都应发生在持久化计费预留和
+	// 扣费之前。
+	requestBody, err := adaptor.BuildRequestBody(c, info)
+	if err != nil {
+		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
+	}
+	// Advance the provider-call fence only after every deterministic local URL,
+	// header, and proxy configuration check has succeeded.
+	if preflighter, ok := adaptor.(taskDispatchPreflighter); ok {
+		if err := preflighter.PreflightDispatch(c, info); err != nil {
+			return nil, service.TaskErrorWrapper(err, "dispatch_preflight_failed", http.StatusInternalServerError)
+		}
+	}
+	if checkpoint != nil && checkpoint.Prepare != nil {
+		if taskErr := checkpoint.Prepare(platform, info.PriceData.Quota); taskErr != nil {
+			return nil, taskErr
+		}
+	}
+
+	// 8. 预扣费（仅首次 — 重试时 info.Billing 已存在，跳过）
 	if info.Billing == nil && !info.PriceData.FreeModel {
 		info.ForcePreConsume = true
 		if apiErr := service.PreConsumeBilling(c, info.PriceData.Quota, info); apiErr != nil {
@@ -210,23 +273,73 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		}
 	}
 
-	// 8. 构建请求体
-	requestBody, err := adaptor.BuildRequestBody(c, info)
-	if err != nil {
-		return nil, service.TaskErrorWrapper(err, "build_request_failed", http.StatusInternalServerError)
+	// 9. 将已记录的扣费原子转交给 provider-call checkpoint。只有这一步
+	// 成功后才允许发起不可幂等的 AutoDL 请求。
+	if checkpoint != nil && c.Request.Context().Err() != nil {
+		return nil, service.TaskErrorWrapper(
+			c.Request.Context().Err(),
+			"client_disconnected_before_dispatch",
+			http.StatusRequestTimeout,
+		)
+	}
+	if checkpoint != nil && checkpoint.Activate != nil {
+		if taskErr := checkpoint.Activate(info.FinalPreConsumedQuota); taskErr != nil {
+			return nil, taskErr
+		}
 	}
 
-	// 9. 发送请求
+	// 10. AutoDL 没有提交幂等键；总 deadline 必须严格短于 stale
+	// checkpoint 回收窗口，避免仍在进行的请求被另一个 worker 退款。
+	originalRequest := c.Request
+	if c.Request.URL.Path == "/v2/video_generation" {
+		// Once the durable checkpoint is active, a client disconnect must not
+		// cancel an already charged asynchronous submission. Preserve request
+		// values while bounding the detached provider call to two minutes.
+		submitCtx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), autoDLSubmissionTimeout)
+		c.Request = c.Request.WithContext(submitCtx)
+		defer func() {
+			c.Request = originalRequest
+			cancel()
+		}()
+	}
+
+	// 11. 发送请求
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
 		return nil, service.TaskErrorWrapper(err, "do_request_failed", http.StatusInternalServerError)
 	}
-	if resp != nil && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
-		responseBody, _ := io.ReadAll(resp.Body)
+	if resp == nil {
+		return nil, service.TaskErrorWrapper(errors.New("upstream returned no response"), "empty_upstream_response", http.StatusBadGateway)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		defer resp.Body.Close()
+		if c.Request.URL.Path == "/v2/video_generation" {
+			// MiniMax V2 never exposes the upstream error body. Preserve the
+			// already-known HTTP result before touching a body that may be truncated
+			// or reset; the controller needs this status to decide whether the
+			// provider definitively rejected the request or may have created a task.
+			return nil, service.TaskErrorWrapper(
+				fmt.Errorf("AutoDL upstream returned HTTP %d", resp.StatusCode),
+				"fail_to_fetch_task",
+				resp.StatusCode,
+			)
+		}
+		const maxTaskErrorBodyBytes = 64 << 10
+		responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, maxTaskErrorBodyBytes+1))
+		if readErr != nil {
+			return nil, service.TaskErrorWrapper(
+				fmt.Errorf("read upstream error response with status %d: %w", resp.StatusCode, readErr),
+				"read_upstream_error_failed",
+				http.StatusBadGateway,
+			)
+		}
+		if len(responseBody) > maxTaskErrorBodyBytes {
+			responseBody = responseBody[:maxTaskErrorBodyBytes]
+		}
 		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
 	}
 
-	// 10. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
+	// 12. 返回 OtherRatios 给下游（header 必须在 DoResponse 写 body 之前设置）
 	otherRatios := info.PriceData.OtherRatios()
 	if otherRatios == nil {
 		otherRatios = map[string]float64{}
@@ -234,13 +347,13 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 	ratiosJSON, _ := common.Marshal(otherRatios)
 	c.Header("X-New-Api-Other-Ratios", string(ratiosJSON))
 
-	// 11. 解析响应
+	// 13. 解析响应
 	upstreamTaskID, taskData, taskErr := adaptor.DoResponse(c, resp, info)
 	if taskErr != nil {
 		return nil, taskErr
 	}
 
-	// 11. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
+	// 14. 提交后计费调整：让适配器根据上游实际返回调整 OtherRatios
 	finalQuota := info.PriceData.Quota
 	if adjustedRatios := adaptor.AdjustBillingOnSubmit(info, taskData); len(adjustedRatios) > 0 {
 		if adjustedQuota, ok := recalcQuotaFromRatios(info, adjustedRatios); ok {
@@ -296,7 +409,7 @@ var fetchRespBuilders = map[int]func(c *gin.Context) (respBody []byte, taskResp 
 func RelayTaskFetch(c *gin.Context, relayMode int) (taskResp *dto.TaskError) {
 	respBuilder, ok := fetchRespBuilders[relayMode]
 	if !ok {
-		taskResp = service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
+		return service.TaskErrorWrapperLocal(errors.New("invalid_relay_mode"), "invalid_relay_mode", http.StatusBadRequest)
 	}
 
 	respBody, taskErr := respBuilder(c)
@@ -386,6 +499,30 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
+	isMiniMaxVideoV2API := strings.HasPrefix(c.Request.URL.Path, "/v2/query/video_generation/")
+
+	if isMiniMaxVideoV2API {
+		if !IsAutoDLTaskWithinQueryWindow(originTask, time.Now()) {
+			taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
+			return
+		}
+		RefreshAutoDLSuccessTask(c.Request.Context(), originTask)
+		adaptor := GetTaskAdaptor(originTask.Platform)
+		if adaptor == nil {
+			taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("invalid channel id: %d", originTask.ChannelId), "invalid_channel_id", http.StatusBadRequest)
+			return
+		}
+		converter, ok := adaptor.(channel.MiniMaxVideoV2Converter)
+		if !ok {
+			taskResp = service.TaskErrorWrapperLocal(fmt.Errorf("not_implemented:%s", originTask.Platform), "not_implemented", http.StatusNotImplemented)
+			return
+		}
+		respBody, err = converter.ConvertToMiniMaxVideoV2(originTask)
+		if err != nil {
+			taskResp = service.TaskErrorWrapper(err, "convert_to_minimax_video_v2_failed", http.StatusInternalServerError)
+		}
+		return
+	}
 
 	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
 	if realtimeResp := tryRealtimeFetch(originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
@@ -422,6 +559,131 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		taskResp = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
 	}
 	return
+}
+
+// RefreshAutoDLSuccessTask re-queries a completed AutoDL workflow so callers
+// receive a fresh signed result URL after the previously stored URL expires.
+// It never changes billing or terminal status and falls back to the stored URL
+// when the refresh cannot be completed safely.
+func RefreshAutoDLSuccessTask(ctx context.Context, task *model.Task) {
+	if task == nil || task.Status != model.TaskStatusSuccess || !IsAutoDLTaskWithinQueryWindow(task, time.Now()) {
+		return
+	}
+	now := time.Now().Unix()
+	refreshTTLSeconds := int64(autoDLResultRefreshTTL / time.Second)
+	if task.PrivateData.ResultRefreshedAt > 0 &&
+		task.PrivateData.ResultRefreshedAt <= now &&
+		now-task.PrivateData.ResultRefreshedAt < refreshTTLSeconds {
+		return
+	}
+
+	value, err, _ := autoDLResultRefreshGroup.Do(task.TaskID, func() (any, error) {
+		latest, exists, err := model.GetByTaskId(task.UserId, task.TaskID)
+		if err != nil || !exists || latest == nil {
+			return nil, err
+		}
+		if latest.Status != model.TaskStatusSuccess {
+			return latest, nil
+		}
+		if !IsAutoDLTaskWithinQueryWindow(latest, time.Now()) {
+			return latest, nil
+		}
+		refreshAt := time.Now().Unix()
+		if latest.PrivateData.ResultRefreshedAt > 0 &&
+			latest.PrivateData.ResultRefreshedAt <= refreshAt &&
+			refreshAt-latest.PrivateData.ResultRefreshedAt < refreshTTLSeconds {
+			return latest, nil
+		}
+		claimed, err := latest.ClaimSuccessResultRefresh(refreshAt-refreshTTLSeconds, refreshAt)
+		if err != nil || !claimed {
+			return latest, err
+		}
+
+		channelModel, err := model.GetChannelById(latest.ChannelId, true)
+		if err != nil || channelModel == nil {
+			return latest, err
+		}
+		key, err := service.ResolveTaskPollingChannelKey(channelModel, latest.PrivateData)
+		if err != nil {
+			return latest, err
+		}
+		adaptor := getTaskAdaptorForResultRefresh(latest.Platform)
+		if adaptor == nil {
+			return latest, errors.New("AutoDL task adaptor is unavailable")
+		}
+		baseURL := channelModel.GetBaseURL()
+		if baseURL == "" {
+			baseURL = constant.ChannelBaseURLs[constant.ChannelTypeAutoDL]
+		}
+		adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:          constant.ChannelTypeAutoDL,
+			ChannelId:            channelModel.Id,
+			ChannelIsMultiKey:    channelModel.ChannelInfo.IsMultiKey,
+			ChannelMultiKeyIndex: latest.PrivateData.ChannelMultiKeyIndex,
+			ChannelBaseUrl:       baseURL,
+			ApiKey:               key,
+			ChannelSetting:       channelModel.GetSetting(),
+			ChannelOtherSettings: channelModel.GetOtherSettings(),
+		}})
+		fetchBody := map[string]any{
+			"task_id": latest.GetUpstreamTaskID(),
+			"action":  latest.Action,
+		}
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		refreshCtx, cancel := context.WithTimeout(ctx, autoDLResultRefreshTTL)
+		defer cancel()
+		var resp *http.Response
+		if contextAdaptor, ok := adaptor.(interface {
+			FetchTaskWithContext(context.Context, string, string, map[string]any, string) (*http.Response, error)
+		}); ok {
+			resp, err = contextAdaptor.FetchTaskWithContext(refreshCtx, baseURL, key, fetchBody, channelModel.GetSetting().Proxy)
+		} else {
+			resp, err = adaptor.FetchTask(baseURL, key, fetchBody, channelModel.GetSetting().Proxy)
+		}
+		if err != nil {
+			return latest, err
+		}
+		if resp == nil {
+			return latest, errors.New("AutoDL task refresh returned no response")
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return latest, fmt.Errorf("AutoDL task refresh returned HTTP %d", resp.StatusCode)
+		}
+		const maxAutoDLRefreshResponseBytes = 1 << 20
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxAutoDLRefreshResponseBytes+1))
+		if err != nil {
+			return latest, err
+		}
+		if len(body) > maxAutoDLRefreshResponseBytes {
+			return latest, errors.New("AutoDL task refresh response exceeded the 1 MiB limit")
+		}
+		result, err := adaptor.ParseTaskResult(body)
+		if err != nil {
+			return latest, err
+		}
+		if result == nil || result.TaskID != latest.GetUpstreamTaskID() || result.Status != model.TaskStatusSuccess || result.Url == "" {
+			return latest, errors.New("AutoDL task refresh returned an unexpected result")
+		}
+
+		data := latest.Data
+		if sanitizer, ok := adaptor.(interface{ SanitizeTaskResult([]byte) []byte }); ok {
+			data = sanitizer.SanitizeTaskResult(body)
+		}
+		if _, err := latest.RefreshSuccessResult(result.Url, data, refreshAt); err != nil {
+			return latest, err
+		}
+		return latest, nil
+	})
+	if err != nil {
+		common.SysError(fmt.Sprintf("refresh AutoDL task result failed: task_id=%s channel_id=%d error=%v", task.TaskID, task.ChannelId, err))
+		return
+	}
+	if refreshed, ok := value.(*model.Task); ok && refreshed != nil {
+		*task = *refreshed
+	}
 }
 
 // tryRealtimeFetch 尝试从上游实时拉取 Gemini/Vertex 任务状态。

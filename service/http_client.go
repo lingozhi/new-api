@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -44,6 +45,33 @@ func checkProtectedFetchRedirect(req *http.Request, via []*http.Request) error {
 	}
 	if len(via) >= 10 {
 		return fmt.Errorf("stopped after 10 redirects")
+	}
+	return nil
+}
+
+func ValidateStrictHTTPSProtectedFetchURL(urlStr string) error {
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if parsed.Scheme != "https" || parsed.Hostname() == "" {
+		return errors.New("only absolute HTTPS URLs are allowed")
+	}
+	if port := parsed.Port(); port != "" && port != "443" {
+		return fmt.Errorf("HTTPS port %s is not allowed", port)
+	}
+	return ValidateSSRFProtectedFetchURL(parsed.String())
+}
+
+func checkStrictHTTPSProtectedFetchRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("stopped after 10 redirects")
+	}
+	if req == nil || req.URL == nil {
+		return errors.New("redirect URL is required")
+	}
+	if err := ValidateStrictHTTPSProtectedFetchURL(req.URL.String()); err != nil {
+		return fmt.Errorf("redirect to %s blocked: %v", req.URL.String(), err)
 	}
 	return nil
 }
@@ -182,6 +210,17 @@ func GetDirectSSRFProtectedHTTPClient() *http.Client {
 		ssrfProtectedDirectHTTPClient = newDirectProtectedFetchHTTPClient()
 	}
 	return ssrfProtectedDirectHTTPClient
+}
+
+// GetStrictHTTPSDirectSSRFProtectedHTTPClient returns an isolated client view
+// for signed media URLs. It keeps the protected direct transport but narrows
+// every redirect to HTTPS on the default TLS port, so an allowed result URL
+// cannot downgrade or escape to a service on another port.
+func GetStrictHTTPSDirectSSRFProtectedHTTPClient() *http.Client {
+	base := GetDirectSSRFProtectedHTTPClient()
+	client := *base
+	client.CheckRedirect = checkStrictHTTPSProtectedFetchRedirect
+	return &client
 }
 
 // GetRelayHttpClient returns the shared relay client tuned for the request's

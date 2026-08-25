@@ -95,9 +95,11 @@ func init() {
 	}
 	channelId2Models = make(map[int][]string)
 	for i := 1; i <= constant.ChannelTypeDummy; i++ {
-		if i == constant.ChannelTypeDepthMedia {
+		if i == constant.ChannelTypeDepthMedia || i == constant.ChannelTypeAutoDL {
 			taskAdaptor := relay.GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(i)))
-			channelId2Models[i] = taskAdaptor.GetModelList()
+			if taskAdaptor != nil {
+				channelId2Models[i] = taskAdaptor.GetModelList()
+			}
 			continue
 		}
 		apiType, success := common.ChannelType2APIType(i)

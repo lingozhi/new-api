@@ -244,12 +244,13 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
           log.action === TASK_ACTIONS.TEXT_GENERATE ||
           log.action === TASK_ACTIONS.FIRST_TAIL_GENERATE ||
           log.action === TASK_ACTIONS.REFERENCE_GENERATE ||
-          log.action === TASK_ACTIONS.REMIX_GENERATE
+          log.action === TASK_ACTIONS.REMIX_GENERATE ||
+          log.action === TASK_ACTIONS.VIDEO_GENERATION_V2
         const isSuccess = status === TASK_STATUS.SUCCESS
-        const isUrl = failReason?.startsWith('http')
+        const hasResult = Boolean(log.result_url)
         const displayFailReason = isSuccess ? '' : failReason
 
-        if (isSuccess && isVideoTask && isUrl) {
+        if (isSuccess && isVideoTask && hasResult) {
           const videoUrl = `/v1/videos/${log.task_id}/content`
           mediaPreview = (
             <a

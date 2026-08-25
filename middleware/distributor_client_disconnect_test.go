@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -54,6 +55,30 @@ func TestActualClientDisconnectRemains499(t *testing.T) {
 	assert.Equal(t, StatusClientClosedRequest, c.Writer.Status())
 	assert.Empty(t, recorder.Body.String())
 	assert.Empty(t, recorder.Header().Get("Retry-After"))
+}
+
+func TestUploadIdleTimeoutUsesMiniMaxEnvelopeForVideoGeneration(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v2/video_generation", nil)
+	c.Set(common.RequestIdKey, "req_minimax_upload_timeout")
+
+	abortWithClientDisconnect(
+		c,
+		fmt.Errorf("read request body: %w (1m0s)", common.ErrUploadIdleTimeout),
+		time.Now().Add(-time.Minute),
+	)
+
+	assert.Equal(t, http.StatusServiceUnavailable, recorder.Code)
+	assert.Equal(t, "close", recorder.Header().Get("Connection"))
+	assert.Equal(t, "1", recorder.Header().Get("Retry-After"))
+	var response dto.MiniMaxAPIErrorResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "error", response.Type)
+	assert.Equal(t, "server_error", response.Error.Type)
+	assert.Equal(t, "503", response.Error.HTTPCode)
+	assert.Equal(t, "req_minimax_upload_timeout", response.RequestID)
 }
 
 func TestUploadIdleTimeoutResponseReachesHTTPClient(t *testing.T) {

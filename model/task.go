@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
+	"gorm.io/gorm"
 )
 
 type TaskStatus string
@@ -105,9 +107,10 @@ func (t *Task) GetData(v any) error {
 }
 
 type Properties struct {
-	Input             string `json:"input"`
-	UpstreamModelName string `json:"upstream_model_name,omitempty"`
-	OriginModelName   string `json:"origin_model_name,omitempty"`
+	Input             string                           `json:"input"`
+	UpstreamModelName string                           `json:"upstream_model_name,omitempty"`
+	OriginModelName   string                           `json:"origin_model_name,omitempty"`
+	Video             *commonRelay.TaskVideoProperties `json:"video,omitempty"`
 }
 
 func (m *Properties) Scan(val interface{}) error {
@@ -147,6 +150,7 @@ type TaskPrivateData struct {
 	ClientRequestHash    string              `json:"client_request_hash,omitempty"`
 	ChannelMultiKeyIndex int                 `json:"channel_multi_key_index,omitempty"`
 	ChannelKeyHash       string              `json:"channel_key_hash,omitempty"`
+	ResultRefreshedAt    int64               `json:"result_refreshed_at,omitempty"`
 }
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
@@ -296,6 +300,15 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 	properties := Properties{}
 	privateData := TaskPrivateData{}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
+		if relayInfo.ChannelMeta.ChannelIsMultiKey {
+			privateData.ChannelMultiKeyIndex = relayInfo.ChannelMeta.ChannelMultiKeyIndex
+		}
+		if relayInfo.ChannelMeta.ApiKey != "" {
+			// Provider API keys are high-entropy credentials. A plain SHA-256
+			// fingerprint is stable across restarts and replicas while keeping the
+			// credential itself out of the task row.
+			privateData.ChannelKeyHash = common.Sha256([]byte(relayInfo.ChannelMeta.ApiKey))
+		}
 		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
 			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi {
 			privateData.Key = relayInfo.ChannelMeta.ApiKey
@@ -305,6 +318,10 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 		}
 		if relayInfo.OriginModelName != "" {
 			properties.OriginModelName = relayInfo.OriginModelName
+		}
+		if relayInfo.TaskRelayInfo != nil && relayInfo.TaskRelayInfo.Video != nil {
+			video := *relayInfo.TaskRelayInfo.Video
+			properties.Video = &video
 		}
 	}
 
@@ -416,9 +433,43 @@ func GetTimedOutUnfinishedTasks(cutoffUnix int64, limit int) []*Task {
 	var tasks []*Task
 	err := DB.Where("progress != ?", "100%").
 		Where("platform != ?", constant.TaskPlatformOpenAIImage).
-		Where("status NOT IN ?", []string{TaskStatusFailure, TaskStatusSuccess}).
+		Where("status NOT IN ?", []TaskStatus{TaskStatusReserving, TaskStatusCheckpointPending, TaskStatusFailure, TaskStatusSuccess}).
 		Where("submit_time < ?", cutoffUnix).
 		Order("submit_time").
+		Limit(limit).
+		Find(&tasks).Error
+	if err != nil {
+		return nil
+	}
+	return tasks
+}
+
+// GetStaleTaskSubmissionCheckpoints returns ambiguous provider-call fences whose
+// result was never made durable. They must never be resubmitted or automatically
+// refunded because the provider may already have accepted the original request.
+func GetStaleTaskSubmissionCheckpoints(platform constant.TaskPlatform, cutoffUnix int64, limit int) []*Task {
+	var tasks []*Task
+	err := DB.Where("platform = ?", platform).
+		Where("status = ?", TaskStatusCheckpointPending).
+		Where("provider_error = ? OR provider_error IS NULL", "").
+		Where("updated_at < ?", cutoffUnix).
+		Order("updated_at").
+		Limit(limit).
+		Find(&tasks).Error
+	if err != nil {
+		return nil
+	}
+	return tasks
+}
+
+// GetPendingTaskSubmissionRefunds returns explicitly rejected provider calls
+// whose durable billing refund still needs to complete.
+func GetPendingTaskSubmissionRefunds(platform constant.TaskPlatform, limit int) []*Task {
+	var tasks []*Task
+	err := DB.Where("platform = ?", platform).
+		Where("status = ?", TaskStatusCheckpointPending).
+		Where("provider_error <> ?", "").
+		Order("updated_at").
 		Limit(limit).
 		Find(&tasks).Error
 	if err != nil {
@@ -433,8 +484,7 @@ func GetAllUnFinishSyncTasks(limit int) []*Task {
 	// get all tasks progress is not 100%
 	err = DB.Where("progress != ?", "100%").
 		Where("platform != ?", constant.TaskPlatformOpenAIImage).
-		Where("status != ?", TaskStatusFailure).
-		Where("status != ?", TaskStatusSuccess).
+		Where("status NOT IN ?", []TaskStatus{TaskStatusReserving, TaskStatusCheckpointPending, TaskStatusFailure, TaskStatusSuccess}).
 		Limit(limit).
 		Order("id").
 		Find(&tasks).Error
@@ -503,13 +553,17 @@ func GetImageTaskByTaskID(taskID string) (*Task, bool, error) {
 }
 
 func GetImageTaskByClientRequestID(userID int, clientRequestID string) (*Task, bool, error) {
-	if userID <= 0 || clientRequestID == "" {
+	return GetTaskByClientRequestID(constant.TaskPlatformOpenAIImage, userID, clientRequestID)
+}
+
+func GetTaskByClientRequestID(platform constant.TaskPlatform, userID int, clientRequestID string) (*Task, bool, error) {
+	if platform == "" || userID <= 0 || clientRequestID == "" {
 		return nil, false, nil
 	}
 	var task Task
 	err := DB.Where(
 		"platform = ? AND user_id = ? AND client_request_id = ?",
-		constant.TaskPlatformOpenAIImage,
+		platform,
 		userID,
 		clientRequestID,
 	).First(&task).Error
@@ -595,6 +649,218 @@ func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+// CompleteSubmissionCheckpoint makes an accepted asynchronous provider task
+// pollable only after its upstream identity and sanitized response are durable.
+func (t *Task) CompleteSubmissionCheckpoint(upstreamTaskID string, data json.RawMessage, quota int) (bool, error) {
+	if t == nil || t.ID == 0 || t.TaskID == "" {
+		return false, errors.New("persisted task submission checkpoint is required")
+	}
+	if upstreamTaskID == "" {
+		return false, errors.New("upstream task ID is required")
+	}
+	if quota < 0 || quota > common.MaxQuota {
+		return false, errors.New("task quota is out of range")
+	}
+
+	privateData := t.PrivateData
+	privateData.UpstreamTaskID = upstreamTaskID
+	updatedAt := common.GetTimestamp()
+	result := DB.Model(&Task{}).
+		Where("id = ? AND task_id = ? AND status = ?", t.ID, t.TaskID, TaskStatusCheckpointPending).
+		Updates(map[string]any{
+			"status":       TaskStatusNotStart,
+			"progress":     "0%",
+			"quota":        quota,
+			"private_data": privateData,
+			"data":         data,
+			"updated_at":   updatedAt,
+		})
+	if result.Error != nil || result.RowsAffected != 1 {
+		var durable Task
+		reloadErr := DB.Where("id = ? AND task_id = ?", t.ID, t.TaskID).First(&durable).Error
+		if reloadErr == nil &&
+			durable.Status == TaskStatusNotStart &&
+			durable.Progress == "0%" &&
+			durable.Quota == quota &&
+			durable.PrivateData.UpstreamTaskID == upstreamTaskID &&
+			bytes.Equal(durable.Data, data) {
+			*t = durable
+			return true, nil
+		}
+		if result.Error != nil {
+			return false, result.Error
+		}
+		if reloadErr != nil {
+			return false, reloadErr
+		}
+		return false, nil
+	}
+
+	t.Status = TaskStatusNotStart
+	t.Progress = "0%"
+	t.Quota = quota
+	t.PrivateData = privateData
+	t.Data = append(t.Data[:0], data...)
+	t.UpdatedAt = updatedAt
+	return true, nil
+}
+
+// MarkSubmissionRejected records the provider's definitive rejection before
+// attempting the multi-row billing refund. If that refund is interrupted, the
+// polling sweep can distinguish it from an ambiguous provider outcome and retry.
+func (t *Task) MarkSubmissionRejected(reason string) (bool, error) {
+	if t == nil || t.ID == 0 || t.TaskID == "" || t.Platform != constant.TaskPlatformAutoDL || reason == "" {
+		return false, errors.New("persisted rejected AutoDL task and reason are required")
+	}
+	updatedAt := common.GetTimestamp()
+	result := DB.Model(&Task{}).
+		Where("id = ? AND task_id = ? AND platform = ? AND status = ?", t.ID, t.TaskID, constant.TaskPlatformAutoDL, TaskStatusCheckpointPending).
+		Updates(map[string]any{
+			"provider_error": reason,
+			"updated_at":     updatedAt,
+		})
+	if result.Error == nil && result.RowsAffected == 1 {
+		t.ProviderError = reason
+		t.UpdatedAt = updatedAt
+		return true, nil
+	}
+
+	var durable Task
+	reloadErr := DB.Where("id = ? AND task_id = ? AND platform = ?", t.ID, t.TaskID, constant.TaskPlatformAutoDL).First(&durable).Error
+	if reloadErr == nil && durable.Status == TaskStatusCheckpointPending && durable.ProviderError != "" {
+		*t = durable
+		return true, nil
+	}
+	if result.Error != nil {
+		if reloadErr != nil {
+			return false, errors.Join(result.Error, reloadErr)
+		}
+		return false, result.Error
+	}
+	if reloadErr != nil {
+		return false, reloadErr
+	}
+	return false, nil
+}
+
+// RefreshSuccessResult merges a newly issued result URL into the latest task
+// private data under a row lock. Refreshing signed URLs must not overwrite
+// status-preserving billing or credential metadata written by another worker.
+func (t *Task) RefreshSuccessResult(resultURL string, data json.RawMessage, refreshedAt int64) (bool, error) {
+	if t == nil || t.ID == 0 || t.TaskID == "" || resultURL == "" || refreshedAt <= 0 {
+		return false, errors.New("persisted successful task and result URL are required")
+	}
+
+	updated := false
+	var mergedPrivateData TaskPrivateData
+	var currentData json.RawMessage
+	var currentUpdatedAt int64
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var current Task
+		query := lockForUpdate(tx).
+			Select("id", "task_id", "status", "private_data", "data", "updated_at").
+			Where("id = ? AND task_id = ? AND status = ?", t.ID, t.TaskID, TaskStatusSuccess).
+			Limit(1).
+			Find(&current)
+		if query.Error != nil {
+			return query.Error
+		}
+		if query.RowsAffected == 0 {
+			return nil
+		}
+
+		mergedPrivateData = current.PrivateData
+		mergedPrivateData.ResultURL = resultURL
+		mergedPrivateData.ResultRefreshedAt = refreshedAt
+		currentData = current.Data
+		currentUpdatedAt = current.UpdatedAt
+		if current.PrivateData.ResultURL == resultURL &&
+			current.PrivateData.ResultRefreshedAt == refreshedAt &&
+			bytes.Equal(current.Data, data) {
+			return nil
+		}
+
+		// A signed-URL refresh is not a task status transition. UpdateColumns
+		// skips GORM's timestamp callback so terminal UpdatedAt stays stable.
+		result := tx.Model(&Task{}).
+			Where("id = ? AND task_id = ? AND status = ?", t.ID, t.TaskID, TaskStatusSuccess).
+			UpdateColumns(map[string]any{
+				"private_data": mergedPrivateData,
+				"data":         data,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		updated = result.RowsAffected == 1
+		return nil
+	})
+	if err != nil {
+		return updated, err
+	}
+	if !updated {
+		if mergedPrivateData.ResultURL != "" {
+			t.PrivateData = mergedPrivateData
+			t.Data = append(t.Data[:0], currentData...)
+			t.UpdatedAt = currentUpdatedAt
+		}
+		return false, nil
+	}
+
+	t.PrivateData = mergedPrivateData
+	t.Data = append(t.Data[:0], data...)
+	t.UpdatedAt = currentUpdatedAt
+	return true, nil
+}
+
+// ClaimSuccessResultRefresh is the cross-node fence for refreshing an expired
+// signed result URL. It records the attempt timestamp before any upstream I/O;
+// only one gateway can move a stale timestamp into the current refresh window.
+// A failed owner deliberately leaves the short claim in place so another node
+// does not immediately amplify the same upstream failure.
+func (t *Task) ClaimSuccessResultRefresh(staleBefore int64, claimedAt int64) (bool, error) {
+	if t == nil || t.ID == 0 || t.TaskID == "" || staleBefore < 0 || claimedAt <= staleBefore {
+		return false, errors.New("persisted successful task and refresh window are required")
+	}
+
+	claimed := false
+	var current Task
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		query := lockForUpdate(tx).
+			Where("id = ? AND task_id = ? AND status = ?", t.ID, t.TaskID, TaskStatusSuccess).
+			Limit(1).
+			Find(&current)
+		if query.Error != nil {
+			return query.Error
+		}
+		if query.RowsAffected == 0 {
+			return nil
+		}
+		if current.PrivateData.ResultRefreshedAt > staleBefore {
+			return nil
+		}
+
+		current.PrivateData.ResultRefreshedAt = claimedAt
+		result := tx.Model(&Task{}).
+			Where("id = ? AND task_id = ? AND status = ?", current.ID, current.TaskID, TaskStatusSuccess).
+			UpdateColumn("private_data", current.PrivateData)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("successful task refresh claim lost")
+		}
+		claimed = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	if current.ID != 0 {
+		*t = current
+	}
+	return claimed, nil
 }
 
 // TaskBulkUpdate performs an unconditional bulk UPDATE by upstream task_id strings.

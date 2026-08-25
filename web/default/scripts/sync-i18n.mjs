@@ -36,6 +36,7 @@ const BRAND_AND_LITERAL_KEYS = new Set([
   'Anthropic',
   'API URL',
   'API2GPT',
+  'AutoDL',
   'AccessKey / SecretAccessKey',
   'AZURE_OPENAI_ENDPOINT *',
   'Baidu V2',

@@ -43,7 +43,11 @@ func Distribute() func(c *gin.Context) {
 				abortWithClientDisconnect(c, err, bodyReadStart)
 				return
 			}
-			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+			statusCode := http.StatusBadRequest
+			if common.IsRequestBodyTooLargeError(err) {
+				statusCode = http.StatusRequestEntityTooLarge
+			}
+			abortWithOpenAiMessage(c, statusCode, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
 			return
 		}
 		imageRequirement, err := getImageSelectionRequirement(c, modelRequest.Model)
@@ -67,6 +71,10 @@ func Distribute() func(c *gin.Context) {
 			}
 			if channel.Status != common.ChannelStatusEnabled {
 				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
+				return
+			}
+			if !channelSupportsRequestPath(channel, c.Request.URL.Path, modelRequest.Model) {
+				abortWithOpenAiMessage(c, http.StatusBadRequest, fmt.Sprintf("channel #%d does not support request path %s", channel.Id, c.Request.URL.Path))
 				return
 			}
 			if !model.ChannelSupportsImageSelection(channel, modelRequest.Model, imageRequirement) {
@@ -249,6 +257,10 @@ func Distribute() func(c *gin.Context) {
 				}
 			}
 		}
+		if channel != nil && !channelSupportsRequestPath(channel, c.Request.URL.Path, modelRequest.Model) {
+			abortWithOpenAiMessage(c, http.StatusBadRequest, fmt.Sprintf("channel #%d does not support request path %s", channel.Id, c.Request.URL.Path))
+			return
+		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
 		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
 		c.Next()
@@ -316,6 +328,10 @@ func abortWithClientDisconnect(c *gin.Context, err error, bodyReadStart time.Tim
 	if errors.Is(err, common.ErrUploadIdleTimeout) {
 		c.Header("Connection", "close")
 		c.Header("Retry-After", "1")
+		if c.Request.URL.Path == "/v2/video_generation" || strings.HasPrefix(c.Request.URL.Path, "/v2/query/video_generation/") {
+			abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorUploadTimedOut), types.ErrorCodeReadRequestBodyFailed)
+			return
+		}
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"error": gin.H{
 				"message": common.MessageWithRequestId(i18n.T(c, i18n.MsgDistributorUploadTimedOut), c.GetString(common.RequestIdKey)),
@@ -331,10 +347,16 @@ func abortWithClientDisconnect(c *gin.Context, err error, bodyReadStart time.Tim
 }
 
 // channelSupportsRequestPath reports whether a channel can serve the request path.
-// Only Advanced Custom (type 58) channels are path-checked; all other channel types
-// always pass. A type-58 channel is usable only when one of its routes matches.
+// MiniMax V2 video generation is implemented by AutoDL channels. Advanced Custom
+// channels are usable only when one of their configured routes matches.
 func channelSupportsRequestPath(channel *model.Channel, requestPath string, requestModel string) bool {
 	if channel == nil {
+		return false
+	}
+	if channel.Type == constant.ChannelTypeAutoDL {
+		return requestPath == "/v2/video_generation"
+	}
+	if requestPath == "/v2/video_generation" {
 		return false
 	}
 	if channel.Type != constant.ChannelTypeAdvancedCustom {
@@ -396,6 +418,20 @@ func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		return nil, err
+	}
+	if c.Request.URL.Path == "/v2/video_generation" {
+		if _, err := storage.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
+		var modelRequest ModelRequest
+		if err := common.DecodeJson(storage, &modelRequest); err != nil {
+			return nil, err
+		}
+		if _, err := storage.Seek(0, io.SeekStart); err != nil {
+			return nil, err
+		}
+		c.Request.Body = io.NopCloser(storage)
+		return &modelRequest, nil
 	}
 	requestBody, err := storage.Bytes()
 	if err != nil {
@@ -484,6 +520,17 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		}
 		c.Set("platform", string(constant.TaskPlatformSuno))
 		c.Set("relay_mode", relayMode)
+	} else if c.Request.URL.Path == "/v2/video_generation" {
+		req, err := getModelFromRequest(c)
+		if err != nil {
+			return nil, false, err
+		}
+		modelRequest.Model = req.Model
+		c.Set("relay_mode", relayconstant.RelayModeVideoSubmit)
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v2/query/video_generation/") {
+		shouldSelectChannel = false
+		modelRequest.Model = getTaskOriginModelName(c)
+		c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
 	} else if strings.Contains(c.Request.URL.Path, "/v1/videos/") && strings.HasSuffix(c.Request.URL.Path, "/remix") {
 		relayMode := relayconstant.RelayModeVideoSubmit
 		c.Set("relay_mode", relayMode)

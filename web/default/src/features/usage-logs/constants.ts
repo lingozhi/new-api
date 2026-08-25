@@ -185,6 +185,7 @@ export const TASK_ACTIONS = {
   FIRST_TAIL_GENERATE: 'firstTailGenerate', // 首尾生视频
   REFERENCE_GENERATE: 'referenceGenerate', // 参照生视频
   REMIX_GENERATE: 'remixGenerate', // 视频 Remix
+  VIDEO_GENERATION_V2: 'videoGenerationV2', // MiniMax V2 视频生成
 } as const
 
 /**
@@ -298,6 +299,10 @@ export const TASK_ACTION_MAPPINGS: Record<string, StatusMapping> = {
   },
   [TASK_ACTIONS.REMIX_GENERATE]: {
     label: 'Video Remix',
+    variant: 'blue',
+  },
+  [TASK_ACTIONS.VIDEO_GENERATION_V2]: {
+    label: 'Video Generation V2',
     variant: 'blue',
   },
 }

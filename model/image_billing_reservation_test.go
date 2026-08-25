@@ -137,6 +137,367 @@ func seedPreparedImageBillingReservation(t *testing.T, suffix string, quota int)
 	return user, token, task
 }
 
+func TestActiveAutoDLReservationStopsEscrowingAfterTaskTerminalState(t *testing.T) {
+	truncateTables(t)
+
+	user := &User{
+		Username: "autodl-active-reservation-user",
+		Password: "password",
+		Quota:    1000,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}
+	require.NoError(t, DB.Create(user).Error)
+	now := common.GetTimestamp()
+	task := &Task{
+		TaskID:     "task_autodl_active_reservation",
+		Platform:   constant.TaskPlatformAutoDL,
+		UserId:     user.Id,
+		Status:     TaskStatusCheckpointPending,
+		Progress:   "0%",
+		SubmitTime: now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	require.NoError(t, DB.Create(task).Error)
+	require.NoError(t, DB.Create(&ImageBillingReservation{
+		TaskID:         task.TaskID,
+		RequestID:      "request_autodl_active_reservation",
+		UserID:         user.Id,
+		ExpectedQuota:  250,
+		FundingSource:  "wallet",
+		WalletReserved: 250,
+		Status:         ImageBillingReservationActive,
+	}).Error)
+
+	reserved, err := pendingImageWalletReservationQuota(DB, user.Id)
+	require.NoError(t, err)
+	assert.EqualValues(t, 250, reserved)
+
+	require.NoError(t, DB.Model(task).Updates(map[string]any{
+		"status":   TaskStatusSuccess,
+		"progress": "100%",
+	}).Error)
+	reserved, err = pendingImageWalletReservationQuota(DB, user.Id)
+	require.NoError(t, err)
+	assert.Zero(t, reserved)
+}
+
+func TestAutoDLReservationActivatesCheckpointBeforeProviderPolling(t *testing.T) {
+	truncateTables(t)
+
+	user := &User{
+		Username: "autodl-activation-user",
+		Password: "password",
+		Quota:    1000,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}
+	require.NoError(t, DB.Create(user).Error)
+	token := &Token{
+		UserId:      user.Id,
+		Key:         "autodl-activation-token",
+		Name:        "AutoDL activation",
+		Status:      common.TokenStatusEnabled,
+		RemainQuota: 1000,
+	}
+	require.NoError(t, DB.Create(token).Error)
+	now := common.GetTimestamp()
+	task := &Task{
+		TaskID:     "task_autodl_activation",
+		Platform:   constant.TaskPlatformAutoDL,
+		UserId:     user.Id,
+		Status:     TaskStatusReserving,
+		Progress:   "0%",
+		Quota:      200,
+		SubmitTime: now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	require.NoError(t, InsertPreparedTaskBillingReservation(task, nil, &ImageBillingReservation{
+		TaskID:        task.TaskID,
+		RequestID:     "request_autodl_activation",
+		UserID:        user.Id,
+		TokenID:       token.Id,
+		TokenRequired: true,
+		ExpectedQuota: task.Quota,
+	}))
+	require.NoError(t, ReserveImageTaskWalletQuota(task.TaskID, user.Id, task.Quota))
+	require.NoError(t, ReserveImageTaskTokenQuota(task.TaskID, token.Id, token.Key, task.Quota))
+
+	activated, err := ActivatePreparedAutoDLTaskCheckpoint(task)
+	require.NoError(t, err)
+	assert.True(t, activated)
+	assert.EqualValues(t, TaskStatusCheckpointPending, task.Status)
+	assert.Empty(t, GetAllUnFinishSyncTasks(10))
+
+	reservation, err := GetImageBillingReservation(task.TaskID)
+	require.NoError(t, err)
+	assert.Equal(t, ImageBillingReservationActive, reservation.Status)
+	assert.Equal(t, 200, reservation.WalletReserved)
+	assert.Equal(t, 200, reservation.TokenReserved)
+
+	completed, err := task.CompleteSubmissionCheckpoint(
+		"autodl-upstream-task",
+		[]byte(`{"code":"Success","data":{"status":"QUEUED"}}`),
+		200,
+	)
+	require.NoError(t, err)
+	assert.True(t, completed)
+	require.Len(t, GetAllUnFinishSyncTasks(10), 1)
+}
+
+func TestActiveAutoDLReservationRefundRestoresLegacyWalletAndTokenAcrossQuotaCeiling(t *testing.T) {
+	truncateTables(t)
+
+	const reservedQuota = 100
+	legacyBalance := common.MaxQuota + reservedQuota
+	user := &User{
+		Username: "autodl-legacy-refund-user",
+		Password: "password",
+		Quota:    legacyBalance,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}
+	require.NoError(t, DB.Create(user).Error)
+	token := &Token{
+		UserId:      user.Id,
+		Key:         "autodl-legacy-refund-token",
+		Status:      common.TokenStatusEnabled,
+		RemainQuota: legacyBalance,
+	}
+	require.NoError(t, DB.Create(token).Error)
+
+	now := common.GetTimestamp()
+	task := &Task{
+		TaskID:     "task_autodl_legacy_refund",
+		Platform:   constant.TaskPlatformAutoDL,
+		UserId:     user.Id,
+		Status:     TaskStatusReserving,
+		Progress:   "0%",
+		Quota:      reservedQuota,
+		SubmitTime: now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	require.NoError(t, InsertPreparedTaskBillingReservation(task, nil, &ImageBillingReservation{
+		TaskID:        task.TaskID,
+		RequestID:     "request_autodl_legacy_refund",
+		UserID:        user.Id,
+		TokenID:       token.Id,
+		TokenRequired: true,
+		ExpectedQuota: reservedQuota,
+	}))
+	require.NoError(t, ReserveImageTaskWalletQuota(task.TaskID, user.Id, reservedQuota))
+	require.NoError(t, ReserveImageTaskTokenQuota(task.TaskID, token.Id, token.Key, reservedQuota))
+	require.NoError(t, DB.First(user, user.Id).Error)
+	assert.Equal(t, common.MaxQuota, user.Quota)
+	require.NoError(t, DB.First(token, token.Id).Error)
+	assert.Equal(t, common.MaxQuota, token.RemainQuota)
+	assert.Equal(t, reservedQuota, token.UsedQuota)
+
+	activated, err := ActivatePreparedAutoDLTaskCheckpoint(task)
+	require.NoError(t, err)
+	require.True(t, activated)
+	assert.True(t, task.PrivateData.WalletLegacyDebit)
+	assert.True(t, task.PrivateData.TokenLegacyDebit)
+
+	fromStatus := task.Status
+	task.Status = TaskStatusFailure
+	task.Progress = "100%"
+	task.FailReason = "provider submission failed"
+	task.Data = []byte(`{"code":"Success","data":{"status":"CANCELLED"}}`)
+	task.FinishTime = common.GetTimestamp()
+	handled, won, err := FailActiveAutoDLTaskBillingReservation(task, fromStatus)
+	require.NoError(t, err)
+	assert.True(t, handled)
+	assert.True(t, won)
+
+	require.NoError(t, DB.First(user, user.Id).Error)
+	assert.Equal(t, legacyBalance, user.Quota)
+	require.NoError(t, DB.First(token, token.Id).Error)
+	assert.Equal(t, legacyBalance, token.RemainQuota)
+	assert.Zero(t, token.UsedQuota)
+	var durableTask Task
+	require.NoError(t, DB.First(&durableTask, task.ID).Error)
+	assert.Equal(t, TaskStatus(TaskStatusFailure), durableTask.Status)
+	assert.Equal(t, task.FailReason, durableTask.FailReason)
+	assert.JSONEq(t, string(task.Data), string(durableTask.Data))
+	reservation, err := GetImageBillingReservation(task.TaskID)
+	require.NoError(t, err)
+	assert.Equal(t, ImageBillingReservationRefunded, reservation.Status)
+	assert.Zero(t, reservation.WalletReserved)
+	assert.Zero(t, reservation.TokenReserved)
+
+	handled, won, err = FailActiveAutoDLTaskBillingReservation(task, fromStatus)
+	require.NoError(t, err)
+	assert.True(t, handled)
+	assert.False(t, won)
+}
+
+func TestRefundedAutoDLReservationRetriesTokenCacheReconciliation(t *testing.T) {
+	redisServer := useImageTaskTestRedis(t)
+	user, token, task := seedPreparedImageBillingReservation(t, "autodl-refund-cache-retry", 100)
+	populateImageReservationTestCache(t, redisServer, user, token)
+	require.NoError(t, DB.Model(task).Update("platform", constant.TaskPlatformAutoDL).Error)
+	task.Platform = constant.TaskPlatformAutoDL
+	require.NoError(t, ReserveImageTaskWalletQuota(task.TaskID, user.Id, 100))
+	require.NoError(t, ReserveImageTaskTokenQuota(task.TaskID, token.Id, token.Key, 100))
+	task.Quota = 100
+	activated, err := ActivatePreparedAutoDLTaskCheckpoint(task)
+	require.NoError(t, err)
+	require.True(t, activated)
+
+	healthyClient := common.RDB
+	failedClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	failedClient.AddHook(&failNextEvalRedisHook{})
+	common.RDB = failedClient
+	fromStatus := task.Status
+	task.Status = TaskStatusFailure
+	task.Progress = "100%"
+	task.FailReason = "provider failed"
+	task.FinishTime = common.GetTimestamp()
+	handled, won, err := FailActiveAutoDLTaskBillingReservation(task, fromStatus)
+	require.NoError(t, err)
+	assert.True(t, handled)
+	assert.True(t, won)
+	common.RDB = healthyClient
+	require.NoError(t, failedClient.Close())
+
+	reservation, err := GetImageBillingReservation(task.TaskID)
+	require.NoError(t, err)
+	assert.Equal(t, ImageBillingReservationRefunded, reservation.Status)
+	assert.Zero(t, reservation.TokenReserved)
+	assert.Zero(t, reservation.CacheReconciledAt)
+
+	handled, won, err = FailActiveAutoDLTaskBillingReservation(task, fromStatus)
+	require.NoError(t, err)
+	assert.True(t, handled)
+	assert.False(t, won)
+	reservation, err = GetImageBillingReservation(task.TaskID)
+	require.NoError(t, err)
+	assert.Positive(t, reservation.CacheReconciledAt)
+	assert.False(t, redisServer.Exists(getUserCacheKey(user.Id)))
+	assert.False(t, redisServer.Exists("token:"+common.GenerateHMAC(token.Key)))
+	require.NoError(t, DB.First(user, user.Id).Error)
+	assert.Equal(t, 1000, user.Quota)
+	require.NoError(t, DB.First(token, token.Id).Error)
+	assert.Equal(t, 1000, token.RemainQuota)
+}
+
+func TestPreparedAutoDLReservationCanBeReloadedAfterAmbiguousInsertCommit(t *testing.T) {
+	truncateTables(t)
+
+	user := &User{
+		Username: "autodl-ambiguous-insert-user",
+		Password: "password",
+		Quota:    1000,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}
+	require.NoError(t, DB.Create(user).Error)
+	token := &Token{
+		UserId:      user.Id,
+		Key:         "autodl-ambiguous-insert-token",
+		Status:      common.TokenStatusEnabled,
+		RemainQuota: 1000,
+	}
+	require.NoError(t, DB.Create(token).Error)
+	now := common.GetTimestamp()
+	task := &Task{
+		TaskID:     "task_autodl_ambiguous_insert",
+		Platform:   constant.TaskPlatformAutoDL,
+		UserId:     user.Id,
+		Status:     TaskStatusReserving,
+		Quota:      200,
+		SubmitTime: now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	reservation := &ImageBillingReservation{
+		TaskID:        task.TaskID,
+		RequestID:     "request_autodl_ambiguous_insert",
+		UserID:        user.Id,
+		TokenID:       token.Id,
+		TokenRequired: true,
+		ExpectedQuota: task.Quota,
+	}
+
+	originalDB := DB
+	faultDB := originalDB.Session(&gorm.Session{NewDB: true, Context: context.Background()})
+	faultPool := &ambiguousCommitPool{ConnPool: originalDB.Config.ConnPool}
+	faultDB.Config.ConnPool = faultPool
+	faultDB.Statement.ConnPool = faultPool
+	DB = faultDB
+	err := InsertPreparedTaskBillingReservation(task, nil, reservation)
+	DB = originalDB
+	require.ErrorContains(t, err, "injected ambiguous commit result")
+
+	durableTask, durableReservation, exists, err := GetPreparedTaskBillingReservation(task.TaskID, constant.TaskPlatformAutoDL)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.EqualValues(t, TaskStatusReserving, durableTask.Status)
+	assert.Equal(t, reservation.RequestID, durableReservation.RequestID)
+	assert.Equal(t, reservation.ExpectedQuota, durableReservation.ExpectedQuota)
+}
+
+func TestPreparedAutoDLActivationAcceptsAmbiguousCommittedState(t *testing.T) {
+	truncateTables(t)
+
+	user := &User{
+		Username: "autodl-ambiguous-activation-user",
+		Password: "password",
+		Quota:    1000,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}
+	require.NoError(t, DB.Create(user).Error)
+	token := &Token{
+		UserId:      user.Id,
+		Key:         "autodl-ambiguous-activation-token",
+		Status:      common.TokenStatusEnabled,
+		RemainQuota: 1000,
+	}
+	require.NoError(t, DB.Create(token).Error)
+	now := common.GetTimestamp()
+	task := &Task{
+		TaskID:     "task_autodl_ambiguous_activation",
+		Platform:   constant.TaskPlatformAutoDL,
+		UserId:     user.Id,
+		Status:     TaskStatusReserving,
+		Quota:      200,
+		SubmitTime: now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}
+	require.NoError(t, InsertPreparedTaskBillingReservation(task, nil, &ImageBillingReservation{
+		TaskID:        task.TaskID,
+		RequestID:     "request_autodl_ambiguous_activation",
+		UserID:        user.Id,
+		TokenID:       token.Id,
+		TokenRequired: true,
+		ExpectedQuota: task.Quota,
+	}))
+	require.NoError(t, ReserveImageTaskWalletQuota(task.TaskID, user.Id, task.Quota))
+	require.NoError(t, ReserveImageTaskTokenQuota(task.TaskID, token.Id, token.Key, task.Quota))
+
+	originalDB := DB
+	faultDB := originalDB.Session(&gorm.Session{NewDB: true, Context: context.Background()})
+	faultPool := &ambiguousCommitPool{ConnPool: originalDB.Config.ConnPool}
+	faultDB.Config.ConnPool = faultPool
+	faultDB.Statement.ConnPool = faultPool
+	DB = faultDB
+	activated, err := ActivatePreparedAutoDLTaskCheckpoint(task)
+	DB = originalDB
+
+	require.NoError(t, err)
+	assert.False(t, activated)
+	assert.EqualValues(t, TaskStatusCheckpointPending, task.Status)
+	var durable Task
+	require.NoError(t, DB.First(&durable, task.ID).Error)
+	assert.EqualValues(t, TaskStatusCheckpointPending, durable.Status)
+}
+
 func populateImageReservationTestCache(t *testing.T, redisServer interface{ SetTTL(string, time.Duration) }, user *User, token *Token) {
 	t.Helper()
 	require.NoError(t, populateUserCache(*user))

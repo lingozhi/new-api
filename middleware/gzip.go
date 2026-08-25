@@ -140,6 +140,9 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 			maxMB = 32
 		}
 		maxBytes := int64(maxMB) << 20
+		if c.Request.URL.Path == "/v2/video_generation" && maxBytes > common.MaxMiniMaxVideoGenerationV2BodyBytes {
+			maxBytes = common.MaxMiniMaxVideoGenerationV2BodyBytes
+		}
 
 		// Cut a stalled upload loose before the client's own timeout does. Wraps
 		// the raw body so it governs the compressed stream — the bytes that
@@ -184,6 +187,10 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 			gzipReader, err := gzip.NewReader(origBody)
 			if err != nil {
 				_ = origBody.Close()
+				if c.Request.URL.Path == "/v2/video_generation" {
+					abortWithOpenAiMessage(c, http.StatusBadRequest, "invalid compressed request body")
+					return
+				}
 				c.AbortWithStatus(http.StatusBadRequest)
 				return
 			}
@@ -213,6 +220,10 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 			zstdReader, err := zstd.NewReader(origBody)
 			if err != nil {
 				_ = origBody.Close()
+				if c.Request.URL.Path == "/v2/video_generation" {
+					abortWithOpenAiMessage(c, http.StatusBadRequest, "invalid compressed request body")
+					return
+				}
 				c.AbortWithStatus(http.StatusBadRequest)
 				return
 			}

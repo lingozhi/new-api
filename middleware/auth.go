@@ -242,11 +242,7 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		key := c.Request.Header.Get("Authorization")
 		if key == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"message": common.TranslateMessage(c, i18n.MsgTokenNotProvided),
-			})
-			c.Abort()
+			abortTokenAuthReadOnly(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenNotProvided))
 			return
 		}
 		if strings.HasPrefix(key, "Bearer ") || strings.HasPrefix(key, "bearer ") {
@@ -259,29 +255,18 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 		token, err := model.GetTokenByKey(key, false)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
-				c.JSON(http.StatusUnauthorized, gin.H{
-					"success": false,
-					"message": common.TranslateMessage(c, i18n.MsgTokenInvalid),
-				})
+				abortTokenAuthReadOnly(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenInvalid))
 			} else {
 				common.SysLog("TokenAuthReadOnly GetTokenByKey database error: " + err.Error())
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"success": false,
-					"message": common.TranslateMessage(c, i18n.MsgDatabaseError),
-				})
+				abortTokenAuthReadOnly(c, http.StatusInternalServerError, common.TranslateMessage(c, i18n.MsgDatabaseError))
 			}
-			c.Abort()
 			return
 		}
 
 		// TokenAuthReadOnly must keep allowing other token states to query read-only
 		// data, such as token usage logs; only explicitly disabled tokens are denied.
 		if token.Status == common.TokenStatusDisabled {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"success": false,
-				"message": common.TranslateMessage(c, i18n.MsgTokenStatusUnavailable),
-			})
-			c.Abort()
+			abortTokenAuthReadOnly(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenStatusUnavailable))
 			return
 		}
 		if !validateTokenIP(c, token) {
@@ -291,19 +276,11 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 		userCache, err := model.GetUserCache(token.UserId)
 		if err != nil {
 			common.SysLog(fmt.Sprintf("TokenAuthReadOnly GetUserCache error for user %d: %v", token.UserId, err))
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"message": common.TranslateMessage(c, i18n.MsgDatabaseError),
-			})
-			c.Abort()
+			abortTokenAuthReadOnly(c, http.StatusInternalServerError, common.TranslateMessage(c, i18n.MsgDatabaseError))
 			return
 		}
 		if userCache.Status != common.UserStatusEnabled {
-			c.JSON(http.StatusForbidden, gin.H{
-				"success": false,
-				"message": common.TranslateMessage(c, i18n.MsgAuthUserBanned),
-			})
-			c.Abort()
+			abortTokenAuthReadOnly(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthUserBanned))
 			return
 		}
 
@@ -312,6 +289,18 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 		c.Set("token_key", token.Key)
 		c.Next()
 	}
+}
+
+func abortTokenAuthReadOnly(c *gin.Context, statusCode int, message string) {
+	if strings.HasPrefix(c.Request.URL.Path, "/v2/query/video_generation/") {
+		abortWithOpenAiMessage(c, statusCode, message)
+		return
+	}
+	c.JSON(statusCode, gin.H{
+		"success": false,
+		"message": message,
+	})
+	c.Abort()
 }
 
 func TokenAuth() func(c *gin.Context) {

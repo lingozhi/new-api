@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
@@ -48,6 +49,10 @@ func VideoProxy(c *gin.Context) {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
 		return
 	}
+	if task.Platform == constant.TaskPlatformAutoDL && !relay.IsAutoDLTaskWithinQueryWindow(task, time.Now()) {
+		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
+		return
+	}
 
 	if task.Status != model.TaskStatusSuccess {
 		videoProxyError(c, http.StatusBadRequest, "invalid_request_error",
@@ -55,21 +60,37 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
-	channel, err := model.CacheGetChannel(task.ChannelId)
-	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to get channel for task %s: %s", taskID, err.Error()))
-		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to retrieve channel information")
-		return
-	}
-	baseURL := channel.GetBaseURL()
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
+	isAutoDLTask := task.Platform == constant.TaskPlatformAutoDL
+	var channel *model.Channel
+	baseURL := ""
+	proxy := ""
+	client := service.GetSSRFProtectedHTTPClient()
+	if isAutoDLTask {
+		// Successful AutoDL tasks own a persisted, strictly validated result URL.
+		// Channel deletion must not make that durable result inaccessible; refresh
+		// remains best effort and can independently look up the channel if present.
+		relay.RefreshAutoDLSuccessTask(c.Request.Context(), task)
+		// AutoDL result URLs originate from task output and can expire or be
+		// attacker-influenced. Resolve and dial them locally under the strict
+		// protected fetch policy; never delegate DNS to a channel/env proxy.
+		client = service.GetStrictHTTPSDirectSSRFProtectedHTTPClient()
+	} else {
+		var err error
+		channel, err = model.CacheGetChannel(task.ChannelId)
+		if err != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to get channel for task %s: %s", taskID, err.Error()))
+			videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to retrieve channel information")
+			return
+		}
+		baseURL = channel.GetBaseURL()
+		if baseURL == "" {
+			baseURL = "https://api.openai.com"
+		}
+		proxy = channel.GetSetting().Proxy
 	}
 
 	var videoURL string
-	proxy := channel.GetSetting().Proxy
-	client := service.GetSSRFProtectedHTTPClient()
-	if proxy != "" {
+	if !isAutoDLTask && proxy != "" {
 		// 渠道代理路径的连接由代理侧建立，无法做拨号时逐 IP 校验，
 		// 因此后面对 videoURL 保留请求前的一次性 SSRF 校验。
 		client, err = service.GetHttpClientWithProxy(proxy)
@@ -89,34 +110,38 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
-	switch channel.Type {
-	case constant.ChannelTypeGemini:
-		apiKey := task.PrivateData.Key
-		if apiKey == "" {
-			logger.LogError(c.Request.Context(), fmt.Sprintf("Missing stored API key for Gemini task %s", taskID))
-			videoProxyError(c, http.StatusInternalServerError, "server_error", "API key not stored for task")
-			return
-		}
-		videoURL, err = getGeminiVideoURL(channel, task, apiKey)
-		if err != nil {
-			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve Gemini video URL for task %s: %s", taskID, err.Error()))
-			videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to resolve Gemini video URL")
-			return
-		}
-		req.Header.Set("x-goog-api-key", apiKey)
-	case constant.ChannelTypeVertexAi:
-		videoURL, err = getVertexVideoURL(channel, task)
-		if err != nil {
-			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve Vertex video URL for task %s: %s", taskID, err.Error()))
-			videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to resolve Vertex video URL")
-			return
-		}
-	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
-		videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
-		req.Header.Set("Authorization", "Bearer "+channel.Key)
-	default:
-		// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
+	if isAutoDLTask {
 		videoURL = task.GetResultURL()
+	} else {
+		switch channel.Type {
+		case constant.ChannelTypeGemini:
+			apiKey := task.PrivateData.Key
+			if apiKey == "" {
+				logger.LogError(c.Request.Context(), fmt.Sprintf("Missing stored API key for Gemini task %s", taskID))
+				videoProxyError(c, http.StatusInternalServerError, "server_error", "API key not stored for task")
+				return
+			}
+			videoURL, err = getGeminiVideoURL(channel, task, apiKey)
+			if err != nil {
+				logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve Gemini video URL for task %s: %s", taskID, err.Error()))
+				videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to resolve Gemini video URL")
+				return
+			}
+			req.Header.Set("x-goog-api-key", apiKey)
+		case constant.ChannelTypeVertexAi:
+			videoURL, err = getVertexVideoURL(channel, task)
+			if err != nil {
+				logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to resolve Vertex video URL for task %s: %s", taskID, err.Error()))
+				videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to resolve Vertex video URL")
+				return
+			}
+		case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
+			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
+			req.Header.Set("Authorization", "Bearer "+channel.Key)
+		default:
+			// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
+			videoURL = task.GetResultURL()
+		}
 	}
 
 	videoURL = strings.TrimSpace(videoURL)
@@ -135,47 +160,70 @@ func VideoProxy(c *gin.Context) {
 	}
 
 	var validateErr error
-	if proxy == "" {
+	if isAutoDLTask {
+		validateErr = service.ValidateStrictHTTPSProtectedFetchURL(videoURL)
+	} else if proxy == "" {
 		validateErr = service.ValidateSSRFProtectedFetchURL(videoURL)
 	} else {
 		fetchSetting := system_setting.GetFetchSetting()
 		validateErr = common.ValidateURLWithFetchSetting(videoURL, fetchSetting.EnableSSRFProtection, fetchSetting.AllowPrivateIp, fetchSetting.DomainFilterMode, fetchSetting.IpFilterMode, fetchSetting.DomainList, fetchSetting.IpList, fetchSetting.AllowedPorts, fetchSetting.ApplyIPFilterForDomain)
 	}
 	if validateErr != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Video URL blocked for task %s: %v", taskID, validateErr))
-		videoProxyError(c, http.StatusForbidden, "server_error", fmt.Sprintf("request blocked: %v", validateErr))
+		if isAutoDLTask {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("AutoDL video URL blocked for task %s", taskID))
+			videoProxyError(c, http.StatusForbidden, "server_error", "request blocked")
+		} else {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Video URL blocked for task %s: %v", taskID, validateErr))
+			videoProxyError(c, http.StatusForbidden, "server_error", fmt.Sprintf("request blocked: %v", validateErr))
+		}
 		return
 	}
 
 	req.URL, err = url.Parse(videoURL)
 	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to parse URL %s: %s", videoURL, err.Error()))
+		if isAutoDLTask {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to parse AutoDL video URL for task %s", taskID))
+		} else {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to parse video URL for task %s: %s", taskID, err.Error()))
+		}
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to create proxy request")
 		return
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to fetch video from %s: %s", videoURL, err.Error()))
+		if isAutoDLTask {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to fetch AutoDL video for task %s", taskID))
+		} else {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to fetch video for task %s: %s", taskID, err.Error()))
+		}
 		videoProxyError(c, http.StatusBadGateway, "server_error", "Failed to fetch video content")
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Upstream returned status %d for %s", resp.StatusCode, videoURL))
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Video upstream returned status %d for task %s", resp.StatusCode, taskID))
 		videoProxyError(c, http.StatusBadGateway, "server_error",
 			fmt.Sprintf("Upstream service returned status %d", resp.StatusCode))
 		return
 	}
 
-	for key, values := range resp.Header {
-		for _, value := range values {
-			c.Writer.Header().Add(key, value)
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
+	if isAutoDLTask && !strings.HasPrefix(contentType, "video/") && contentType != "application/octet-stream" {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("AutoDL result for task %s returned non-video content type %q", taskID, contentType))
+		videoProxyError(c, http.StatusBadGateway, "server_error", "Upstream did not return video content")
+		return
+	}
+
+	for _, key := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
+		if value := resp.Header.Get(key); value != "" {
+			c.Writer.Header().Set(key, value)
 		}
 	}
 
-	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
+	c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
+	c.Writer.Header().Set("Cache-Control", "private, no-store")
 	c.Writer.WriteHeader(resp.StatusCode)
 	if _, err = io.Copy(c.Writer, resp.Body); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Failed to stream video content: %s", err.Error()))
@@ -209,7 +257,7 @@ func writeVideoDataURL(c *gin.Context, dataURL string) error {
 	}
 
 	c.Writer.Header().Set("Content-Type", mimeType)
-	c.Writer.Header().Set("Cache-Control", "public, max-age=86400")
+	c.Writer.Header().Set("Cache-Control", "private, no-store")
 	c.Writer.WriteHeader(http.StatusOK)
 	_, err = c.Writer.Write(videoBytes)
 	return err

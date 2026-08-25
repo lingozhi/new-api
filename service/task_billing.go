@@ -128,6 +128,13 @@ func taskBillingAdjustmentSpecs(task *model.Task, phase string, usageDelta int64
 // the rows is best-effort after commit; failed delivery remains owned by the
 // billing adjustment drainer.
 func commitTaskTransitionWithBilling(ctx context.Context, task *model.Task, fromStatus model.TaskStatus, phase string, usageDelta int64) (bool, error) {
+	if task != nil && task.Platform == constant.TaskPlatformAutoDL && task.Status == model.TaskStatusFailure {
+		handled, won, err := model.FailActiveAutoDLTaskBillingReservation(task, fromStatus)
+		if err != nil || handled {
+			return won, err
+		}
+	}
+
 	var specs []model.BillingAdjustmentSpec
 	var err error
 	if usageDelta != 0 {
