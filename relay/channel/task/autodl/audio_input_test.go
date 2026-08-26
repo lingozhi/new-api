@@ -100,7 +100,7 @@ func TestIndexTTSAdaptorNeverForwardsReferenceURLsToAutoDL(t *testing.T) {
 		"prompt_text":"secure references",
 		"prompt_simple":"https://media.example.com/voice.wav?signature=voice",
 		"emo_ref_audio":"https://media.example.com/emotion.mp3?signature=emotion",
-		"emo_control_method":"使用情感参考音频"
+		"emo_control_method":"与音色参考音频相同"
 	}`))
 	context.Request.Header.Set("Content-Type", "application/json")
 	context.Request.Header.Set("Idempotency-Key", "indextts2-reference-test")

@@ -84,8 +84,6 @@ describe('IndexTTS2 audio speech API documentation', () => {
     assert.deepEqual(byName.get('emo_surprised')?.enumValues, ['0'])
     assert.deepEqual(byName.get('emo_control_method')?.enumValues, [
       '与音色参考音频相同',
-      '使用情感参考音频',
-      '使用情感向量控制',
     ])
   })
 
@@ -104,7 +102,7 @@ describe('IndexTTS2 audio speech API documentation', () => {
     assert.match(sample, /"prompt_simple": "<REFERENCE_AUDIO_URL>"/)
     assert.match(sample, /"emo_ref_audio": "<EMOTION_AUDIO_URL>"/)
     assert.match(sample, /"emo_happy": 0.5/)
-    assert.match(sample, /"emo_control_method": "使用情感参考音频"/)
+    assert.match(sample, /"emo_control_method": "与音色参考音频相同"/)
     assert.match(sample, /BODY_FILE="speech\.response"/)
     assert.ok(
       sample.indexOf('location=$(awk') < sample.indexOf('while [ "$status"')
@@ -186,7 +184,7 @@ describe('IndexTTS2 audio speech API documentation', () => {
     assert.match(guide, /30 MiB/)
     assert.match(guide, /64 MiB/)
     assert.match(guide, /emo_happy, emo_angry, emo_sad, emo_afraid/)
-    assert.match(guide, /emo_surprised currently accepts only 0/)
+    assert.match(guide, /emo_surprised currently accepts only the string "0"/)
     assert.match(guide, /cannot be mixed with direct emo_\* fields/)
     assert.match(guide, /stream_format=sse is unsupported/)
   })

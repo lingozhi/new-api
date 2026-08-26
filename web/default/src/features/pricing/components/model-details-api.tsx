@@ -845,7 +845,7 @@ function AudioSpeechContractNotice() {
         </li>
         <li>
           {t(
-            'emo_control_method selects the speaker reference, emotion reference audio, or emotion values. emo_random defaults to false; instructions and SSE streaming are unsupported.'
+            'emo_control_method currently supports only the speaker reference value. emo_random defaults to false; instructions and SSE streaming are unsupported.'
           )}
         </li>
       </ul>

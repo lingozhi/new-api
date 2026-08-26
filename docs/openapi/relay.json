@@ -2013,10 +2013,10 @@
                     "prompt_text": "你好，这是一段测试文本",
                     "emo_disgusted": 0,
                     "emo_ref_audio": "https://media.example.com/emotion.mp3",
-                    "emo_surprised": 0,
+                    "emo_surprised": "0",
                     "prompt_simple": "https://media.example.com/reference.wav",
                     "emo_melancholic": 0,
-                    "emo_control_method": "使用情感参考音频"
+                    "emo_control_method": "与音色参考音频相同"
                   }
                 }
               }
@@ -5053,11 +5053,9 @@
           },
           "emo_control_method": {
             "type": "string",
-            "description": "情绪控制模式。",
+            "description": "情绪控制模式；当前只开放沿用音色参考音频。",
             "enum": [
-              "与音色参考音频相同",
-              "使用情感参考音频",
-              "使用情感向量控制"
+              "与音色参考音频相同"
             ],
             "default": "与音色参考音频相同"
           },
@@ -5099,22 +5097,12 @@
             "default": 0
           },
           "emo_surprised": {
-            "description": "惊讶情绪保留参数；当前只接受数值 0 或字符串 \"0\"。",
-            "oneOf": [
-              {
-                "type": "number",
-                "enum": [
-                  0
-                ]
-              },
-              {
-                "type": "string",
-                "enum": [
-                  "0"
-                ]
-              }
+            "type": "string",
+            "description": "惊讶情绪保留枚举参数；当前只接受字符串 \"0\"。",
+            "enum": [
+              "0"
             ],
-            "default": 0
+            "default": "0"
           },
           "prompt_simple": {
             "type": "string",

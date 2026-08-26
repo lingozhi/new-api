@@ -76,7 +76,7 @@ func TestIndexTTS2MapsOpenAISpeechRequestToWorkflowPayload(t *testing.T) {
 	assert.Equal(t, float64(0), payload["emo_afraid"])
 	assert.Equal(t, float64(0), payload["emo_disgusted"])
 	assert.Equal(t, float64(0), payload["emo_melancholic"])
-	assert.Contains(t, []any{"0", float64(0)}, payload["emo_surprised"])
+	assert.Equal(t, "0", payload["emo_surprised"])
 	assert.Equal(t, float64(0.3), payload["emo_calm"])
 	assert.Equal(t, false, payload["emo_random"], "an explicit false value must be preserved")
 	assert.NotEmpty(t, payload["emo_control_method"])
@@ -99,14 +99,14 @@ func TestIndexTTS2MapsCompleteModelParametersToWorkflowPayload(t *testing.T) {
 		"emo_surprised":"0",
 		"prompt_simple":"https://media.example.com/speaker.wav",
 		"emo_melancholic":0,
-		"emo_control_method":"使用情感参考音频"
+		"emo_control_method":"与音色参考音频相同"
 	}`)
 	require.Nil(t, taskErr)
 
 	payload := indexTTSPayload(t, adaptor, info)
 	assert.Equal(t, "你好，这是一段测试文本", payload["prompt_text"])
 	assert.Equal(t, "https://media.example.com/speaker.wav", payload["prompt_simple"])
-	assert.Equal(t, "使用情感参考音频", payload["emo_control_method"])
+	assert.Equal(t, "与音色参考音频相同", payload["emo_control_method"])
 	assert.Equal(t, "https://media.example.com/emotion.mp3", payload["emo_ref_audio"])
 	assert.Equal(t, float64(0), payload["emo_sad"])
 	assert.Equal(t, float64(0.3), payload["emo_calm"])
@@ -115,7 +115,7 @@ func TestIndexTTS2MapsCompleteModelParametersToWorkflowPayload(t *testing.T) {
 	assert.Equal(t, float64(0), payload["emo_afraid"])
 	assert.Equal(t, float64(0), payload["emo_disgusted"])
 	assert.Equal(t, float64(0), payload["emo_melancholic"])
-	assert.Equal(t, float64(0), payload["emo_surprised"])
+	assert.Equal(t, "0", payload["emo_surprised"])
 	assert.Equal(t, false, payload["emo_random"])
 }
 
@@ -131,7 +131,7 @@ func TestIndexTTS2MapsEmotionReferenceAudio(t *testing.T) {
 	payload := indexTTSPayload(t, adaptor, info)
 	assert.Equal(t, "data:audio/wav;base64,UklGRg==", payload["prompt_simple"])
 	assert.Equal(t, "https://media.example.com/emotion.mp3", payload["emo_ref_audio"])
-	assert.Equal(t, "使用情感参考音频", payload["emo_control_method"])
+	assert.Equal(t, "与音色参考音频相同", payload["emo_control_method"])
 }
 
 func TestIndexTTS2DefaultsToVoiceReferenceEmotion(t *testing.T) {

@@ -89,14 +89,14 @@ func buildIndexTTSWorkflowRequest(request *dto.IndexTTS2SpeechRequest) (string, 
 		{name: "emo_melancholic", value: request.EmoMelancholic},
 		{name: "emo_sad", value: request.EmoSad},
 	}
-	hasDirectEmotionVector := len(request.EmoSurprised) > 0
+	hasDirectEmotionValues := len(request.EmoSurprised) > 0
 	for _, field := range directEmotionValues {
 		if field.value != nil {
-			hasDirectEmotionVector = true
+			hasDirectEmotionValues = true
 			break
 		}
 	}
-	hasDirectEmotionParameters := request.EmoControlMethod != nil || hasDirectEmotionVector ||
+	hasDirectEmotionParameters := request.EmoControlMethod != nil || hasDirectEmotionValues ||
 		request.EmoRandom != nil || request.EmoRefAudio != nil
 
 	var metadata dto.IndexTTS2Metadata
@@ -112,16 +112,10 @@ func buildIndexTTSWorkflowRequest(request *dto.IndexTTS2SpeechRequest) (string, 
 	if hasDirectEmotionParameters {
 		if request.EmoControlMethod != nil {
 			controlMethod := strings.TrimSpace(*request.EmoControlMethod)
-			switch controlMethod {
-			case indexTTSControlSameAsVoice, indexTTSControlEmotionAudio, indexTTSControlEmotionVector:
-				payload["emo_control_method"] = controlMethod
-			default:
-				return "", nil, errors.New("emo_control_method is not supported")
+			if controlMethod != indexTTSControlSameAsVoice {
+				return "", nil, errors.New("emo_control_method must be 与音色参考音频相同")
 			}
-		} else if request.EmoRefAudio != nil {
-			payload["emo_control_method"] = indexTTSControlEmotionAudio
-		} else if hasDirectEmotionVector || (request.EmoRandom != nil && *request.EmoRandom) {
-			payload["emo_control_method"] = indexTTSControlEmotionVector
+			payload["emo_control_method"] = controlMethod
 		}
 
 		for _, field := range directEmotionValues {
@@ -146,7 +140,7 @@ func buildIndexTTSWorkflowRequest(request *dto.IndexTTS2SpeechRequest) (string, 
 			if surprised != 0 {
 				return "", nil, errors.New("emo_surprised must be 0")
 			}
-			payload["emo_surprised"] = float64(0)
+			payload["emo_surprised"] = "0"
 		}
 
 		if request.EmoRandom != nil {
@@ -181,7 +175,6 @@ func buildIndexTTSWorkflowRequest(request *dto.IndexTTS2SpeechRequest) (string, 
 		if err != nil {
 			return "", nil, fmt.Errorf("emotion_audio is invalid: %w", err)
 		}
-		payload["emo_control_method"] = indexTTSControlEmotionAudio
 		payload["emo_ref_audio"] = emotionAudio
 	}
 
@@ -194,19 +187,19 @@ func buildIndexTTSWorkflowRequest(request *dto.IndexTTS2SpeechRequest) (string, 
 			if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1.4 {
 				return "", nil, errors.New("emotion_vector values are outside the allowed range of 0 to 1.4")
 			}
-			if index == 6 && value != 0 {
-				return "", nil, errors.New("emotion_vector surprised value must be 0")
+			if index == 6 {
+				if value != 0 {
+					return "", nil, errors.New("emotion_vector surprised value must be 0")
+				}
+				payload[indexTTSEmotionFields[index]] = "0"
+				continue
 			}
 			payload[indexTTSEmotionFields[index]] = value
 		}
-		payload["emo_control_method"] = indexTTSControlEmotionVector
 	}
 
 	if metadata.EmotionRandom != nil {
 		payload["emo_random"] = *metadata.EmotionRandom
-		if *metadata.EmotionRandom {
-			payload["emo_control_method"] = indexTTSControlEmotionVector
-		}
 	}
 
 	return workflowIndexTTS2, payload, nil

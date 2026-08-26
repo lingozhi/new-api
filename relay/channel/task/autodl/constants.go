@@ -17,11 +17,7 @@ const (
 	workflowIndexTTS2              = constant.AutoDLModelIndexTTS2
 )
 
-const (
-	indexTTSControlSameAsVoice   = "与音色参考音频相同"
-	indexTTSControlEmotionAudio  = "使用情感参考音频"
-	indexTTSControlEmotionVector = "使用情感向量控制"
-)
+const indexTTSControlSameAsVoice = "与音色参考音频相同"
 
 const (
 	autoDLStatusQueued    = "QUEUED"

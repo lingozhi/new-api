@@ -39,10 +39,10 @@ IndexTTS2 使用参考音频克隆音色：`prompt_simple` 必须是 WAV/MP3 音
   "prompt_text": "你好，这是一段测试文本",
   "emo_disgusted": 0,
   "emo_ref_audio": "https://media.example.com/emotion.mp3",
-  "emo_surprised": 0,
+  "emo_surprised": "0",
   "prompt_simple": "https://media.example.com/reference.wav",
   "emo_melancholic": 0,
-  "emo_control_method": "使用情感参考音频"
+  "emo_control_method": "与音色参考音频相同"
 }
 ```
 
@@ -76,14 +76,14 @@ curl --request POST "${BASE_URL}/v1/audio/speech" \
 | `emo_afraid` | number | 否 | 恐惧情绪强度，`0`–`1.4`，默认 `0` |
 | `emo_angry` | number | 否 | 愤怒情绪强度，`0`–`1.4`，默认 `0` |
 | `emo_calm` | number | 否 | 平静情绪强度，`0`–`1.4`，默认 `0` |
-| `emo_control_method` | string | 是 | `与音色参考音频相同`、`使用情感参考音频`、`使用情感向量控制` |
+| `emo_control_method` | string | 是 | 当前只能为 `与音色参考音频相同` |
 | `emo_disgusted` | number | 否 | 厌恶情绪强度，`0`–`1.4`，默认 `0` |
 | `emo_happy` | number | 否 | 开心情绪强度，`0`–`1.4`，默认 `0` |
 | `emo_melancholic` | number | 否 | 忧郁情绪强度，`0`–`1.4`，默认 `0` |
 | `emo_random` | boolean | 否 | 是否使用随机情绪，默认 `false` |
 | `emo_ref_audio` | string | 否 | 情绪参考音频；来源和安全限制与 `prompt_simple` 相同 |
 | `emo_sad` | number | 否 | 悲伤情绪强度，`0`–`1.4`，默认 `0` |
-| `emo_surprised` | number 或 string | 否 | 当前只能为 `0` 或 `"0"` |
+| `emo_surprised` | string | 否 | 枚举参数，当前只能为 `"0"` |
 | `prompt_simple` | string | 是 | 音色参考音频；公网 HTTPS WAV/MP3 URL 或允许的 base64 data URI |
 | `prompt_text` | string | 是 | 1–2048 个 Unicode 字符，不能只有空白 |
 
@@ -99,7 +99,7 @@ curl --request POST "${BASE_URL}/v1/audio/speech" \
 | `voice` | `prompt_simple` 的别名；两者同时提供时内容必须一致 |
 | `response_format` | 只能为 `wav` |
 | `speed` | 只能为 `1` |
-| `metadata.emotion_audio` | 映射为 `emo_ref_audio`，并选择情绪参考音频模式 |
+| `metadata.emotion_audio` | 映射为 `emo_ref_audio` |
 | `metadata.emotion_vector` | 8 项数组，依次映射 `happy`、`angry`、`sad`、`afraid`、`disgusted`、`melancholic`、`surprised`、`calm` |
 | `metadata.emotion_random` | 映射为 `emo_random` |
 
@@ -122,13 +122,11 @@ curl --request POST "${BASE_URL}/v1/audio/speech" \
 
 ### 情绪控制
 
-`emo_control_method` 决定实际情绪来源：
+`emo_control_method` 当前只开放 `与音色参考音频相同`，即沿用 `prompt_simple` 中的情绪。其他枚举值会在提交前返回 `400`。
 
-- `与音色参考音频相同`：沿用 `prompt_simple` 中的情绪。
-- `使用情感参考音频`：使用 `emo_ref_audio`；其他情绪数值仍可随请求发送。
-- `使用情感向量控制`：使用 `emo_happy`、`emo_angry`、`emo_sad`、`emo_afraid`、`emo_disgusted`、`emo_melancholic`、`emo_calm` 和 `emo_random`。
+`emo_ref_audio`、七个情绪数值和 `emo_random` 仍按完整模型参数接收并传递；在模型开放更多 `emo_control_method` 选项之前，客户端不能通过控制模式切换到独立情绪参考或情绪数值模式。
 
-七个可调情绪数值的范围均为 `0`–`1.4`。`emo_surprised` 是当前保留参数，只能为 `0`。所有可选情绪数值省略时按 `0` 处理，`emo_random` 省略时按 `false` 处理。
+七个可调情绪数值的范围均为 `0`–`1.4`。`emo_surprised` 是当前保留的字符串枚举参数，只能为 `"0"`。所有可选情绪数值省略时按 `0` 处理，`emo_random` 省略时按 `false` 处理。
 
 ## 响应
 
