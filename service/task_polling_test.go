@@ -386,7 +386,8 @@ func TestFreshAutoDLBillingReservationIsInvisibleToNormalPolling(t *testing.T) {
 	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return &autoDLPollingAdaptor{} }
 	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
 
-	summary := RunTaskPollingOnce(context.Background(), nil)
+	summary, err := RunTaskPollingOnce(context.Background(), nil)
+	require.NoError(t, err)
 
 	assert.Zero(t, summary.UnfinishedTasks)
 	var stored model.Task
@@ -397,6 +398,43 @@ func TestFreshAutoDLBillingReservationIsInvisibleToNormalPolling(t *testing.T) {
 	var adjustmentCount int64
 	require.NoError(t, model.DB.Model(&model.BillingAdjustmentOutbox{}).Count(&adjustmentCount).Error)
 	assert.Zero(t, adjustmentCount)
+}
+
+func TestRunTaskPollingOnceReturnsPlatformFailures(t *testing.T) {
+	truncate(t)
+	previousTaskQueryLimit := constant.TaskQueryLimit
+	constant.TaskQueryLimit = 100
+	t.Cleanup(func() { constant.TaskQueryLimit = previousTaskQueryLimit })
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_poll_missing_channel",
+		Platform:   constant.TaskPlatformAutoDL,
+		UserId:     1,
+		ChannelId:  9999,
+		Action:     constant.TaskActionAudioSpeech,
+		Status:     model.TaskStatusInProgress,
+		Progress:   "30%",
+		SubmitTime: now,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "upstream_missing_channel",
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+	require.Len(t, model.GetAllUnFinishSyncTasks(constant.TaskQueryLimit), 1)
+
+	previousFactory := GetTaskAdaptorFunc
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return &autoDLPollingAdaptor{} }
+	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
+
+	summary, err := RunTaskPollingOnce(context.Background(), nil)
+
+	require.Error(t, err)
+	assert.Equal(t, 1, summary.UnfinishedTasks)
+	assert.Equal(t, 1, summary.PlatformsScanned)
+	assert.Equal(t, 1, summary.PlatformFailures)
 }
 
 func TestTimedOutAutoDLTaskFailsWithoutAutomaticRefund(t *testing.T) {
@@ -471,7 +509,8 @@ func TestStaleAutoDLBillingReservationRefundsRecordedDebits(t *testing.T) {
 	previousFactory := GetTaskAdaptorFunc
 	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return &autoDLPollingAdaptor{} }
 	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
-	RunTaskPollingOnce(context.Background(), nil)
+	_, err := RunTaskPollingOnce(context.Background(), nil)
+	require.NoError(t, err)
 
 	var stored model.Task
 	require.NoError(t, model.DB.First(&stored, task.ID).Error)

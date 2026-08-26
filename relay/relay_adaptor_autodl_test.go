@@ -14,5 +14,5 @@ func TestGetTaskAdaptorRegistersAutoDL(t *testing.T) {
 	adaptor := GetTaskAdaptor(platform)
 	require.NotNil(t, adaptor)
 	assert.Equal(t, "autodl", adaptor.GetChannelName())
-	assert.Equal(t, []string{"MiniMax-H3"}, adaptor.GetModelList())
+	assert.Equal(t, []string{constant.AutoDLModelMiniMaxH3, constant.AutoDLModelIndexTTS2}, adaptor.GetModelList())
 }

@@ -234,11 +234,21 @@ func TokenOrUserAuth() func(c *gin.Context) {
 	}
 }
 
-// TokenAuthReadOnly 宽松版本的令牌认证中间件，用于只读查询接口。
-// 只验证令牌 key 是否存在，不检查令牌状态、过期时间和额度。
-// 即使令牌已过期、已耗尽或已禁用，也允许访问。
-// 仍然检查用户是否被封禁。
+// TokenAuthReadOnly is the relaxed token authentication middleware for usage
+// and log queries. Disabled tokens are rejected, while expired or exhausted
+// tokens can still read their historical accounting data.
 func TokenAuthReadOnly() func(c *gin.Context) {
+	return tokenAuthReadOnly(false)
+}
+
+// TokenAuthRecovery authenticates recovery endpoints that can return generated
+// content or trigger an upstream refresh. It ignores remaining quota but keeps
+// token expiry as a credential boundary.
+func TokenAuthRecovery() func(c *gin.Context) {
+	return tokenAuthReadOnly(true)
+}
+
+func tokenAuthReadOnly(rejectExpired bool) func(c *gin.Context) {
 	return func(c *gin.Context) {
 		key := c.Request.Header.Get("Authorization")
 		if key == "" {
@@ -269,6 +279,11 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 			abortTokenAuthReadOnly(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenStatusUnavailable))
 			return
 		}
+		if rejectExpired && (token.Status == common.TokenStatusExpired ||
+			(token.ExpiredTime != -1 && token.ExpiredTime < common.GetTimestamp())) {
+			abortTokenAuthReadOnly(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenInvalid))
+			return
+		}
 		if !validateTokenIP(c, token) {
 			return
 		}
@@ -284,15 +299,17 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 			return
 		}
 
-		c.Set("id", token.UserId)
-		c.Set("token_id", token.Id)
-		c.Set("token_key", token.Key)
+		if err := SetupContextForToken(c, token); err != nil {
+			abortTokenAuthReadOnly(c, http.StatusInternalServerError, common.TranslateMessage(c, i18n.MsgDatabaseError))
+			return
+		}
 		c.Next()
 	}
 }
 
 func abortTokenAuthReadOnly(c *gin.Context, statusCode int, message string) {
-	if strings.HasPrefix(c.Request.URL.Path, "/v2/query/video_generation/") {
+	if strings.HasPrefix(c.Request.URL.Path, "/v2/query/video_generation/") ||
+		strings.HasPrefix(c.Request.URL.Path, "/v1/audio/speech/") {
 		abortWithOpenAiMessage(c, statusCode, message)
 		return
 	}

@@ -148,14 +148,18 @@ func (asyncTaskPollHandler) Interval() time.Duration { return 15 * time.Second }
 func (asyncTaskPollHandler) NewPayload() any { return nil }
 
 func (asyncTaskPollHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
-	summary := service.RunTaskPollingOnce(ctx, service.NewSystemTaskProgressReporter(task, runnerID))
+	summary, err := service.RunTaskPollingOnce(ctx, service.NewSystemTaskProgressReporter(task, runnerID))
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
+		return
+	}
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
 }
 
 func finishSystemTaskHandler(task *model.SystemTask, runnerID string, status model.SystemTaskStatus, result any, runErr error) {
 	errorMessage := ""
 	if runErr != nil {
-		errorMessage = runErr.Error()
+		errorMessage = common.MaskSensitiveInfo(runErr.Error())
 	}
 	if err := model.FinishSystemTask(task.TaskID, runnerID, status, result, errorMessage); err != nil {
 		common.SysLog(fmt.Sprintf("system task %s failed to persist result: %v", task.TaskID, err))

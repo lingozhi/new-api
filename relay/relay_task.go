@@ -291,7 +291,9 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, checkpoint *Ta
 	// 10. AutoDL 没有提交幂等键；总 deadline 必须严格短于 stale
 	// checkpoint 回收窗口，避免仍在进行的请求被另一个 worker 退款。
 	originalRequest := c.Request
-	if c.Request.URL.Path == "/v2/video_generation" {
+	isAutoDLWorkflowSubmission := info.ChannelType == constant.ChannelTypeAutoDL &&
+		constant.AutoDLSupportsRequest(c.Request.URL.Path, info.OriginModelName)
+	if isAutoDLWorkflowSubmission {
 		// Once the durable checkpoint is active, a client disconnect must not
 		// cancel an already charged asynchronous submission. Preserve request
 		// values while bounding the detached provider call to two minutes.
@@ -313,8 +315,8 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, checkpoint *Ta
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		defer resp.Body.Close()
-		if c.Request.URL.Path == "/v2/video_generation" {
-			// MiniMax V2 never exposes the upstream error body. Preserve the
+		if isAutoDLWorkflowSubmission {
+			// AutoDL workflow routes never expose the upstream error body. Preserve the
 			// already-known HTTP result before touching a body that may be truncated
 			// or reset; the controller needs this status to decide whether the
 			// provider definitively rejected the request or may have created a task.
@@ -502,7 +504,9 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	isMiniMaxVideoV2API := strings.HasPrefix(c.Request.URL.Path, "/v2/query/video_generation/")
 
 	if isMiniMaxVideoV2API {
-		if !IsAutoDLTaskWithinQueryWindow(originTask, time.Now()) {
+		if originTask.Platform != constant.TaskPlatformAutoDL ||
+			originTask.Action != constant.TaskActionVideoGenerationV2 ||
+			!IsAutoDLTaskWithinQueryWindow(originTask, time.Now()) {
 			taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
 			return
 		}
@@ -660,7 +664,14 @@ func RefreshAutoDLSuccessTask(ctx context.Context, task *model.Task) {
 		if len(body) > maxAutoDLRefreshResponseBytes {
 			return latest, errors.New("AutoDL task refresh response exceeded the 1 MiB limit")
 		}
-		result, err := adaptor.ParseTaskResult(body)
+		var result *relaycommon.TaskInfo
+		if parser, ok := adaptor.(interface {
+			ParseTaskResultForAction([]byte, string) (*relaycommon.TaskInfo, error)
+		}); ok {
+			result, err = parser.ParseTaskResultForAction(body, latest.Action)
+		} else {
+			result, err = adaptor.ParseTaskResult(body)
+		}
 		if err != nil {
 			return latest, err
 		}
@@ -669,7 +680,11 @@ func RefreshAutoDLSuccessTask(ctx context.Context, task *model.Task) {
 		}
 
 		data := latest.Data
-		if sanitizer, ok := adaptor.(interface{ SanitizeTaskResult([]byte) []byte }); ok {
+		if sanitizer, ok := adaptor.(interface {
+			SanitizeTaskResultForAction([]byte, string) []byte
+		}); ok {
+			data = sanitizer.SanitizeTaskResultForAction(body, latest.Action)
+		} else if sanitizer, ok := adaptor.(interface{ SanitizeTaskResult([]byte) []byte }); ok {
 			data = sanitizer.SanitizeTaskResult(body)
 		}
 		if _, err := latest.RefreshSuccessResult(result.Url, data, refreshAt); err != nil {

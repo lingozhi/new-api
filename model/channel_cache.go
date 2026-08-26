@@ -724,23 +724,30 @@ func normalizeImageSelectionRequirement(requirement *dto.ImageSelectionRequireme
 }
 
 // filterChannelsByRequestPathAndModel restricts candidates by request path and
-// model. MiniMax V2 video generation is implemented only by AutoDL channels.
-// Advanced Custom channels are kept only when one of their configured routes
-// matches requestPath and model. When requestPath is empty, filtering is skipped.
+// model. Supported AutoDL workflow pairs are exclusive to AutoDL; AutoDL is
+// excluded from every other pair. Advanced Custom channels are kept only when
+// one of their configured routes matches requestPath and model.
 // Caller must hold channelSyncLock (read lock). The cached slice is never mutated.
 func filterChannelsByRequestPathAndModel(channels []int, requestPath string, model string) []int {
 	if requestPath == "" || len(channels) == 0 {
 		return channels
 	}
+	autoDLRequest := constant.AutoDLSupportsRequest(requestPath, model)
+	if requestPath == "/v2/video_generation" && !autoDLRequest {
+		return nil
+	}
 	filtered := make([]int, 0, len(channels))
 	for _, channelId := range channels {
 		channel, ok := channelsIDM[channelId]
 		if !ok {
+			if autoDLRequest {
+				continue
+			}
 			// keep it so the downstream consistency error is raised as before
 			filtered = append(filtered, channelId)
 			continue
 		}
-		if requestPath == "/v2/video_generation" {
+		if autoDLRequest {
 			if channel.Type == constant.ChannelTypeAutoDL {
 				filtered = append(filtered, channelId)
 			}

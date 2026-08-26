@@ -346,17 +346,17 @@ func abortWithClientDisconnect(c *gin.Context, err error, bodyReadStart time.Tim
 	c.Abort()
 }
 
-// channelSupportsRequestPath reports whether a channel can serve the request path.
-// MiniMax V2 video generation is implemented by AutoDL channels. Advanced Custom
-// channels are usable only when one of their configured routes matches.
+// channelSupportsRequestPath reports whether a channel can serve the request
+// path/model pair. Supported AutoDL workflow pairs are exclusive to AutoDL,
+// and AutoDL is unavailable for every other pair.
 func channelSupportsRequestPath(channel *model.Channel, requestPath string, requestModel string) bool {
 	if channel == nil {
 		return false
 	}
 	if channel.Type == constant.ChannelTypeAutoDL {
-		return requestPath == "/v2/video_generation"
+		return constant.AutoDLSupportsRequest(requestPath, requestModel)
 	}
-	if requestPath == "/v2/video_generation" {
+	if constant.AutoDLSupportsRequest(requestPath, requestModel) || requestPath == constant.AutoDLVideoGenerationV2Path {
 		return false
 	}
 	if channel.Type != constant.ChannelTypeAdvancedCustom {
@@ -415,11 +415,19 @@ func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
 }
 
 func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
+	if c.Request.URL.Path == constant.AutoDLAudioSpeechPath {
+		if value, exists := c.Get(autoDLAudioModelRequestContextKey); exists {
+			if modelRequest, ok := value.(*ModelRequest); ok && modelRequest != nil {
+				copy := *modelRequest
+				return &copy, nil
+			}
+		}
+	}
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		return nil, err
 	}
-	if c.Request.URL.Path == "/v2/video_generation" {
+	if c.Request.URL.Path == constant.AutoDLVideoGenerationV2Path || c.Request.URL.Path == constant.AutoDLAudioSpeechPath {
 		if _, err := storage.Seek(0, io.SeekStart); err != nil {
 			return nil, err
 		}

@@ -162,7 +162,7 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
     name: CHANNEL_TYPES[60],
     icon: 'comfyui',
     defaultBaseUrl: 'https://autodl.art',
-    supportedModels: ['MiniMax-H3'],
+    supportedModels: ['MiniMax-H3', 'indextts2-v1'],
   },
 }
 

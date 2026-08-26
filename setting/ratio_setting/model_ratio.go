@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 )
@@ -299,7 +300,9 @@ var defaultModelPrice = map[string]float64{
 	// AutoDL's standard 768P list price is ¥0.06/second. Promotional prices
 	// are time-dependent, so keep the conservative list price as the default;
 	// operators can override ModelPrice without changing the relay contract.
-	"MiniMax-H3":                    0.06 / USD2RMB,
+	constant.AutoDLModelMiniMaxH3: 0.06 / USD2RMB,
+	// AutoDL IndexTTS2 is billed once per submitted workflow task.
+	constant.AutoDLModelIndexTTS2:   0.01 / USD2RMB,
 	"gpt-4o-mini-tts":               0.3,
 	"veo-3.0-generate-001":          0.4,
 	"veo-3.0-fast-generate-001":     0.15,

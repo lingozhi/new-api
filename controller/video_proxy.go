@@ -49,6 +49,10 @@ func VideoProxy(c *gin.Context) {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
 		return
 	}
+	if task.Platform == constant.TaskPlatformAutoDL && task.Action != constant.TaskActionVideoGenerationV2 {
+		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
+		return
+	}
 	if task.Platform == constant.TaskPlatformAutoDL && !relay.IsAutoDLTaskWithinQueryWindow(task, time.Now()) {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
 		return

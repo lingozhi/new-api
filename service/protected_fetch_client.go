@@ -30,8 +30,9 @@ type ssrfProtectedRoundTripper struct {
 	getProtection func() (*common.SSRFProtection, bool, error)
 	proxy         func(*http.Request) (*url.URL, error)
 
-	mutex      sync.Mutex
-	transports map[string]*http.Transport
+	mutex          sync.Mutex
+	transports     map[string]*http.Transport
+	forceSecureTLS bool
 }
 
 func currentFetchProtection() (*common.SSRFProtection, bool, error) {
@@ -99,6 +100,14 @@ func newDirectProtectedFetchHTTPClient() *http.Client {
 		currentWebhookFetchProtection,
 		func(*http.Request) (*url.URL, error) { return nil, nil },
 	)
+}
+
+func newStrictDirectProtectedFetchHTTPClient() *http.Client {
+	client := newDirectProtectedFetchHTTPClient()
+	roundTripper := client.Transport.(*ssrfProtectedRoundTripper)
+	roundTripper.forceSecureTLS = true
+	client.CheckRedirect = checkStrictHTTPSProtectedFetchRedirect
+	return client
 }
 
 func newProtectedFetchHTTPClientWithDialer(resolver ssrfResolver, dialContext func(ctx context.Context, network, address string) (net.Conn, error), getProtection func() (*common.SSRFProtection, bool, error)) *http.Client {
@@ -203,7 +212,7 @@ func (t *ssrfProtectedRoundTripper) newTransport(proxyURL *url.URL) *http.Transp
 		Proxy:               proxyFunc,
 		DialContext:         dialContext,
 	}
-	if common.TLSInsecureSkipVerify {
+	if common.TLSInsecureSkipVerify && !t.forceSecureTLS {
 		transport.TLSClientConfig = common.InsecureTLSConfig
 	}
 	return transport

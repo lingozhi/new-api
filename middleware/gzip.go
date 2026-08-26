@@ -139,10 +139,7 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 		if maxMB <= 0 {
 			maxMB = 32
 		}
-		maxBytes := int64(maxMB) << 20
-		if c.Request.URL.Path == "/v2/video_generation" && maxBytes > common.MaxMiniMaxVideoGenerationV2BodyBytes {
-			maxBytes = common.MaxMiniMaxVideoGenerationV2BodyBytes
-		}
+		maxBytes := common.RequestBodyLimitBytes(c.Request.URL.Path, int64(maxMB)<<20)
 
 		// Cut a stalled upload loose before the client's own timeout does. Wraps
 		// the raw body so it governs the compressed stream — the bytes that

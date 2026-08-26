@@ -7,10 +7,11 @@ const (
 	ContextKeyPromptTokens    ContextKey = "prompt_tokens"
 	ContextKeyEstimatedTokens ContextKey = "estimated_tokens"
 
-	ContextKeyOriginalModel             ContextKey = "original_model"
-	ContextKeyRequestStartTime          ContextKey = "request_start_time"
-	ContextKeyImageSelectionRequirement ContextKey = "image_selection_requirement"
-	ContextKeyValidatedImageRequest     ContextKey = "validated_image_request"
+	ContextKeyOriginalModel               ContextKey = "original_model"
+	ContextKeyRequestStartTime            ContextKey = "request_start_time"
+	ContextKeyImageSelectionRequirement   ContextKey = "image_selection_requirement"
+	ContextKeyValidatedImageRequest       ContextKey = "validated_image_request"
+	ContextKeyValidatedAutoDLAudioRequest ContextKey = "validated_autodl_audio_request"
 
 	// ContextKeyAffinityColdStart marks a request whose prompt-cache affinity was
 	// deliberately released because the sticky channel had gone slow. Whatever

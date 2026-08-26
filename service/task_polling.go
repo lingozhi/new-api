@@ -21,6 +21,7 @@ import (
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/samber/lo"
+	"golang.org/x/sync/singleflight"
 )
 
 // TaskPollingAdaptor 定义轮询所需的最小适配器接口，避免 service -> relay 的循环依赖
@@ -41,6 +42,26 @@ type taskResultSanitizer interface {
 	SanitizeTaskResult(body []byte) []byte
 }
 
+type actionTaskResultParser interface {
+	ParseTaskResultForAction(body []byte, action string) (*relaycommon.TaskInfo, error)
+}
+
+type actionTaskResultSanitizer interface {
+	SanitizeTaskResultForAction(body []byte, action string) []byte
+}
+
+type taskFailureRefundPolicy interface {
+	ShouldRefundTaskFailure(task *model.Task, taskResult *relaycommon.TaskInfo) bool
+}
+
+type taskSuccessValidator interface {
+	ValidateTaskSuccess(ctx context.Context, task *model.Task, taskResult *relaycommon.TaskInfo) error
+}
+
+type temporaryTaskError interface {
+	Temporary() bool
+}
+
 const (
 	taskSubmissionReservationTimeout = 3 * time.Minute
 	taskSubmissionCheckpointTimeout  = 10 * time.Minute
@@ -49,6 +70,8 @@ const (
 // GetTaskAdaptorFunc 由 main 包注入，用于获取指定平台的任务适配器。
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
+
+var taskPollOnceGroup singleflight.Group
 
 func failTasksWithRefund(ctx context.Context, tasks []*model.Task, reason string) error {
 	var combinedErr error
@@ -257,6 +280,7 @@ type TaskPollSummary struct {
 	UnfinishedTasks  int `json:"unfinished_tasks"`
 	PlatformsScanned int `json:"platforms_scanned"`
 	NullTasksFailed  int `json:"null_tasks_failed"`
+	PlatformFailures int `json:"platform_failures"`
 }
 
 // RunTaskPollingOnce performs one async-task (Suno/video) polling pass
@@ -264,10 +288,10 @@ type TaskPollSummary struct {
 // when the lease is lost) and, when report is non-nil, reports progress as
 // (processedPlatforms, totalPlatforms). It returns immediately if the task
 // adaptor factory has not been wired yet, to avoid a nil call during startup.
-func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) TaskPollSummary {
+func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) (TaskPollSummary, error) {
 	summary := TaskPollSummary{}
 	if GetTaskAdaptorFunc == nil {
-		return summary
+		return summary, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -287,6 +311,7 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 
 	totalPlatforms := len(platformTask)
 	processedPlatforms := 0
+	var runErr error
 	for platform, tasks := range platformTask {
 		if ctx.Err() != nil {
 			break
@@ -327,6 +352,7 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 			err = errors.Join(err, failTasksWithoutRefund(ctx, ambiguousAutoDLTasks, "AutoDL upstream task id is missing; no automatic refund was issued"))
 			if err != nil {
 				logger.LogError(ctx, fmt.Sprintf("Fix null task_id task error: %v", err))
+				runErr = errors.Join(runErr, fmt.Errorf("fail tasks without upstream IDs for platform %s: %w", platform, err))
 			} else {
 				logger.LogInfo(ctx, fmt.Sprintf("Fix null task_id task success: %d", len(nullTasks)))
 			}
@@ -335,13 +361,16 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 			continue
 		}
 
-		DispatchPlatformUpdate(ctx, platform, taskChannelM, taskM)
+		if err := DispatchPlatformUpdate(ctx, platform, taskChannelM, taskM); err != nil {
+			summary.PlatformFailures++
+			runErr = errors.Join(runErr, fmt.Errorf("poll platform %s: %w", platform, err))
+		}
 	}
 	if report != nil && ctx.Err() == nil {
 		report(totalPlatforms, totalPlatforms)
 	}
 	common.SysLog("任务进度轮询完成")
-	return summary
+	return summary, errors.Join(runErr, ctx.Err())
 }
 
 func taskPollingMapKey(channelID int, upstreamTaskID string) string {
@@ -358,34 +387,35 @@ func taskFromPollingMap(taskM map[string]*model.Task, channelID int, upstreamTas
 }
 
 // DispatchPlatformUpdate 按平台分发轮询更新
-func DispatchPlatformUpdate(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) {
+func DispatchPlatformUpdate(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	switch platform {
 	case constant.TaskPlatformMidjourney:
 		// MJ 轮询由其自身处理，这里预留入口
+		return nil
 	case constant.TaskPlatformSuno:
-		_ = UpdateSunoTasks(ctx, taskChannelM, taskM)
+		return UpdateSunoTasks(ctx, taskChannelM, taskM)
 	default:
-		if err := UpdateVideoTasks(ctx, platform, taskChannelM, taskM); err != nil {
-			common.SysLog(fmt.Sprintf("UpdateVideoTasks fail: %s", err))
-		}
+		return UpdateVideoTasks(ctx, platform, taskChannelM, taskM)
 	}
 }
 
 // UpdateSunoTasks 按渠道更新所有 Suno 任务
 func UpdateSunoTasks(ctx context.Context, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
+	var combinedErr error
 	for channelId, taskIds := range taskChannelM {
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return errors.Join(combinedErr, ctx.Err())
 		}
 		err := updateSunoTasks(ctx, channelId, taskIds, taskM)
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("渠道 #%d 更新异步任务失败: %s", channelId, err.Error()))
+			combinedErr = errors.Join(combinedErr, fmt.Errorf("channel %d: %w", channelId, err))
 		}
 	}
-	return nil
+	return combinedErr
 }
 
 func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM map[string]*model.Task) error {
@@ -552,6 +582,7 @@ func UpdateVideoTasks(ctx context.Context, platform constant.TaskPlatform, taskC
 	sort.Ints(channelIDs)
 
 	var wg sync.WaitGroup
+	errCh := make(chan error, len(channelIDs))
 	for _, channelId := range channelIDs {
 		taskIds := taskChannelM[channelId]
 		if len(taskIds) == 0 {
@@ -563,15 +594,84 @@ func UpdateVideoTasks(ctx context.Context, platform constant.TaskPlatform, taskC
 		gopool.Go(func() {
 			defer wg.Done()
 			if err := updateVideoTasks(ctx, platform, channelId, taskIds, taskM); err != nil {
-				logger.LogError(ctx, fmt.Sprintf("Channel #%d failed to update video async tasks: %s", channelId, err.Error()))
+				logger.LogError(ctx, fmt.Sprintf("Channel #%d failed to update video async tasks: %s", channelId, common.MaskSensitiveInfo(err.Error())))
+				errCh <- fmt.Errorf("channel %d: %w", channelId, err)
 			}
 		})
 	}
 	wg.Wait()
-	if ctx.Err() != nil {
-		return ctx.Err()
+	close(errCh)
+	var combinedErr error
+	for err := range errCh {
+		combinedErr = errors.Join(combinedErr, err)
 	}
-	return nil
+	return errors.Join(combinedErr, ctx.Err())
+}
+
+// PollTaskOnce refreshes one durable asynchronous task and returns its latest
+// persisted state. Synchronous facades use this entry point so they share the
+// same status CAS and billing transitions as the background poller.
+func PollTaskOnce(ctx context.Context, task *model.Task) (*model.Task, error) {
+	if task == nil || task.ID == 0 || task.TaskID == "" || task.Platform == "" {
+		return nil, errors.New("persisted task is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	key := fmt.Sprintf("%s:%d:%s", task.Platform, task.ID, task.TaskID)
+	value, err, _ := taskPollOnceGroup.Do(key, func() (any, error) {
+		current, exists, loadErr := model.GetByOnlyTaskId(task.TaskID)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if !exists || current == nil || current.ID != task.ID || current.UserId != task.UserId || current.Platform != task.Platform {
+			return nil, errors.New("task no longer matches its durable identity")
+		}
+		if current.Status == model.TaskStatusSuccess || current.Status == model.TaskStatusFailure {
+			return current, nil
+		}
+		if current.GetUpstreamTaskID() == "" {
+			return current, nil
+		}
+
+		channel, channelErr := model.CacheGetChannel(current.ChannelId)
+		if channelErr != nil {
+			return nil, fmt.Errorf("get task channel %d: %w", current.ChannelId, channelErr)
+		}
+		if GetTaskAdaptorFunc == nil {
+			return nil, errors.New("task adaptor factory is unavailable")
+		}
+		adaptor := GetTaskAdaptorFunc(current.Platform)
+		if adaptor == nil {
+			return nil, fmt.Errorf("task adaptor not found for platform %s", current.Platform)
+		}
+
+		upstreamID := current.GetUpstreamTaskID()
+		tasks := map[string]*model.Task{
+			taskPollingMapKey(current.ChannelId, upstreamID): current,
+		}
+		if pollErr := updateVideoSingleTask(ctx, adaptor, channel, upstreamID, tasks); pollErr != nil {
+			return nil, pollErr
+		}
+
+		latest, exists, loadErr := model.GetByOnlyTaskId(task.TaskID)
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		if !exists || latest == nil || latest.ID != task.ID || latest.UserId != task.UserId || latest.Platform != task.Platform {
+			return nil, errors.New("task no longer matches its durable identity")
+		}
+		return latest, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	latest, ok := value.(*model.Task)
+	if !ok || latest == nil {
+		return nil, errors.New("task poll returned an invalid result")
+	}
+	return latest, nil
 }
 
 func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, channelId int, taskIds []string, taskM map[string]*model.Task) error {
@@ -604,12 +704,14 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 		return fmt.Errorf("video adaptor not found")
 	}
 	disablePollingSleep := cacheGetChannel.GetOtherSettings().DisableTaskPollingSleep
+	var combinedErr error
 	for i, taskId := range taskIds {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err := updateVideoSingleTask(ctx, adaptor, cacheGetChannel, taskId, taskM); err != nil {
-			logger.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", taskId, err.Error()))
+			logger.LogError(ctx, fmt.Sprintf("Failed to update video task %s: %s", taskId, common.MaskSensitiveInfo(err.Error())))
+			combinedErr = errors.Join(combinedErr, fmt.Errorf("task %s: %w", taskId, err))
 		}
 		if disablePollingSleep || i == len(taskIds)-1 {
 			continue
@@ -622,7 +724,7 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 		case <-time.After(1 * time.Second):
 		}
 	}
-	return nil
+	return combinedErr
 }
 
 func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *model.Channel, taskId string, taskM map[string]*model.Task) error {
@@ -714,18 +816,53 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		taskResult.Progress = t.Progress
 		taskResult.Reason = t.FailReason
 		task.Data = t.Data
-	} else if taskResult, err = adaptor.ParseTaskResult(responseBody); err != nil {
-		cause := fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
-		return cause
+	} else {
+		if parser, ok := adaptor.(actionTaskResultParser); ok {
+			taskResult, err = parser.ParseTaskResultForAction(responseBody, task.Action)
+		} else {
+			taskResult, err = adaptor.ParseTaskResult(responseBody)
+		}
+		if err != nil {
+			if isTemporaryPollingError(err) {
+				return fmt.Errorf("parseTaskResult failed for task %s: %w", taskId, err)
+			}
+			taskResult = relaycommon.FailTaskInfo(common.MaskSensitiveInfo(err.Error()))
+			taskResult.TaskID = task.GetUpstreamTaskID()
+		}
 	}
 
 	if isAutoDLTask && taskResult.TaskID != task.GetUpstreamTaskID() {
 		return fmt.Errorf("AutoDL task identity mismatch: expected %q, got %q", task.GetUpstreamTaskID(), taskResult.TaskID)
 	}
+	gatewayValidationFailed := false
+	if taskResult.Status == model.TaskStatusSuccess {
+		if validator, ok := adaptor.(taskSuccessValidator); ok {
+			if validateErr := validator.ValidateTaskSuccess(ctx, task, taskResult); validateErr != nil {
+				if isTemporaryPollingError(validateErr) {
+					return fmt.Errorf("validate task result for task %s: %w", taskId, validateErr)
+				}
+				taskResult = relaycommon.FailTaskInfo(common.MaskSensitiveInfo(validateErr.Error()))
+				taskResult.TaskID = task.GetUpstreamTaskID()
+				gatewayValidationFailed = true
+			}
+		}
+	}
 
 	task.Data = redactVideoResponseBody(responseBody)
-	if sanitizer, ok := adaptor.(taskResultSanitizer); ok {
+	if sanitizer, ok := adaptor.(actionTaskResultSanitizer); ok {
+		task.Data = sanitizer.SanitizeTaskResultForAction(responseBody, task.Action)
+	} else if sanitizer, ok := adaptor.(taskResultSanitizer); ok {
 		task.Data = sanitizer.SanitizeTaskResult(responseBody)
+	}
+	if gatewayValidationFailed {
+		validationData, marshalErr := common.Marshal(map[string]any{
+			"code": "GatewayValidationFailed",
+			"data": map[string]any{"status": model.TaskStatusFailure},
+		})
+		if marshalErr != nil {
+			return fmt.Errorf("encode task validation failure for task %s: %w", taskId, marshalErr)
+		}
+		task.Data = validationData
 	}
 
 	if isAutoDLTask {
@@ -759,6 +896,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	shouldRefund := false
 	shouldSettle := false
+	preserveChargeOnFailure := false
 	quota := task.Quota
 
 	task.Status = model.TaskStatus(taskResult.Status)
@@ -800,6 +938,10 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		taskResult.Progress = taskcommon.ProgressComplete
 		if quota != 0 {
 			shouldRefund = true
+			if policy, ok := adaptor.(taskFailureRefundPolicy); ok && !policy.ShouldRefundTaskFailure(task, taskResult) {
+				shouldRefund = false
+				preserveChargeOnFailure = true
+			}
 		}
 	default:
 		return fmt.Errorf("unknown task status %s for task %s", taskResult.Status, task.TaskID)
@@ -830,11 +972,16 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	isDone := task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure
 	if isDone && snap.Status != task.Status {
-		won, err := commitTaskTransitionWithBilling(ctx, task, snap.Status, billingPhase, billingUsageDelta)
+		var won bool
+		var err error
+		if preserveChargeOnFailure {
+			won, err = task.UpdateWithStatus(snap.Status)
+		} else {
+			won, err = commitTaskTransitionWithBilling(ctx, task, snap.Status, billingPhase, billingUsageDelta)
+		}
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("terminal task billing transaction failed for task %s: %s", task.TaskID, err.Error()))
-			shouldRefund = false
-			shouldSettle = false
+			return fmt.Errorf("persist terminal task %s: %w", task.TaskID, err)
 		} else if !won {
 			logger.LogWarn(ctx, fmt.Sprintf("Task %s already transitioned by another process, skip billing", task.TaskID))
 			shouldRefund = false
@@ -846,6 +993,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	} else if !snap.Equal(task.Snapshot()) {
 		if _, err := task.UpdateWithStatus(snap.Status); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("Failed to update task %s: %s", task.TaskID, err.Error()))
+			return fmt.Errorf("persist task %s: %w", task.TaskID, err)
 		}
 	} else {
 		// No changes, skip update
@@ -865,6 +1013,17 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	return nil
+}
+
+func isTemporaryPollingError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var temporary temporaryTaskError
+	if errors.As(err, &temporary) {
+		return temporary.Temporary()
+	}
+	return true
 }
 
 // ResolveTaskPollingChannelKey recovers the exact credential selected when an

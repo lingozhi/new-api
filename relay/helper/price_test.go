@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -81,6 +82,24 @@ func TestModelPriceHelperPerCallHasDefaultMiniMaxH3PerSecondPrice(t *testing.T) 
 	require.True(t, priceData.UsePrice)
 	require.InDelta(t, 0.06/ratio_setting.USD2RMB, priceData.ModelPrice, 1e-12)
 	require.Greater(t, priceData.Quota, 0)
+}
+
+func TestModelPriceHelperPerCallHasDefaultIndexTTS2PerTaskPrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("group", "default")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: constant.AutoDLModelIndexTTS2,
+		UserGroup:       "default",
+		UsingGroup:      "default",
+	}
+
+	priceData, err := ModelPriceHelperPerCall(ctx, info)
+
+	require.NoError(t, err)
+	require.True(t, priceData.UsePrice)
+	require.InDelta(t, 0.01/ratio_setting.USD2RMB, priceData.ModelPrice, 1e-12)
+	require.Equal(t, 684, priceData.Quota)
 }
 
 func TestModelPriceHelperTieredAllowsOrdinaryModelPriceWithImageResolution(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -51,9 +52,11 @@ func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	if c.Request.Method != http.MethodPost || c.Request.URL.Path != "/v2/video_generation" {
+	isSupportedPath := c.Request.URL.Path == constant.AutoDLVideoGenerationV2Path ||
+		c.Request.URL.Path == constant.AutoDLAudioSpeechPath
+	if c.Request.Method != http.MethodPost || !isSupportedPath {
 		return service.TaskErrorWrapperLocal(
-			errors.New("AutoDL MiniMax-H3 only supports POST /v2/video_generation"),
+			errors.New("AutoDL model is not available on this endpoint"),
 			"unsupported_endpoint",
 			http.StatusBadRequest,
 		)
@@ -70,22 +73,82 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		)
 	}
 
-	var request dto.MiniMaxVideoGenerationV2Request
-	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
-	}
+	a.request = nil
+	a.workflowID = ""
+	a.requestBody = nil
+	info.Video = nil
 
-	workflowID, payload, properties, err := buildWorkflowRequest(&request)
-	if err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
-	}
+	switch c.Request.URL.Path {
+	case constant.AutoDLVideoGenerationV2Path:
+		var request dto.MiniMaxVideoGenerationV2Request
+		if err := common.UnmarshalBodyReusable(c, &request); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
 
-	a.request = &request
-	a.workflowID = workflowID
-	a.requestBody = payload
-	info.Action = constant.TaskActionVideoGenerationV2
-	info.Video = properties
-	return nil
+		workflowID, payload, properties, err := buildWorkflowRequest(&request)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+
+		a.request = &request
+		a.workflowID = workflowID
+		a.requestBody = payload
+		info.Action = constant.TaskActionVideoGenerationV2
+		info.Video = properties
+		return nil
+	case constant.AutoDLAudioSpeechPath:
+		if strings.TrimSpace(c.GetHeader("Idempotency-Key")) == "" {
+			return service.TaskErrorWrapperLocal(
+				errors.New("Idempotency-Key is required for indextts2-v1"),
+				"idempotency_key_required",
+				http.StatusBadRequest,
+			)
+		}
+		mediaType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
+		if err != nil || mediaType != gin.MIMEJSON {
+			return service.TaskErrorWrapperLocal(
+				errors.New("indextts2-v1 requires Content-Type: application/json"),
+				"unsupported_media_type",
+				http.StatusUnsupportedMediaType,
+			)
+		}
+		var request dto.AudioRequest
+		if value, exists := common.GetContextKey(c, constant.ContextKeyValidatedAutoDLAudioRequest); exists && value != nil {
+			cached, ok := value.(*dto.AudioRequest)
+			if !ok || cached == nil {
+				return service.TaskErrorWrapperLocal(errors.New("cached AutoDL audio request is invalid"), "invalid_request", http.StatusBadRequest)
+			}
+			request = *cached
+		} else if err := common.UnmarshalBodyReusable(c, &request); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+
+		workflowID, payload, err := buildIndexTTSWorkflowRequest(&request)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		if err := materializeIndexTTSAudioPayload(c.Request.Context(), payload); err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+		if value, exists := common.GetContextKey(c, constant.ContextKeyValidatedAutoDLAudioRequest); exists {
+			if cached, ok := value.(*dto.AudioRequest); ok && cached != nil {
+				*cached = dto.AudioRequest{}
+			}
+			common.SetContextKey(c, constant.ContextKeyValidatedAutoDLAudioRequest, nil)
+		}
+		request = dto.AudioRequest{}
+
+		a.workflowID = workflowID
+		a.requestBody = payload
+		info.Action = constant.TaskActionAudioSpeech
+		return nil
+	default:
+		return service.TaskErrorWrapperLocal(
+			errors.New("AutoDL model is not available on this endpoint"),
+			"unsupported_endpoint",
+			http.StatusBadRequest,
+		)
+	}
 }
 
 func (a *TaskAdaptor) EstimateBilling(_ *gin.Context, _ *relaycommon.RelayInfo) map[string]float64 {
@@ -169,6 +232,13 @@ func (a *TaskAdaptor) DoResponse(_ *gin.Context, resp *http.Response, _ *relayco
 		)
 	}
 	if !strings.EqualFold(strings.TrimSpace(workflowResp.Code), "Success") {
+		if strings.TrimSpace(workflowResp.Data.TaskID) == "" && autoDLSubmissionCodeIsDefinitive(workflowResp.Code) {
+			return "", nil, service.TaskErrorWrapper(
+				errors.New("AutoDL rejected the workflow submission"),
+				"autodl_submission_rejected",
+				http.StatusUnprocessableEntity,
+			)
+		}
 		return "", nil, service.TaskErrorWrapper(
 			errors.New("AutoDL returned an unexpected submission response"),
 			"invalid_upstream_response",
@@ -195,6 +265,16 @@ func (a *TaskAdaptor) DoResponse(_ *gin.Context, resp *http.Response, _ *relayco
 		return "", nil, service.TaskErrorWrapper(err, "encode_task_data_failed", http.StatusInternalServerError)
 	}
 	return workflowResp.Data.TaskID, taskData, nil
+}
+
+func autoDLSubmissionCodeIsDefinitive(code string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(code))
+	for _, marker := range []string{"unauthor", "forbidden", "permission", "invalid", "parameter", "balance", "quota"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
@@ -245,6 +325,14 @@ func (a *TaskAdaptor) FetchTaskWithContext(ctx context.Context, baseURL, key str
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	return a.ParseTaskResultForAction(respBody, constant.TaskActionVideoGenerationV2)
+}
+
+func (a *TaskAdaptor) ParseTaskResultForAction(respBody []byte, action string) (*relaycommon.TaskInfo, error) {
+	if action != constant.TaskActionVideoGenerationV2 && action != constant.TaskActionAudioSpeech {
+		return nil, &taskPollError{message: "unsupported AutoDL task action"}
+	}
+
 	var response workflowResponse
 	if err := common.Unmarshal(respBody, &response); err != nil {
 		return nil, &taskPollError{
@@ -253,15 +341,12 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		}
 	}
 	if !strings.EqualFold(strings.TrimSpace(response.Code), "Success") {
-		normalizedCode := strings.ToLower(strings.TrimSpace(response.Code))
-		temporary := !strings.Contains(normalizedCode, "unauthor") &&
-			!strings.Contains(normalizedCode, "forbidden") &&
-			!strings.Contains(normalizedCode, "permission") &&
-			!strings.Contains(normalizedCode, "invalid") &&
-			!strings.Contains(normalizedCode, "parameter")
+		// Query-level errors do not prove that an already accepted provider job
+		// failed. Credentials and control-plane configuration can recover, so only
+		// an explicit task status below may terminalize the durable task.
 		return nil, &taskPollError{
 			message:   fmt.Sprintf("AutoDL task query failed (%s)", response.Code),
-			temporary: temporary,
+			temporary: true,
 		}
 	}
 	if strings.TrimSpace(response.Data.TaskID) == "" {
@@ -280,22 +365,46 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		result.Status = model.TaskStatusSuccess
 		result.Progress = taskcommon.ProgressComplete
 		for _, output := range response.Data.Results {
+			resultType := strings.ToLower(strings.TrimSpace(output.Type))
+			outputType := strings.ToLower(strings.TrimSpace(output.OutputType))
 			fileType := strings.ToLower(strings.TrimSpace(output.FileType))
-			isVideo := strings.EqualFold(output.Type, "video") ||
-				strings.EqualFold(output.OutputType, "video") ||
-				fileType == "video" || fileType == "mp4" || fileType == ".mp4" ||
-				strings.HasPrefix(fileType, "video/")
-			if !isVideo || strings.TrimSpace(output.URL) == "" {
+			if action == constant.TaskActionVideoGenerationV2 {
+				isVideoFile := fileType == "video" || fileType == "mp4" || fileType == ".mp4" ||
+					strings.HasPrefix(fileType, "video/")
+				hasConflictingType := (resultType != "" && resultType != "video") ||
+					outputType == "audio" || outputType == "image"
+				isVideo := !hasConflictingType && (resultType == "video" || outputType == "video" || isVideoFile)
+				if !isVideo || strings.TrimSpace(output.URL) == "" {
+					continue
+				}
+				videoURL, _, err := validateMediaURL(output.URL, mediaKindImage, 0)
+				if err != nil || strings.HasPrefix(strings.ToLower(strings.TrimSpace(videoURL)), "data:") {
+					return nil, &taskPollError{message: "AutoDL returned an unsafe video URL"}
+				}
+				result.Url = videoURL
+				break
+			}
+
+			isWAV := fileType == "wav" || fileType == ".wav" || fileType == "audio" ||
+				fileType == "audio/wav" || fileType == "audio/x-wav"
+			hasConflictingType := (resultType != "" && resultType != "audio") ||
+				outputType == "video" || outputType == "image"
+			isAudio := !hasConflictingType && ((resultType == "audio" || outputType == "audio") &&
+				(fileType == "" || isWAV) || isWAV)
+			if !isAudio || strings.TrimSpace(output.URL) == "" {
 				continue
 			}
-			videoURL, _, err := validateMediaURL(output.URL, mediaKindImage, 0)
-			if err != nil || strings.HasPrefix(strings.ToLower(strings.TrimSpace(videoURL)), "data:") {
-				return nil, &taskPollError{message: "AutoDL returned an unsafe video URL"}
+			audioURL, _, err := validateMediaURL(output.URL, mediaKindAudio, 0)
+			if err != nil || strings.HasPrefix(strings.ToLower(strings.TrimSpace(audioURL)), "data:") {
+				return nil, &taskPollError{message: "AutoDL returned an unsafe audio URL"}
 			}
-			result.Url = videoURL
+			result.Url = audioURL
 			break
 		}
 		if result.Url == "" {
+			if action == constant.TaskActionAudioSpeech {
+				return nil, &taskPollError{message: "AutoDL task succeeded without an expected audio result"}
+			}
 			return nil, &taskPollError{message: "AutoDL task succeeded without a video result"}
 		}
 	case "CANCELLED":
@@ -310,6 +419,25 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		return nil, &taskPollError{message: "AutoDL returned an unknown task status", temporary: true}
 	}
 	return result, nil
+}
+
+func (a *TaskAdaptor) SanitizeTaskResultForAction(respBody []byte, action string) []byte {
+	if action != constant.TaskActionAudioSpeech {
+		return a.SanitizeTaskResult(respBody)
+	}
+
+	var response workflowResponse
+	if err := common.Unmarshal(respBody, &response); err != nil {
+		return []byte("{}")
+	}
+	stored, err := common.Marshal(map[string]any{
+		"code": response.Code,
+		"data": map[string]any{"status": response.Data.Status},
+	})
+	if err != nil {
+		return []byte("{}")
+	}
+	return stored
 }
 
 func (a *TaskAdaptor) SanitizeTaskResult(respBody []byte) []byte {
@@ -331,9 +459,33 @@ func (a *TaskAdaptor) SanitizeTaskResult(respBody []byte) []byte {
 	return stored
 }
 
+// ShouldRefundTaskFailure preserves the accepted per-call IndexTTS2 charge.
+// AutoDL documents call-count billing and does not promise that a task which
+// reaches FAILED after acceptance is unbilled.
+func (a *TaskAdaptor) ShouldRefundTaskFailure(task *model.Task, _ *relaycommon.TaskInfo) bool {
+	return task == nil || task.Action != constant.TaskActionAudioSpeech
+}
+
+func (a *TaskAdaptor) ValidateTaskSuccess(ctx context.Context, task *model.Task, result *relaycommon.TaskInfo) error {
+	if task == nil || task.Action != constant.TaskActionAudioSpeech {
+		return nil
+	}
+	if result == nil || strings.TrimSpace(result.Url) == "" {
+		return &taskPollError{message: "AutoDL task succeeded without an audio result"}
+	}
+	storage, err := service.FetchValidatedWAV(ctx, result.Url, service.MaxGeneratedWAVBytes)
+	if err != nil {
+		return err
+	}
+	return storage.Close()
+}
+
 func (a *TaskAdaptor) ConvertToMiniMaxVideoV2(originTask *model.Task) ([]byte, error) {
 	if originTask == nil {
 		return nil, errors.New("task is required")
+	}
+	if originTask.Action != constant.TaskActionVideoGenerationV2 {
+		return nil, errors.New("task is not a MiniMax video generation")
 	}
 
 	createdAt := originTask.CreatedAt
@@ -366,7 +518,7 @@ func (a *TaskAdaptor) ConvertToMiniMaxVideoV2(originTask *model.Task) ([]byte, e
 		}
 	}
 	if videoTask.Model == "" {
-		videoTask.Model = "MiniMax-H3"
+		videoTask.Model = constant.AutoDLModelMiniMaxH3
 	}
 	if properties := originTask.Properties.Video; properties != nil {
 		videoTask.Resolution = properties.Resolution
@@ -405,8 +557,8 @@ func (a *TaskAdaptor) ConvertToMiniMaxVideoV2(originTask *model.Task) ([]byte, e
 }
 
 func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string, map[string]any, *relaycommon.TaskVideoProperties, error) {
-	if request.Model != "MiniMax-H3" {
-		return "", nil, nil, errors.New("model must be MiniMax-H3")
+	if request.Model != constant.AutoDLModelMiniMaxH3 {
+		return "", nil, nil, fmt.Errorf("model must be %s", constant.AutoDLModelMiniMaxH3)
 	}
 	if request.Resolution == nil {
 		return "", nil, nil, errors.New("resolution is required")

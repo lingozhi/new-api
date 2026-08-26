@@ -134,10 +134,6 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.POST("/audio/translations", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIAudio)
 		})
-		httpRouter.POST("/audio/speech", func(c *gin.Context) {
-			controller.Relay(c, types.RelayFormatOpenAIAudio)
-		})
-
 		// rerank related routes
 		httpRouter.POST("/rerank", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatRerank)
@@ -169,6 +165,34 @@ func SetRelayRouter(router *gin.Engine) {
 		httpRouter.GET("/fine-tunes/:id/events", controller.RelayNotImplemented)
 		httpRouter.DELETE("/models/:model", controller.RelayNotImplemented)
 	}
+
+	audioSpeechSubmitRouter := router.Group("/v1")
+	audioSpeechSubmitRouter.Use(
+		middleware.RouteTag("relay"),
+		middleware.SystemPerformanceCheck(),
+	)
+	audioSpeechSubmitRouter.POST(
+		"/audio/speech",
+		middleware.TokenAuthRecovery(),
+		middleware.AutoDLAudioAdmission(),
+		middleware.AutoDLAudioReplayRateLimit(),
+		controller.ReplayAutoDLAudioSpeech,
+		middleware.TokenAuth(),
+		middleware.ModelRequestRateLimit(),
+		middleware.Distribute(),
+		controller.RelayAudioSpeech,
+	)
+
+	audioSpeechTaskRouter := router.Group("/v1/audio/speech")
+	audioSpeechTaskRouter.Use(middleware.RouteTag("relay"))
+	audioSpeechTaskRouter.Use(
+		middleware.SystemPerformanceCheck(),
+		middleware.TokenAuthRecovery(),
+		middleware.AutoDLAudioTaskReadRateLimit(),
+		middleware.DownloadRateLimit(),
+		middleware.ModelRequestRateLimit(),
+	)
+	audioSpeechTaskRouter.GET("/:task_id", controller.GetAutoDLAudioSpeechTask)
 
 	relayMjRouter := router.Group("/mj")
 	relayMjRouter.Use(middleware.RouteTag("relay"))

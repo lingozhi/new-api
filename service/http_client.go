@@ -23,6 +23,7 @@ var (
 	httpClientStream              *http.Client // streaming relay: shorter response-header timeout
 	ssrfProtectedHTTPClient       *http.Client // arbitrary user-controlled URL fetches
 	ssrfProtectedDirectHTTPClient *http.Client // user-controlled callbacks that must not use remote DNS
+	strictDirectMediaHTTPClient   *http.Client // signed media fetches with mandatory TLS verification
 	proxyClientLock               sync.Mutex
 	proxyClients                  = make(map[string]*http.Client)
 )
@@ -73,6 +74,10 @@ func checkStrictHTTPSProtectedFetchRedirect(req *http.Request, via []*http.Reque
 	if err := ValidateStrictHTTPSProtectedFetchURL(req.URL.String()); err != nil {
 		return fmt.Errorf("redirect to %s blocked: %v", req.URL.String(), err)
 	}
+	// net/http may synthesize a Referer from the previous signed URL before
+	// CheckRedirect runs. Never forward that credential-bearing query string to
+	// a different CDN hop.
+	req.Header.Del("Referer")
 	return nil
 }
 
@@ -178,6 +183,7 @@ func InitHttpClient() {
 	httpClientStream = newRelayClient(newRelayTransport(true, http.ProxyFromEnvironment, nil))
 	ssrfProtectedHTTPClient = newProtectedFetchHTTPClient()
 	ssrfProtectedDirectHTTPClient = newDirectProtectedFetchHTTPClient()
+	strictDirectMediaHTTPClient = newStrictDirectProtectedFetchHTTPClient()
 }
 
 // GetHttpClient returns the shared non-streaming relay client, also used as the
@@ -217,10 +223,12 @@ func GetDirectSSRFProtectedHTTPClient() *http.Client {
 // every redirect to HTTPS on the default TLS port, so an allowed result URL
 // cannot downgrade or escape to a service on another port.
 func GetStrictHTTPSDirectSSRFProtectedHTTPClient() *http.Client {
-	base := GetDirectSSRFProtectedHTTPClient()
-	client := *base
-	client.CheckRedirect = checkStrictHTTPSProtectedFetchRedirect
-	return &client
+	proxyClientLock.Lock()
+	defer proxyClientLock.Unlock()
+	if strictDirectMediaHTTPClient == nil {
+		strictDirectMediaHTTPClient = newStrictDirectProtectedFetchHTTPClient()
+	}
+	return strictDirectMediaHTTPClient
 }
 
 // GetRelayHttpClient returns the shared relay client tuned for the request's

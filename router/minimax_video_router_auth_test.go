@@ -57,6 +57,7 @@ func TestMiniMaxVideoQueryAllowsExhaustedTokenAfterPaidSubmission(t *testing.T) 
 		TaskID:     "task_minimax_paid",
 		Platform:   constant.TaskPlatform("60"),
 		UserId:     user.Id,
+		Action:     constant.TaskActionVideoGenerationV2,
 		Status:     model.TaskStatusQueued,
 		CreatedAt:  now,
 		UpdatedAt:  now,

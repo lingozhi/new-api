@@ -518,9 +518,9 @@ func selectAcquirableAbilityChannelId(candidates []Ability, weights []int, model
 }
 
 // filterAbilitiesByRequestPathAndModel restricts candidates by request path and
-// model for the DB (non-memory-cache) selection path. MiniMax V2 video generation
-// is implemented only by AutoDL channels. Advanced Custom channels are kept only
-// when one of their routes matches requestPath and model.
+// model for the DB (non-memory-cache) selection path. Supported AutoDL workflow
+// pairs are exclusive to AutoDL; AutoDL is excluded from every other pair.
+// Advanced Custom channels are kept only when one of their routes matches.
 func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath string, model string) []Ability {
 	if requestPath == "" || len(abilities) == 0 {
 		return abilities
@@ -537,9 +537,13 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 	}
 
 	var channels []*Channel
+	autoDLRequest := constant.AutoDLSupportsRequest(requestPath, model)
+	if requestPath == "/v2/video_generation" && !autoDLRequest {
+		return nil
+	}
 	if err := DB.Where("id IN ?", channelIds).Find(&channels).Error; err != nil {
-		if requestPath == "/v2/video_generation" {
-			common.SysError(fmt.Sprintf("failed to resolve AutoDL channel types for MiniMax V2 routing: %v", err))
+		if autoDLRequest {
+			common.SysError(fmt.Sprintf("failed to resolve AutoDL channel types for workflow routing: %v", err))
 			return nil
 		}
 		// Existing routes retain their historical availability-first fallback.
@@ -555,14 +559,14 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 	for _, ability := range abilities {
 		channel, ok := channelsByID[ability.ChannelId]
 		if !ok {
-			if requestPath == "/v2/video_generation" {
+			if autoDLRequest {
 				continue
 			}
 			// Preserve the candidate so the downstream consistency check reports it.
 			filtered = append(filtered, ability)
 			continue
 		}
-		if requestPath == "/v2/video_generation" {
+		if autoDLRequest {
 			if channel.Type == constant.ChannelTypeAutoDL {
 				filtered = append(filtered, ability)
 			}

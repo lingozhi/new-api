@@ -20,6 +20,8 @@ func TestSSRFProtectionRejectsLiteralPrivateAndReservedIPs(t *testing.T) {
 		"169.254.169.254",
 		"fc00::1",
 		"::ffff:127.0.0.1",
+		"64:ff9b:1::a9fe:a9fe",
+		"2002:a9fe:a9fe::1",
 	}
 	for _, host := range tests {
 		t.Run(host, func(t *testing.T) {

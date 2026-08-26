@@ -25,7 +25,7 @@ describe('channel type model presets', () => {
   test('uses AutoDL supported models even when they are absent from the catalog', () => {
     assert.deepEqual(
       getRelatedModelsForChannelType(60, ['gpt-5', 'claude-sonnet']),
-      ['MiniMax-H3']
+      ['MiniMax-H3', 'indextts2-v1']
     )
   })
 

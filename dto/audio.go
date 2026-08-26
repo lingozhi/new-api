@@ -30,6 +30,15 @@ type AudioRequest struct {
 	//Stream                  json.RawMessage `json:"stream,omitempty"`
 }
 
+// IndexTTS2Metadata carries the IndexTTS2 emotion controls exposed through
+// the otherwise OpenAI-compatible audio speech request. The vector order is
+// happy, angry, sad, afraid, disgusted, melancholic, surprised, calm.
+type IndexTTS2Metadata struct {
+	EmotionAudio  *string    `json:"emotion_audio,omitempty"`
+	EmotionVector *[]float64 `json:"emotion_vector,omitempty"`
+	EmotionRandom *bool      `json:"emotion_random,omitempty"`
+}
+
 func (r *AudioRequest) GetTokenCountMeta() *types.TokenCountMeta {
 	meta := &types.TokenCountMeta{
 		CombineText: r.Input,

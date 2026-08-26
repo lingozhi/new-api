@@ -1492,6 +1492,9 @@ func RelayTask(c *gin.Context) {
 	var result *relay.TaskSubmitResult
 	var taskErr *dto.TaskError
 	isMiniMaxVideoV2 := c.Request.URL.Path == "/v2/video_generation"
+	isIndexTTS2Speech := c.Request.URL.Path == "/v1/audio/speech" && relayInfo.OriginModelName == constant.AutoDLModelIndexTTS2
+	isAutoDLDurableSubmission := common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeAutoDL &&
+		(isMiniMaxVideoV2 || isIndexTTS2Speech)
 	var checkpointTask *model.Task
 	var replayedAutoDLTask *model.Task
 	defer func() {
@@ -1501,7 +1504,7 @@ func RelayTask(c *gin.Context) {
 		if checkpointTask != nil {
 			switch checkpointTask.Status {
 			case model.TaskStatusReserving:
-				if _, err := model.RefundTaskBillingReservation(checkpointTask.TaskID, "AutoDL video submission did not start"); err != nil {
+				if _, err := model.RefundTaskBillingReservation(checkpointTask.TaskID, "AutoDL workflow submission did not start"); err != nil {
 					common.SysError(fmt.Sprintf("refund AutoDL submission reservation: task_id=%s channel_id=%d error=%v", checkpointTask.TaskID, checkpointTask.ChannelId, err))
 				}
 			}
@@ -1513,7 +1516,7 @@ func RelayTask(c *gin.Context) {
 	}()
 
 	var submissionCheckpoint *relay.TaskSubmissionCheckpoint
-	if isMiniMaxVideoV2 {
+	if isAutoDLDurableSubmission {
 		submissionCheckpoint = &relay.TaskSubmissionCheckpoint{}
 		submissionCheckpoint.Prepare = func(platform constant.TaskPlatform, expectedQuota int) *dto.TaskError {
 			task := model.InitTask(platform, relayInfo)
@@ -1575,7 +1578,7 @@ func RelayTask(c *gin.Context) {
 					durableReservation.ExpectedQuota == reservation.ExpectedQuota
 				if !matchesCommittedInsert {
 					return service.TaskErrorWrapperLocal(
-						fmt.Errorf("persist video billing reservation: %w", err),
+						fmt.Errorf("persist AutoDL workflow billing reservation: %w", err),
 						"persist_task_reservation_failed",
 						http.StatusInternalServerError,
 					)
@@ -1589,7 +1592,7 @@ func RelayTask(c *gin.Context) {
 		submissionCheckpoint.Activate = func(preConsumedQuota int) *dto.TaskError {
 			if checkpointTask == nil {
 				return service.TaskErrorWrapperLocal(
-					errors.New("video billing reservation is unavailable"),
+					errors.New("AutoDL workflow billing reservation is unavailable"),
 					"persist_task_checkpoint_failed",
 					http.StatusInternalServerError,
 				)
@@ -1598,14 +1601,14 @@ func RelayTask(c *gin.Context) {
 			activated, err := model.ActivatePreparedAutoDLTaskCheckpoint(checkpointTask)
 			if err != nil {
 				return service.TaskErrorWrapperLocal(
-					fmt.Errorf("activate video submission checkpoint: %w", err),
+					fmt.Errorf("activate AutoDL workflow submission checkpoint: %w", err),
 					"persist_task_checkpoint_failed",
 					http.StatusInternalServerError,
 				)
 			}
 			if !activated && checkpointTask.Status != model.TaskStatusCheckpointPending {
 				return service.TaskErrorWrapperLocal(
-					errors.New("video submission checkpoint activation was not durable"),
+					errors.New("AutoDL workflow submission checkpoint activation was not durable"),
 					"persist_task_checkpoint_failed",
 					http.StatusInternalServerError,
 				)
@@ -1689,7 +1692,12 @@ func RelayTask(c *gin.Context) {
 
 	if replayedAutoDLTask != nil {
 		taskErr = nil
-		writeReplayedAutoDLVideoTask(c, replayedAutoDLTask)
+		if isIndexTTS2Speech {
+			c.Header("Idempotency-Replayed", "true")
+			writeAutoDLAudioSpeechTask(c, replayedAutoDLTask)
+		} else {
+			writeReplayedAutoDLVideoTask(c, replayedAutoDLTask)
+		}
 		return
 	}
 
@@ -1722,7 +1730,7 @@ func RelayTask(c *gin.Context) {
 					completeErr,
 				))
 				taskErr = service.TaskErrorWrapperLocal(
-					errors.New("failed to persist accepted video task"),
+					errors.New("failed to persist accepted AutoDL workflow task"),
 					"persist_task_failed",
 					http.StatusInternalServerError,
 				)
@@ -1764,6 +1772,10 @@ func RelayTask(c *gin.Context) {
 			}
 			service.LogTaskConsumption(c, relayInfo)
 		}
+		if taskErr == nil && isIndexTTS2Speech {
+			writeAutoDLAudioSpeechTask(c, checkpointTask)
+			return
+		}
 		if taskErr == nil && isMiniMaxVideoV2 {
 			c.JSON(http.StatusOK, dto.MiniMaxVideoGenerationV2CreateResponse{TaskID: relayInfo.PublicTaskID})
 		}
@@ -1773,7 +1785,7 @@ func RelayTask(c *gin.Context) {
 		checkpointTask.Status == model.TaskStatusCheckpointPending &&
 		autoDLSubmissionWasExplicitlyRejected(taskErr)
 	if submissionExplicitlyRejected {
-		const rejectionReason = "AutoDL video submission was rejected"
+		const rejectionReason = "AutoDL workflow submission was rejected"
 		marked, markErr := checkpointTask.MarkSubmissionRejected(rejectionReason)
 		if markErr == nil && marked {
 			if refundErr := service.FailTaskWithRefund(context.WithoutCancel(c.Request.Context()), checkpointTask, rejectionReason); refundErr != nil {
@@ -1795,7 +1807,7 @@ func RelayTask(c *gin.Context) {
 				if retryMarkErr != nil || !retryMarked {
 					common.SysError(fmt.Sprintf("refund and mark rejected AutoDL submission failed: task_id=%s channel_id=%d refund_error=%v marked=%t mark_error=%v retry_marked=%t retry_mark_error=%v", checkpointTask.TaskID, checkpointTask.ChannelId, refundErr, marked, markErr, retryMarked, retryMarkErr))
 					taskErr = service.TaskErrorWrapperLocal(
-						errors.New("failed to persist rejected video submission refund"),
+						errors.New("failed to persist rejected AutoDL workflow submission refund"),
 						"persist_refund_marker_failed",
 						http.StatusInternalServerError,
 					)
@@ -1817,7 +1829,11 @@ func RelayTask(c *gin.Context) {
 		service.LogTaskConsumption(c, relayInfo)
 		taskErr = nil
 		c.Header("Retry-After", "2")
-		c.JSON(http.StatusOK, dto.MiniMaxVideoGenerationV2CreateResponse{TaskID: checkpointTask.TaskID})
+		if isIndexTTS2Speech {
+			writeAutoDLAudioPending(c, checkpointTask)
+		} else {
+			c.JSON(http.StatusOK, dto.MiniMaxVideoGenerationV2CreateResponse{TaskID: checkpointTask.TaskID})
+		}
 		return
 	}
 
@@ -1831,6 +1847,8 @@ func autoDLSubmissionWasExplicitlyRejected(taskErr *dto.TaskError) bool {
 		return false
 	}
 	switch taskErr.Code {
+	case "autodl_submission_rejected":
+		return true
 	case "fail_to_fetch_task":
 		// AutoDL does not publish a blanket guarantee for custom 4xx statuses.
 		// Refund only standard responses that unambiguously reject the request
@@ -1858,6 +1876,29 @@ func autoDLSubmissionWasExplicitlyRejected(taskErr *dto.TaskError) bool {
 func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
+	}
+	if c.Request.URL.Path == "/v1/audio/speech" && common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeAutoDL {
+		statusCode := taskErr.StatusCode
+		if taskErr.Code == string(types.ErrorCodeInsufficientUserQuota) {
+			statusCode = http.StatusPaymentRequired
+		}
+		message := taskErr.Message
+		errorType := "invalid_request_error"
+		if statusCode >= http.StatusInternalServerError {
+			errorType = "server_error"
+			logger.LogError(c, fmt.Sprintf(
+				"AutoDL audio internal error: status=%d code=%s detail=%s",
+				statusCode,
+				taskErr.Code,
+				common.MaskSensitiveInfo(taskErr.Message),
+			))
+			message = http.StatusText(statusCode)
+			if message == "" {
+				message = "Internal server error"
+			}
+		}
+		writeAutoDLAudioError(c, statusCode, errorType, taskErr.Code, message)
+		return
 	}
 	if c.Request.URL.Path == "/v2/video_generation" || strings.HasPrefix(c.Request.URL.Path, "/v2/query/video_generation/") {
 		statusCode := taskErr.StatusCode
@@ -1892,8 +1933,10 @@ func shouldRetryTaskRelay(c *gin.Context, channelLocked bool, taskErr *dto.TaskE
 		return false
 	}
 	// AutoDL does not expose an idempotency key for workflow submissions. Once a
-	// POST outcome is uncertain, retrying can create a second paid video.
-	if c.Request.URL.Path == "/v2/video_generation" && taskErr.Code != "dispatch_preflight_failed" {
+	// POST outcome is uncertain, retrying can create a second paid generation.
+	isAutoDLWorkflow := common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeAutoDL &&
+		(c.Request.URL.Path == "/v2/video_generation" || c.Request.URL.Path == "/v1/audio/speech")
+	if isAutoDLWorkflow && taskErr.Code != "dispatch_preflight_failed" {
 		return false
 	}
 	if retryTimes <= 0 {

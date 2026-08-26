@@ -437,13 +437,13 @@ func TestTaskAdaptorDefersClientResponseAndSanitizesPersistedTaskData(t *testing
 	assert.Empty(t, recorder.Body.String())
 }
 
-func TestTaskAdaptorTreatsNonSuccessJSONAsAmbiguous(t *testing.T) {
+func TestTaskAdaptorClassifiesNonSuccessJSONBySubmissionCertainty(t *testing.T) {
 	testCases := []struct {
 		name     string
 		body     string
 		wantCode string
 	}{
-		{name: "known-looking rejection", body: `{"code":"InvalidParameter","data":{}}`, wantCode: "invalid_upstream_response"},
+		{name: "known rejection without task id", body: `{"code":"InvalidParameter","data":{}}`, wantCode: "autodl_submission_rejected"},
 		{name: "empty code", body: `{}`, wantCode: "invalid_upstream_response"},
 		{name: "unknown code", body: `{"code":"Error","data":{}}`, wantCode: "invalid_upstream_response"},
 		{name: "task id makes outcome ambiguous", body: `{"code":"InvalidParameter","data":{"task_id":"possibly-created"}}`, wantCode: "invalid_upstream_response"},
@@ -542,6 +542,7 @@ func TestTaskAdaptorConvertsTaskToMiniMaxVideoV2Response(t *testing.T) {
 			task := &model.Task{
 				SubmitTime: 100,
 				TaskID:     "task_checkpoint",
+				Action:     constant.TaskActionVideoGenerationV2,
 				Status:     status,
 				Properties: model.Properties{OriginModelName: "MiniMax-H3"},
 			}
@@ -559,6 +560,7 @@ func TestTaskAdaptorConvertsTaskToMiniMaxVideoV2Response(t *testing.T) {
 			CreatedAt: 100,
 			UpdatedAt: 200,
 			TaskID:    "task_public",
+			Action:    constant.TaskActionVideoGenerationV2,
 			Status:    model.TaskStatusSuccess,
 			Properties: model.Properties{
 				OriginModelName: "MiniMax-H3",
@@ -598,6 +600,7 @@ func TestTaskAdaptorConvertsTaskToMiniMaxVideoV2Response(t *testing.T) {
 		task := &model.Task{
 			SubmitTime: 100,
 			TaskID:     "task_failed",
+			Action:     constant.TaskActionVideoGenerationV2,
 			Status:     model.TaskStatusFailure,
 			FailReason: "provider rejected the prompt",
 			Properties: model.Properties{OriginModelName: "MiniMax-H3"},
@@ -619,6 +622,7 @@ func TestTaskAdaptorConvertsTaskToMiniMaxVideoV2Response(t *testing.T) {
 		task := &model.Task{
 			SubmitTime: 100,
 			TaskID:     "task_cancelled",
+			Action:     constant.TaskActionVideoGenerationV2,
 			Status:     model.TaskStatusFailure,
 			FailReason: "AutoDL task cancelled",
 			Data:       []byte(`{"code":"Success","data":{"status":"CANCELLED"}}`),

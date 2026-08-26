@@ -88,6 +88,29 @@ func TestProtectedFetchDialerRejectsPrivateReboundAddress(t *testing.T) {
 	require.Contains(t, err.Error(), "private IP address not allowed")
 }
 
+func TestProtectedFetchDialerRejectsLocalUseNAT64MetadataAddress(t *testing.T) {
+	dialer := &protectedFetchDialer{
+		resolver: staticSSRFResolver{
+			"nat64.example": {{IP: net.ParseIP("64:ff9b:1::a9fe:a9fe")}},
+		},
+		dialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			t.Fatalf("NAT64 metadata address must not be dialed: %s", address)
+			return nil, nil
+		},
+		getProtection: staticProtection(&common.SSRFProtection{
+			AllowPrivateIp:         false,
+			DomainFilterMode:       false,
+			IpFilterMode:           false,
+			ApplyIPFilterForDomain: true,
+		}),
+	}
+
+	conn, err := dialer.DialContext(context.Background(), "tcp", "nat64.example:443")
+	require.Error(t, err)
+	require.Nil(t, conn)
+	require.Contains(t, err.Error(), "private IP address not allowed")
+}
+
 func TestProtectedFetchDialerRejectsMixedResolvedIPs(t *testing.T) {
 	var dialed []string
 	dialer := &protectedFetchDialer{
@@ -227,6 +250,19 @@ func TestStrictHTTPSProtectedFetchRejectsRedirectDowngradeAndAlternatePort(t *te
 	require.ErrorContains(t, checkStrictHTTPSProtectedFetchRedirect(redirectRequest, []*http.Request{initialRequest}), "blocked")
 }
 
+func TestStrictHTTPSProtectedFetchRedirectDropsSignedURLReferer(t *testing.T) {
+	configureSSRFTestFetchSetting(t)
+
+	initialRequest, err := http.NewRequest(http.MethodGet, "https://93.184.216.34/video.mp4?signature=secret", nil)
+	require.NoError(t, err)
+	redirectRequest, err := http.NewRequest(http.MethodGet, "https://93.184.216.35/video.mp4", nil)
+	require.NoError(t, err)
+	redirectRequest.Header.Set("Referer", initialRequest.URL.String())
+
+	require.NoError(t, checkStrictHTTPSProtectedFetchRedirect(redirectRequest, []*http.Request{initialRequest}))
+	require.Empty(t, redirectRequest.Header.Get("Referer"))
+}
+
 func TestProtectedFetchRoundTripperUsesConfiguredProxy(t *testing.T) {
 	configureSSRFTestFetchSetting(t)
 	proxyURL := mustParseURL(t, "http://127.0.0.1:3128")
@@ -326,6 +362,18 @@ func TestDirectProtectedFetchClientNeverUsesEnvironmentProxy(t *testing.T) {
 	proxyURL, err := roundTripper.proxy(req)
 	require.NoError(t, err)
 	require.Nil(t, proxyURL)
+}
+
+func TestStrictDirectMediaClientAlwaysVerifiesTLS(t *testing.T) {
+	previousInsecure := common.TLSInsecureSkipVerify
+	common.TLSInsecureSkipVerify = true
+	t.Cleanup(func() { common.TLSInsecureSkipVerify = previousInsecure })
+
+	client := newStrictDirectProtectedFetchHTTPClient()
+	roundTripper, ok := client.Transport.(*ssrfProtectedRoundTripper)
+	require.True(t, ok)
+	transport := roundTripper.transportFor(nil)
+	require.True(t, transport.TLSClientConfig == nil || !transport.TLSClientConfig.InsecureSkipVerify)
 }
 
 func TestWebhookProtectedDialerRejectsPrivateRebindWhenGeneralProtectionDisabled(t *testing.T) {

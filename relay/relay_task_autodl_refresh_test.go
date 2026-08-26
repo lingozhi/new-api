@@ -197,23 +197,34 @@ func TestMiniMaxVideoV2QueryOnlyReturnsAutoDLTasksFromLastSevenDays(t *testing.T
 	testCases := []struct {
 		name        string
 		platform    constant.TaskPlatform
+		action      string
 		submitTime  int64
 		expectError bool
 	}{
 		{
 			name:       "inside seven day window",
 			platform:   constant.TaskPlatformAutoDL,
+			action:     constant.TaskActionVideoGenerationV2,
 			submitTime: now - int64((7*24*time.Hour)/time.Second) + 2,
 		},
 		{
 			name:        "older than seven days",
 			platform:    constant.TaskPlatformAutoDL,
+			action:      constant.TaskActionVideoGenerationV2,
 			submitTime:  now - int64((7*24*time.Hour)/time.Second) - 2,
 			expectError: true,
 		},
 		{
 			name:        "different task platform",
 			platform:    constant.TaskPlatform("kling"),
+			action:      constant.TaskActionVideoGenerationV2,
+			submitTime:  now,
+			expectError: true,
+		},
+		{
+			name:        "audio task cannot use video query",
+			platform:    constant.TaskPlatformAutoDL,
+			action:      constant.TaskActionAudioSpeech,
 			submitTime:  now,
 			expectError: true,
 		},
@@ -223,6 +234,7 @@ func TestMiniMaxVideoV2QueryOnlyReturnsAutoDLTasksFromLastSevenDays(t *testing.T
 			task := &model.Task{
 				TaskID:     "task_minimax_query_window_" + strconv.Itoa(index),
 				Platform:   tc.platform,
+				Action:     tc.action,
 				UserId:     77,
 				Status:     model.TaskStatusQueued,
 				SubmitTime: tc.submitTime,
