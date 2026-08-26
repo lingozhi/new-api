@@ -28,7 +28,7 @@ import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { getLobeIcon } from '@/lib/lobe-icon'
 
-import { DEFAULT_TOKEN_UNIT } from '../constants'
+import { DEFAULT_TOKEN_UNIT, getEndpointTypeDisplayLabel } from '../constants'
 import {
   getDynamicDisplayGroupRatio,
   getDynamicPricingSummary,
@@ -413,7 +413,7 @@ export function usePricingColumns(
             items={endpoints.map((ep) => (
               <StatusBadge
                 key={ep}
-                label={ep}
+                label={getEndpointTypeDisplayLabel(ep, t)}
                 autoColor={ep}
                 size='sm'
                 copyable={false}

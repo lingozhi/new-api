@@ -189,7 +189,6 @@ func SetRelayRouter(router *gin.Engine) {
 		middleware.SystemPerformanceCheck(),
 		middleware.TokenAuthRecovery(),
 		middleware.AutoDLAudioTaskReadRateLimit(),
-		middleware.DownloadRateLimit(),
 		middleware.ModelRequestRateLimit(),
 	)
 	audioSpeechTaskRouter.GET("/:task_id", controller.GetAutoDLAudioSpeechTask)

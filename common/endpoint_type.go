@@ -35,7 +35,7 @@ func GetEndpointTypesByChannelType(channelType int, modelName string) []constant
 		case constant.AutoDLModelMiniMaxH3:
 			endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAIVideo}
 		case constant.AutoDLModelIndexTTS2:
-			endpointTypes = []constant.EndpointType{constant.EndpointTypeOpenAI}
+			endpointTypes = []constant.EndpointType{constant.EndpointTypeAudioSpeech}
 		default:
 			endpointTypes = []constant.EndpointType{}
 		}

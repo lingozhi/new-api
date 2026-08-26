@@ -47,6 +47,13 @@ import { useStatus } from '@/hooks/use-status'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 
 import {
+  AUDIO_SPEECH_ENDPOINT_TYPE,
+  buildIndexTTSAudioSpeechAiIntegrationGuide,
+  buildIndexTTSAudioSpeechParameters,
+  buildIndexTTSAudioSpeechSample,
+  supportsAudioSpeechEndpoint,
+} from '../lib/audio-speech-api-docs'
+import {
   buildDepthMediaAiIntegrationGuide,
   buildDepthMediaJobSample,
 } from '../lib/depth-media-catalog'
@@ -106,6 +113,9 @@ const IMAGE_RUNTIME_HINT_KEYS: Record<Lang, string> = {
     'TypeScript runtime: Bun 1.0+, or Node.js 18+ in ESM mode with a TypeScript runner.',
   javascript: 'JavaScript runtime: Bun 1.0+ or Node.js 18+ in ESM mode.',
 }
+
+const AUDIO_SPEECH_CURL_RUNTIME_HINT_KEY =
+  'cURL writes the submit body to speech.response; a 200 response is WAV, while a 202 response must be recovered from Location.'
 
 type SampleContext = {
   baseUrl: string
@@ -457,6 +467,14 @@ function buildSample(
       endpointPath: ctx.endpointPath,
     })
   }
+  if (endpointType === AUDIO_SPEECH_ENDPOINT_TYPE) {
+    return buildIndexTTSAudioSpeechSample(lang, {
+      baseUrl: ctx.baseUrl,
+      apiKeyEnv: ctx.apiKeyEnv,
+      modelName: ctx.modelName,
+      endpointPath: ctx.endpointPath,
+    })
+  }
   return buildChatSample(lang, ctx)
 }
 
@@ -530,6 +548,8 @@ function CodeSamplesSection(props: {
     return null
   }
 
+  const isAudioSpeech = activeEndpoint.type === AUDIO_SPEECH_ENDPOINT_TYPE
+
   const code = buildSample(activeLang, activeEndpoint.type, {
     baseUrl,
     apiKeyEnv: 'NEW_API_KEY',
@@ -553,6 +573,13 @@ function CodeSamplesSection(props: {
       apiKeyEnv: 'NEW_API_KEY',
       selectedModel: props.model,
       publicModels: props.publicModels,
+    })
+  } else if (isAudioSpeech) {
+    aiIntegrationGuide = buildIndexTTSAudioSpeechAiIntegrationGuide({
+      baseUrl,
+      apiKeyEnv: 'NEW_API_KEY',
+      modelName: props.model.model_name || '',
+      endpointPath: activeEndpoint.path,
     })
   }
 
@@ -607,17 +634,23 @@ function CodeSamplesSection(props: {
           endpoints.length > 1 && (
             <Tabs value={endpointType} onValueChange={setEndpointType}>
               <TabsList className='bg-muted/40 h-8 p-0.5'>
-                {endpoints.map((ep) => (
-                  <TabsTrigger
-                    key={ep.type}
-                    value={ep.type}
-                    className='h-7 px-2.5 text-xs'
-                  >
-                    {ep.type === 'image-generation'
-                      ? t('Unified image generation')
-                      : ep.type}
-                  </TabsTrigger>
-                ))}
+                {endpoints.map((ep) => {
+                  let label = ep.type
+                  if (ep.type === 'image-generation') {
+                    label = t('Unified image generation')
+                  } else if (ep.type === AUDIO_SPEECH_ENDPOINT_TYPE) {
+                    label = t('Audio')
+                  }
+                  return (
+                    <TabsTrigger
+                      key={ep.type}
+                      value={ep.type}
+                      className='h-7 px-2.5 text-xs'
+                    >
+                      {label}
+                    </TabsTrigger>
+                  )
+                })}
               </TabsList>
             </Tabs>
           )
@@ -641,6 +674,7 @@ function CodeSamplesSection(props: {
       {props.model.api_profile?.kind === 'image' && (
         <ImageSampleRuntimeHint lang={activeLang} />
       )}
+      {isAudioSpeech && <AudioSpeechSampleRuntimeHint lang={activeLang} />}
 
       <div className='mt-3'>
         <CodeBlock code={code} language={LANG_HIGHLIGHT[activeLang]}>
@@ -655,10 +689,76 @@ function CodeSamplesSection(props: {
         {t('must contain the API key from your token settings.')}
       </p>
 
+      {isAudioSpeech && <AudioSpeechContractNotice />}
+
       {props.model.api_profile && props.model.api_profile.webhook && (
         <WebhookContractNotice profileKind={props.model.api_profile.kind} />
       )}
     </section>
+  )
+}
+
+function AudioSpeechSampleRuntimeHint(props: { lang: Lang }) {
+  const { t } = useTranslation()
+  const hintKey =
+    props.lang === 'curl'
+      ? AUDIO_SPEECH_CURL_RUNTIME_HINT_KEY
+      : IMAGE_RUNTIME_HINT_KEYS[props.lang]
+
+  return (
+    <p className='text-muted-foreground mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed'>
+      <Terminal aria-hidden='true' className='mt-0.5 size-3 shrink-0' />
+      <span>{t(hintKey)}</span>
+    </p>
+  )
+}
+
+function AudioSpeechContractNotice() {
+  const { t } = useTranslation()
+
+  return (
+    <aside className='border-border/60 mt-4 border-t pt-4'>
+      <h4 className='text-foreground mb-2 flex items-center gap-1.5 text-xs font-semibold'>
+        <ShieldCheck
+          aria-hidden='true'
+          className='text-muted-foreground/70 size-3.5'
+        />
+        {t('IndexTTS2 speech contract')}
+      </h4>
+
+      <ul className='text-muted-foreground grid gap-x-6 gap-y-1.5 text-xs leading-relaxed sm:grid-cols-2'>
+        <li>
+          {t(
+            'Send JSON only and include an Idempotency-Key of at most 256 characters. The same key and canonical request replay the original task without another charge; a different request returns HTTP 409 idempotency_conflict.'
+          )}
+        </li>
+        <li>
+          {t(
+            'HTTP 200 returns binary audio/wav. HTTP 202 returns task_id and status; follow Location with the same API token after Retry-After until the recovery GET returns WAV.'
+          )}
+        </li>
+        <li>
+          {t(
+            'voice and metadata.emotion_audio accept a public HTTPS WAV/MP3 URL or a matching base64 data URI. Named OpenAI voices are not supported.'
+          )}
+        </li>
+        <li>
+          {t(
+            'input accepts 1–2048 UTF-8 characters. The request body is limited to 64 MiB, each reference audio to 15 MiB, both references together to 30 MiB, reference duration to 10 minutes, and generated WAV to 64 MiB.'
+          )}
+        </li>
+        <li>
+          {t(
+            'metadata.emotion_vector uses exactly eight values in this order: happy, angry, sad, afraid, disgusted, melancholic, surprised, calm. Values must be 0–1.4 and surprised must be 0.'
+          )}
+        </li>
+        <li>
+          {t(
+            'emotion_audio, emotion_vector, and emotion_random=true are mutually exclusive. instructions and SSE streaming are unsupported; response_format must be wav and speed must be 1.'
+          )}
+        </li>
+      </ul>
+    </aside>
   )
 }
 
@@ -738,6 +838,11 @@ function SupportedParametersSection(props: { model: PricingModel }) {
     )
   }, [props.model.api_profile, props.model.model_name])
   const params = useMemo(() => {
+    if (supportsAudioSpeechEndpoint(props.model)) {
+      return buildIndexTTSAudioSpeechParameters(
+        props.model.model_name || 'indextts2-v1'
+      )
+    }
     if (displayProfile) {
       return displayProfile.parameters.map((parameter) =>
         profileParameterForDisplay(parameter, displayProfile.kind)
@@ -1073,7 +1178,10 @@ export function ModelDetailsApi(props: {
       />
       <AuthSection />
       <SupportedParametersSection model={props.model} />
-      {!props.model.api_profile && <RateLimitsSection model={props.model} />}
+      {!props.model.api_profile &&
+        !supportsAudioSpeechEndpoint(props.model) && (
+          <RateLimitsSection model={props.model} />
+        )}
     </div>
   )
 }

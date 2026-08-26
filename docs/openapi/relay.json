@@ -1646,17 +1646,84 @@
       "post": {
         "summary": "文本转语音",
         "deprecated": false,
-        "description": "将文本转换为音频",
+        "description": "将文本转换为音频。普通 OpenAI 兼容 TTS 请求继续使用 SpeechRequest。使用 indextts2-v1 时，必须发送 JSON 请求体和 Idempotency-Key 请求头；voice 必须是可公开访问的 HTTPS WAV/MP3 地址，或允许的 WAV/MP3 base64 data URI。相同 API 令牌、相同 Idempotency-Key 和相同规范化请求会复用原任务；同一个键对应不同请求时返回 409。服务会同步等待任务，完成时返回 WAV；等待超时时返回 202，可根据 Location 调用恢复接口。",
         "operationId": "createSpeech",
         "tags": [
           "OpenAI音频(Audio)"
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "indextts2-v1 必填，其他 TTS 模型可省略。长度不超过 256 个字符；重试时必须同时复用该键和完全相同的请求。",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SpeechRequest"
+                "oneOf": [
+                  {
+                    "allOf": [
+                      {
+                        "$ref": "#/components/schemas/SpeechRequest"
+                      },
+                      {
+                        "properties": {
+                          "model": {
+                            "not": {
+                              "enum": [
+                                "indextts2-v1"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "$ref": "#/components/schemas/IndexTTS2SpeechRequest"
+                  }
+                ]
+              },
+              "examples": {
+                "openaiCompatible": {
+                  "summary": "普通 OpenAI 兼容 TTS",
+                  "value": {
+                    "model": "tts-1",
+                    "input": "Hello from the speech API.",
+                    "voice": "alloy",
+                    "response_format": "mp3",
+                    "speed": 1
+                  }
+                },
+                "indexTTS2": {
+                  "summary": "IndexTTS2（请求头还需 Idempotency-Key）",
+                  "value": {
+                    "model": "indextts2-v1",
+                    "input": "你好，欢迎使用 IndexTTS2。",
+                    "voice": "https://media.example.com/reference.wav",
+                    "response_format": "wav",
+                    "speed": 1,
+                    "metadata": {
+                      "emotion_vector": [
+                        0.2,
+                        0,
+                        0.1,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0.3
+                      ]
+                    }
+                  }
+                }
               }
             }
           },
@@ -1664,16 +1731,345 @@
         },
         "responses": {
           "200": {
-            "description": "成功生成音频",
+            "description": "成功生成音频。indextts2-v1 固定返回 audio/wav；普通 TTS 模型的媒体类型由模型及 response_format 决定。",
             "content": {
               "audio/mpeg": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
                 }
+              },
+              "audio/wav": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
               }
             },
-            "headers": {}
+            "headers": {
+              "X-New-Api-Task-ID": {
+                "description": "indextts2-v1 任务 ID，可用于恢复请求。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "indextts2-v1 恢复接口路径。",
+                "schema": {
+                  "type": "string",
+                  "example": "/v1/audio/speech/task_xxx"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "相同幂等请求命中已有任务时为 true。",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "仅 indextts2-v1：任务仍在运行，请按 Retry-After 调用 Location。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexTTS2PendingResponse"
+                }
+              }
+            },
+            "headers": {
+              "X-New-Api-Task-ID": {
+                "description": "任务 ID。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "任务恢复接口路径。",
+                "schema": {
+                  "type": "string",
+                  "example": "/v1/audio/speech/task_xxx"
+                }
+              },
+              "Retry-After": {
+                "description": "建议等待的秒数。",
+                "schema": {
+                  "type": "integer",
+                  "example": 2
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "相同幂等请求命中已有任务时为 true。",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求无效，或 indextts2-v1 缺少/使用过长的 Idempotency-Key。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API 令牌缺失、无效或已过期。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "indextts2-v1 的 Idempotency-Key 已用于不同请求。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "请求体超过允许的 64 MiB 上限。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "indextts2-v1 请求体不是 application/json。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "触发请求、模型或 IndexTTS2 限流。若响应包含 Location，任务已经受理，请按 Retry-After 等待后使用同一 API 令牌 GET 该地址；未包含 Location 时按普通提交限流处理。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {
+              "X-New-Api-Task-ID": {
+                "description": "任务已经受理时返回的任务 ID。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "任务已经受理时返回的恢复接口路径。",
+                "schema": {
+                  "type": "string",
+                  "example": "/v1/audio/speech/task_xxx"
+                }
+              },
+              "Retry-After": {
+                "description": "存在 Location 时，建议等待后执行恢复 GET 的秒数。",
+                "schema": {
+                  "type": "integer",
+                  "example": 60
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "幂等处理、任务存储或其他内部服务失败。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "indextts2-v1 上游任务失败，或生成结果不是可安全返回的 WAV 音频。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/audio/speech/{task_id}": {
+      "get": {
+        "summary": "恢复 IndexTTS2 语音任务",
+        "deprecated": false,
+        "description": "查询并恢复 indextts2-v1 任务。必须使用创建任务时的同一个 API 令牌；任务仅在创建后的 7 天查询窗口内可见。任务完成时返回 WAV，仍在运行时返回 202。",
+        "operationId": "getIndexTTS2SpeechTask",
+        "tags": [
+          "OpenAI音频(Audio)"
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "POST 返回的 X-New-Api-Task-ID，或 Location 路径中的任务 ID。",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "任务成功，返回生成的 WAV 音频。",
+            "content": {
+              "audio/wav": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            },
+            "headers": {
+              "X-New-Api-Task-ID": {
+                "description": "任务 ID。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "当前恢复接口路径。",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "任务仍在运行。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexTTS2PendingResponse"
+                }
+              }
+            },
+            "headers": {
+              "X-New-Api-Task-ID": {
+                "description": "任务 ID。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "当前恢复接口路径。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Retry-After": {
+                "description": "建议等待的秒数。",
+                "schema": {
+                  "type": "integer",
+                  "example": 2
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "API 令牌缺失、无效或已过期。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "任务不存在、已超出查询窗口，或当前 API 令牌无权读取。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "触发任务读取、音频下载或模型请求限流。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "headers": {
+              "X-New-Api-Task-ID": {
+                "description": "任务已经完成、但产物下载触发限流时返回的任务 ID。",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "description": "任务已经完成、但产物下载触发限流时返回的当前恢复接口路径。",
+                "schema": {
+                  "type": "string",
+                  "example": "/v1/audio/speech/task_xxx"
+                }
+              },
+              "Retry-After": {
+                "description": "建议等待后重试同一恢复地址的秒数。",
+                "schema": {
+                  "type": "integer",
+                  "example": 60
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "任务查询或其他内部服务失败。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "任务失败，或生成结果不是可安全返回的 WAV 音频。",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -3918,6 +4314,96 @@
             "minimum": 0.25,
             "maximum": 4,
             "default": 1
+          }
+        }
+      },
+      "IndexTTS2SpeechRequest": {
+        "type": "object",
+        "description": "indextts2-v1 的 OpenAI Speech 兼容请求。请求头必须包含 Idempotency-Key，且 Content-Type 必须为 application/json。instructions 不受支持；SSE 流式输出不受支持。",
+        "required": [
+          "model",
+          "input",
+          "voice"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "enum": [
+              "indextts2-v1"
+            ]
+          },
+          "input": {
+            "type": "string",
+            "description": "要合成的 UTF-8 文本。去除空白后不得为空。",
+            "minLength": 1,
+            "maxLength": 2048,
+            "pattern": "\\S"
+          },
+          "voice": {
+            "type": "string",
+            "description": "音色参考音频，不是 alloy 等命名音色。可传返回有效 WAV/MP3 的公网 HTTPS URL（仅默认 443 端口，不允许 userinfo），或 data:audio/wav、data:audio/x-wav、data:audio/mpeg、data:audio/mp3 的严格 base64 URI。单个音频解码后最大 15 MiB，时长最大 10 分钟。",
+            "minLength": 1
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "wav"
+            ],
+            "default": "wav"
+          },
+          "speed": {
+            "type": "number",
+            "enum": [
+              1
+            ],
+            "default": 1
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/IndexTTS2Metadata"
+          }
+        }
+      },
+      "IndexTTS2Metadata": {
+        "type": "object",
+        "description": "可选情绪控制。emotion_audio、emotion_vector 与 emotion_random=true 三者互斥；emotion_random=false 可与其他模式一起发送且不启用随机模式。三个控制均未启用时，使用 voice 参考音频的情绪。voice 与 emotion_audio 解码后的总大小不得超过 30 MiB。",
+        "properties": {
+          "emotion_audio": {
+            "type": "string",
+            "description": "独立情绪参考音频，格式、安全、15 MiB 大小和 10 分钟时长限制与 voice 相同。"
+          },
+          "emotion_vector": {
+            "type": "array",
+            "description": "必须恰好 8 项，顺序为 happy、angry、sad、afraid、disgusted、melancholic、surprised、calm。每项范围 0 到 1.4；当前 surprised（第 7 项）必须为 0。",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1.4
+            }
+          },
+          "emotion_random": {
+            "type": "boolean",
+            "description": "true 时启用随机情绪，并与 emotion_audio、emotion_vector 互斥。",
+            "default": false
+          }
+        }
+      },
+      "IndexTTS2PendingResponse": {
+        "type": "object",
+        "required": [
+          "task_id",
+          "status"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "任务 ID。"
+          },
+          "status": {
+            "type": "string",
+            "description": "当前内部任务状态的小写形式。",
+            "example": "in_progress"
           }
         }
       },

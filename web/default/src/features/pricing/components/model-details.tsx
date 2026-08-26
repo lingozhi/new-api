@@ -60,7 +60,7 @@ import { formatCurrencyFromUSD } from '@/lib/currency'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 
-import { DEFAULT_TOKEN_UNIT } from '../constants'
+import { DEFAULT_TOKEN_UNIT, getEndpointTypeDisplayLabel } from '../constants'
 import { usePricingData } from '../hooks/use-pricing-data'
 import {
   getDynamicPriceEntries,
@@ -541,7 +541,9 @@ function ModelBackendProviderSection(props: { model: PricingModel }) {
   const { t } = useTranslation()
   const model = props.model
   const groups = normalizeCatalogItems(model.enable_groups)
-  const endpoints = normalizeCatalogItems(model.supported_endpoint_types)
+  const endpoints = normalizeCatalogItems(model.supported_endpoint_types).map(
+    (endpoint) => getEndpointTypeDisplayLabel(endpoint, t)
+  )
   const tags = parseTags(model.tags)
   const cells: React.ReactNode[] = []
 

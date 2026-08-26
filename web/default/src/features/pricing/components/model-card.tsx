@@ -24,7 +24,7 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 
-import { DEFAULT_TOKEN_UNIT } from '../constants'
+import { DEFAULT_TOKEN_UNIT, getEndpointTypeDisplayLabel } from '../constants'
 import {
   getDynamicDisplayGroupRatio,
   getDynamicPricingSummary,
@@ -92,7 +92,13 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   )
 
   const primaryGroup = groups[0]
-  const bottomTags = [...endpoints.slice(0, 2), ...tags.slice(0, 2)]
+  const bottomTags = [
+    ...endpoints.slice(0, 2).map((endpoint) => ({
+      key: `endpoint:${endpoint}`,
+      label: getEndpointTypeDisplayLabel(endpoint, t),
+    })),
+    ...tags.slice(0, 2).map((tag) => ({ key: `tag:${tag}`, label: tag })),
+  ]
   const hiddenCount =
     Math.max(groups.length - 1, 0) +
     Math.max(endpoints.length - 2, 0) +
@@ -287,8 +293,8 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
 
         <div className='flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 sm:gap-x-3 sm:gap-y-1'>
           {bottomTags.map((item) => (
-            <span key={item} className='text-muted-foreground/70 text-xs'>
-              {item}
+            <span key={item.key} className='text-muted-foreground/70 text-xs'>
+              {item.label}
             </span>
           ))}
           {(isDynamicPricing ||

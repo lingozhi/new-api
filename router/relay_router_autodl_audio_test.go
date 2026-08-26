@@ -189,6 +189,38 @@ func TestIndexTTSAudioRecoveryRejectsExpiredToken(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), `"error"`)
 }
 
+func TestIndexTTSAudioRecoveryPollingIsNotLimitedAsArtifactDownload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, user, token := setupAutoDLAudioRouterTest(t)
+	task := &model.Task{
+		TaskID:     "task_router_audio_pending_poll",
+		Platform:   constant.TaskPlatformAutoDL,
+		UserId:     user.Id,
+		Action:     constant.TaskActionAudioSpeech,
+		Status:     model.TaskStatusReserving,
+		SubmitTime: time.Now().Unix(),
+		Properties: model.Properties{OriginModelName: constant.AutoDLModelIndexTTS2},
+		PrivateData: model.TaskPrivateData{
+			TokenId: token.Id,
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	engine := gin.New()
+	SetRelayRouter(engine)
+	for index := 0; index < common.DownloadRateLimitNum+1; index++ {
+		httpRequest := httptest.NewRequest(http.MethodGet, "/v1/audio/speech/"+task.TaskID, nil)
+		httpRequest.RemoteAddr = "198.51.100.177:1234"
+		httpRequest.Header.Set("Authorization", "Bearer sk-"+token.Key)
+		recorder := httptest.NewRecorder()
+
+		engine.ServeHTTP(recorder, httpRequest)
+
+		assert.Equal(t, http.StatusAccepted, recorder.Code, "poll %d: %s", index+1, recorder.Body.String())
+		assert.Equal(t, "2", recorder.Header().Get("Retry-After"))
+	}
+}
+
 func TestOrdinaryTTSAudioRouteStillUsesSynchronousRelay(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, _, token := setupAutoDLAudioRouterTest(t)
