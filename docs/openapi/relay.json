@@ -454,7 +454,7 @@
       "post": {
         "summary": "创建 MiniMax-H3 视频任务",
         "deprecated": false,
-        "description": "使用 MiniMax V2 兼容请求创建异步视频任务。当前兼容接口只支持 MiniMax-H3 的受限子集：768P、4～15 秒、显式画幅比例，以及文生视频、参考图、参考图加参考音频。可选 callback_url 会在创建时通过 challenge 校验，并在后台处理完成后只推送终态结果。按请求中的 duration 秒数计费。",
+        "description": "使用 MiniMax V2 兼容请求创建异步视频任务。当前兼容接口支持 MiniMax-H3 的 768P、4～15 秒、显式画幅比例，以及文生视频、首尾帧、参考图、单图音频同步和多图多音频参考生成。可选 callback_url 会在创建时通过 challenge 校验，并在后台处理完成后只推送终态结果。按请求中的 duration 秒数计费。",
         "operationId": "createMiniMaxH3Video",
         "tags": [
           "视频生成/MiniMax V2"
@@ -494,8 +494,37 @@
                     "ratio": "16:9"
                   }
                 },
-                "referenceImageAndAudio": {
-                  "summary": "参考图加参考音频",
+                "firstAndLastFrames": {
+                  "summary": "首尾帧生成视频",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "镜头平滑推进，人物从站立自然过渡到转身离开"
+                      },
+                      {
+                        "type": "image_url",
+                        "image_url": {
+                          "url": "https://example.com/first.png"
+                        },
+                        "role": "first_frame"
+                      },
+                      {
+                        "type": "image_url",
+                        "image_url": {
+                          "url": "https://example.com/last.png"
+                        },
+                        "role": "last_frame"
+                      }
+                    ],
+                    "resolution": "768P",
+                    "duration": 8,
+                    "ratio": "16:9"
+                  }
+                },
+                "audioSynchronizedImage": {
+                  "summary": "单图音频同步",
                   "value": {
                     "model": "MiniMax-H3",
                     "content": [
@@ -2887,7 +2916,7 @@
             "type": "array",
             "minItems": 1,
             "maxItems": 16,
-            "description": "必须至少包含一条非空 text。最多 9 张 reference_image、3 条 reference_audio；reference_audio 必须与 reference_image 一起使用。当前不支持 first_frame、last_frame 和 reference_video。",
+            "description": "必须至少包含一条非空 text。first_frame 与 last_frame 必须成对提供，且不能与参考媒体混用。最多 9 张 reference_image、3 条 reference_audio；reference_audio 必须与 reference_image 一起使用。单张 reference_image 加单条 reference_audio 启用音频同步；更多参考媒体启用多模态参考生成。当前不支持 reference_video。",
             "items": {
               "$ref": "#/components/schemas/MiniMaxH3ContentItem"
             }
@@ -2912,7 +2941,7 @@
               "9:16",
               "1:1"
             ],
-            "description": "必须显式指定，不支持 adaptive。16:9 和 9:16 适用于全部当前工作流；1:1 仅适用于文生视频或纯参考图，不适用于参考图加音频。"
+            "description": "必须显式指定，不支持 adaptive。16:9 和 9:16 适用于全部当前工作流；1:1 仅适用于文生视频或纯参考图，不适用于首尾帧或带参考音频的输入。"
           },
           "aigc_watermark": {
             "type": "boolean",
@@ -2990,8 +3019,7 @@
         "type": "object",
         "required": [
           "type",
-          "image_url",
-          "role"
+          "image_url"
         ],
         "properties": {
           "type": {
@@ -3006,9 +3034,11 @@
           "role": {
             "type": "string",
             "enum": [
-              "reference_image"
+              "reference_image",
+              "first_frame",
+              "last_frame"
             ],
-            "description": "当前只支持 reference_image，不支持 first_frame 或 last_frame。"
+            "description": "reference_image 用于参考生成；first_frame 与 last_frame 用于首尾帧生成，必须各提供一张并成对出现。省略 role 时按 first_frame 处理。"
           }
         }
       },

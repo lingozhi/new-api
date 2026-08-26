@@ -295,68 +295,92 @@ func TestTaskAdaptorRejectsInvalidMiniMaxCallbackBeforeSubmission(t *testing.T) 
 	})
 }
 
-func TestBuildWorkflowRequestRejectsFirstAndLastFramesWithoutAdaptiveRatioSupport(t *testing.T) {
-	request := newMiniMaxRequest(
-		8,
-		"16:9",
-		textContent("The camera moves through the scene"),
-		imageContent(miniMaxRoleFirstFrame, "https://cdn.example.com/first.png"),
-		imageContent(miniMaxRoleLastFrame, "https://cdn.example.com/last.png"),
-	)
+func TestBuildWorkflowRequestMapsFirstAndLastFrames(t *testing.T) {
+	tests := []struct {
+		name       string
+		firstFrame dto.MiniMaxVideoContentItem
+	}{
+		{name: "explicit first-frame role", firstFrame: imageContent(miniMaxRoleFirstFrame, "https://cdn.example.com/first.png")},
+		{name: "omitted role defaults to first frame", firstFrame: imageContent("", "https://cdn.example.com/first.png")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := newMiniMaxRequest(
+				8,
+				"16:9",
+				textContent("The camera moves through the scene"),
+				test.firstFrame,
+				imageContent(miniMaxRoleLastFrame, "https://cdn.example.com/last.png"),
+			)
 
-	_, _, _, err := buildWorkflowRequest(request)
-	require.ErrorContains(t, err, "first_frame and last_frame inputs are not supported")
-	assert.NotContains(t, strings.ToLower(err.Error()), "autodl")
+			workflowID, payload, properties, err := buildWorkflowRequest(request)
+			require.NoError(t, err)
+			assert.Equal(t, workflowFirstLastFrame, workflowID)
+			assert.Equal(t, "The camera moves through the scene", payload["prompt"])
+			assert.Equal(t, 8, payload["duration"])
+			assert.Equal(t, "https://cdn.example.com/first.png", payload["first_frame"])
+			assert.Equal(t, "https://cdn.example.com/last.png", payload["last_frame"])
+			assert.Equal(t, "768p横", payload["resolution"])
+			assert.Equal(t, 2, properties.InputImageCount)
+		})
+	}
 }
 
 func TestBuildWorkflowRequestSelectsReferenceMediaWorkflowByDuration(t *testing.T) {
 	tests := []struct {
-		name       string
-		duration   int
-		ratio      string
-		content    []dto.MiniMaxVideoContentItem
-		workflowID string
-		resolution string
+		name        string
+		duration    int
+		ratio       string
+		content     []dto.MiniMaxVideoContentItem
+		workflowID  string
+		resolution  string
+		inputImages int
 	}{
 		{
-			name:       "reference image up to ten seconds",
-			duration:   10,
-			ratio:      "1:1",
-			content:    []dto.MiniMaxVideoContentItem{textContent("Animate the subject"), imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png")},
-			workflowID: workflowReferenceImages,
-			resolution: "768p(1:1)",
+			name:        "reference image up to ten seconds",
+			duration:    10,
+			ratio:       "1:1",
+			content:     []dto.MiniMaxVideoContentItem{textContent("Animate the subject"), imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png")},
+			workflowID:  workflowReferenceImages,
+			resolution:  "768p(1:1)",
+			inputImages: 1,
 		},
 		{
-			name:       "reference image over ten seconds",
-			duration:   15,
-			ratio:      "1:1",
-			content:    []dto.MiniMaxVideoContentItem{textContent("Animate the subject"), imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png")},
-			workflowID: workflowReferenceImages15s,
-			resolution: "768p(1:1)",
+			name:        "reference image over ten seconds",
+			duration:    15,
+			ratio:       "1:1",
+			content:     []dto.MiniMaxVideoContentItem{textContent("Animate the subject"), imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png")},
+			workflowID:  workflowReferenceImages15s,
+			resolution:  "768p(1:1)",
+			inputImages: 1,
 		},
 		{
-			name:     "reference image and audio up to ten seconds",
+			name:     "multiple reference images and audio up to ten seconds",
 			duration: 10,
 			ratio:    "16:9",
 			content: []dto.MiniMaxVideoContentItem{
 				textContent("Make the character speak"),
-				imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png"),
+				imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref-0.png"),
+				imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref-1.png"),
 				audioContent("https://cdn.example.com/voice.wav"),
 			},
-			workflowID: workflowReferenceImageAudio,
-			resolution: "768p横",
+			workflowID:  workflowReferenceImageAudio,
+			resolution:  "768p横",
+			inputImages: 2,
 		},
 		{
-			name:     "reference image and audio over ten seconds",
+			name:     "multiple reference images and audio over ten seconds",
 			duration: 15,
 			ratio:    "9:16",
 			content: []dto.MiniMaxVideoContentItem{
 				textContent("Make the character speak"),
-				imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png"),
+				imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref-0.png"),
+				imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref-1.png"),
 				audioContent("https://cdn.example.com/voice.wav"),
 			},
-			workflowID: workflowReferenceImageAudio15s,
-			resolution: "768p竖",
+			workflowID:  workflowReferenceImageAudio15s,
+			resolution:  "768p竖",
+			inputImages: 2,
 		},
 	}
 
@@ -368,8 +392,13 @@ func TestBuildWorkflowRequestSelectsReferenceMediaWorkflowByDuration(t *testing.
 			assert.Equal(t, test.resolution, payload["resolution"])
 			assert.Equal(t, test.duration, payload["duration"])
 			assert.Equal(t, test.ratio, properties.Ratio)
-			assert.Equal(t, 1, properties.InputImageCount)
-			assert.Equal(t, "https://cdn.example.com/ref.png", payload["ref_image_0"])
+			assert.Equal(t, test.inputImages, properties.InputImageCount)
+			if strings.Contains(test.name, "multiple") {
+				assert.Equal(t, "https://cdn.example.com/ref-0.png", payload["ref_image_0"])
+				assert.Equal(t, "https://cdn.example.com/ref-1.png", payload["ref_image_1"])
+			} else {
+				assert.Equal(t, "https://cdn.example.com/ref.png", payload["ref_image_0"])
+			}
 			if strings.Contains(test.name, "audio") {
 				assert.Equal(t, "https://cdn.example.com/voice.wav", payload["ref_audio_0"])
 			} else {
@@ -377,6 +406,26 @@ func TestBuildWorkflowRequestSelectsReferenceMediaWorkflowByDuration(t *testing.
 			}
 		})
 	}
+}
+
+func TestBuildWorkflowRequestMapsSingleReferencePairToAudioSync(t *testing.T) {
+	workflowID, payload, properties, err := buildWorkflowRequest(newMiniMaxRequest(
+		8,
+		"9:16",
+		textContent("The portrait speaks naturally with the supplied voice"),
+		imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/portrait.png"),
+		audioContent("https://cdn.example.com/voice.wav"),
+	))
+
+	require.NoError(t, err)
+	assert.Equal(t, workflowImageAudioSync, workflowID)
+	assert.Equal(t, "https://cdn.example.com/portrait.png", payload["ref_image_0"])
+	assert.Equal(t, "https://cdn.example.com/voice.wav", payload["ref_audio_0"])
+	assert.Equal(t, 8, payload["audio_duration"])
+	assert.Equal(t, "768p竖", payload["resolution"])
+	assert.NotContains(t, payload, "duration")
+	assert.NotContains(t, payload, "prompt")
+	assert.Equal(t, 1, properties.InputImageCount)
 }
 
 func TestBuildWorkflowRequestRejectsUnsupportedMiniMaxCapabilities(t *testing.T) {
@@ -406,7 +455,29 @@ func TestBuildWorkflowRequestRejectsUnsupportedMiniMaxCapabilities(t *testing.T)
 		{
 			name:      "single first frame",
 			request:   newMiniMaxRequest(6, "16:9", textContent("Start here"), imageContent(miniMaxRoleFirstFrame, "https://cdn.example.com/first.png")),
-			wantError: "first_frame and last_frame inputs are not supported",
+			wantError: "first_frame and last_frame must be provided together",
+		},
+		{
+			name: "square first and last frames",
+			request: newMiniMaxRequest(
+				6,
+				"1:1",
+				textContent("Transition between the frames"),
+				imageContent(miniMaxRoleFirstFrame, "https://cdn.example.com/first.png"),
+				imageContent(miniMaxRoleLastFrame, "https://cdn.example.com/last.png"),
+			),
+			wantError: "ratio 1:1 is not supported for this input combination",
+		},
+		{
+			name: "square audio synchronized image",
+			request: newMiniMaxRequest(
+				6,
+				"1:1",
+				textContent("Speak with the supplied voice"),
+				imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/portrait.png"),
+				audioContent("https://cdn.example.com/voice.wav"),
+			),
+			wantError: "ratio 1:1 is not supported for this input combination",
 		},
 		{
 			name:      "adaptive reference ratio",

@@ -56,7 +56,7 @@ export function buildMiniMaxVideoParameters(
       required: true,
       range: '1 ~ 16',
       descriptionKey:
-        'Ordered text and reference media items; at least one non-empty text item is required',
+        'Ordered text, frame, and reference media items; at least one non-empty text item is required',
     },
     {
       name: 'resolution',
@@ -80,7 +80,7 @@ export function buildMiniMaxVideoParameters(
       required: true,
       enumValues: ['16:9', '9:16', '1:1'],
       descriptionKey:
-        'Explicit output ratio; 1:1 is unavailable when reference audio is used',
+        'Explicit output ratio; 1:1 is available only for text-to-video or reference-image-only input',
     },
     {
       name: 'callback_url',
@@ -474,15 +474,18 @@ export function buildMiniMaxVideoAiIntegrationGuide(
     `- model must be exactly ${context.modelName}.`,
     '- content contains 1 to 16 items and must include at least one non-empty text item. Each text item is limited to 7000 Unicode characters.',
     '- resolution=768P is required. duration is an integer from 4 to 15, inclusive.',
-    '- ratio must be explicit: 16:9 and 9:16 work for every supported mode; 1:1 works only without reference audio.',
+    '- ratio must be explicit: 16:9 and 9:16 work for every supported mode; 1:1 works only for text-to-video or reference-image-only input.',
+    '- Use one role=first_frame item and one role=last_frame item together for first-and-last-frame generation. A single frame is not supported, and frame roles cannot be mixed with reference media.',
     '- Use role=reference_image for at most 9 reference_image items.',
     '- Use role=reference_audio for at most 3 reference_audio items, and include at least one reference image. The combined prompt is then limited to 10000 characters.',
+    '- Exactly one reference_image plus one reference_audio uses audio-synchronized image animation. Text remains required by the V2 request contract, and duration controls the requested audio-driven clip length.',
+    '- Multiple reference images or audio items use multimodal reference generation and the supplied prompt.',
     '- Media accepts a publicly reachable HTTPS URL on the default port or an allowed base64 data URI.',
     '- callback_url is optional. When present, it must be a publicly reachable HTTPS URL of at most 2048 characters.',
     '',
     '## Unsupported options',
     '- 2K, adaptive, 21:9, 4:3, and 3:4 are unsupported.',
-    '- first_frame, last_frame, reference_video, and aigc_watermark=true are unsupported.',
+    '- A single first_frame or last_frame, reference_video, and aigc_watermark=true are unsupported.',
     '',
     '## Optional terminal callback',
     '- During submission, the gateway sends callback_url a POST with {"challenge":"..."}. The receiver must return a 2xx JSON response containing the identical challenge value within 3 seconds. The task is accepted only after verification succeeds.',

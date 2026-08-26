@@ -2,7 +2,7 @@
 
 `MiniMax-H3` 通过 MiniMax V2 风格的异步接口接入：调用 `POST /v2/video_generation` 创建任务后，可通过 `GET /v2/query/video_generation/{task_id}` 查询状态，也可选择通过 `callback_url` 接收终态结果。
 
-本文描述的是当前兼容接口实际开放的能力子集，不是 MiniMax 官方接口的完整能力。当前只支持 768P、4～15 秒，以及文生视频、参考图、参考图加参考音频三种工作流；不支持 2K、自适应画幅、首尾帧、参考视频或 AIGC 水印。回调仅在任务进入 `succeeded`、`failed` 或 `cancelled` 终态时发送，不会像 MiniMax 官方完整回调那样逐次推送每个状态变化。
+本文描述的是当前兼容接口实际开放的能力子集，不是 MiniMax 官方接口的完整能力。当前支持 768P、4～15 秒，以及文生视频、首尾帧、参考图、单图音频同步、多图多音频参考生成；不支持 2K、自适应画幅、单独首帧或尾帧、参考视频或 AIGC 水印。回调仅在任务进入 `succeeded`、`failed` 或 `cancelled` 终态时发送，不会像 MiniMax 官方完整回调那样逐次推送每个状态变化。
 
 ## 接口概览
 
@@ -35,12 +35,12 @@ Authorization: Bearer sk-your-api-key
 
 画幅比例支持情况：
 
-| `ratio` | 文生视频 | 参考图 | 参考图加音频 |
-| --- | --- | --- | --- |
-| `16:9` | 支持 | 支持 | 支持 |
-| `9:16` | 支持 | 支持 | 支持 |
-| `1:1` | 支持 | 支持 | 不支持 |
-| `adaptive`、`21:9`、`4:3`、`3:4` | 不支持 | 不支持 | 不支持 |
+| `ratio` | 文生视频 / 纯参考图 | 首尾帧 / 带参考音频 |
+| --- | --- | --- |
+| `16:9` | 支持 | 支持 |
+| `9:16` | 支持 | 支持 |
+| `1:1` | 支持 | 不支持 |
+| `adaptive`、`21:9`、`4:3`、`3:4` | 不支持 | 不支持 |
 
 ### `content` 项
 
@@ -70,8 +70,23 @@ Authorization: Bearer sk-your-api-key
 ```
 
 - 最多 9 张。
-- `role` 必须显式为 `reference_image`。
-- 当前不支持 `first_frame` 和 `last_frame`；省略 `role` 也不会被当作可用的参考图。
+- 参考生成时，`role` 必须显式为 `reference_image`。
+
+#### 首尾帧
+
+```json
+{
+  "type": "image_url",
+  "image_url": {
+    "url": "https://media.example.com/first.png"
+  },
+  "role": "first_frame"
+}
+```
+
+- `first_frame` 与 `last_frame` 必须各提供一张并成对出现；当前不能只传其中一项。
+- 首尾帧不能与 `reference_image` 或 `reference_audio` 混用。
+- 省略图片 `role` 会按 `first_frame` 解析，因此仍需同时提供显式的 `last_frame`。
 
 #### 参考音频
 
@@ -88,6 +103,8 @@ Authorization: Bearer sk-your-api-key
 - 最多 3 条。
 - `role` 必须为 `reference_audio`。
 - 必须同时提供至少一张 `reference_image`，不能只用文本加音频生成。
+- 恰好一张 `reference_image` 加一条 `reference_audio` 时，启用单图音频同步，`duration` 表示请求的音频驱动视频时长。该模式由音频驱动，非空文本仍是 V2 请求契约的必填项。
+- 提供多张参考图或多条参考音频时，启用多模态参考生成，并使用提示词控制画面。
 
 当前不支持 `type: "video_url"` 的参考视频。
 
@@ -199,6 +216,8 @@ curl --request POST "${BASE_URL}/v2/video_generation" \
 
 ### 参考图加音频示例
 
+恰好一张参考图加一条参考音频时，使用音频同步模式：
+
 ```bash
 export MINIMAX_IDEMPOTENCY_KEY="video-order-20260826-003"
 
@@ -226,6 +245,43 @@ curl --request POST "${BASE_URL}/v2/video_generation" \
           "url": "https://media.example.com/voice.mp3"
         },
         "role": "reference_audio"
+      }
+    ],
+    "resolution": "768P",
+    "duration": 8,
+    "ratio": "16:9"
+  }'
+```
+
+### 首尾帧示例
+
+```bash
+export MINIMAX_IDEMPOTENCY_KEY="video-order-20260826-004"
+
+curl --request POST "${BASE_URL}/v2/video_generation" \
+  --header "Authorization: Bearer ${API_KEY}" \
+  --header "Content-Type: application/json" \
+  --header "Idempotency-Key: ${MINIMAX_IDEMPOTENCY_KEY}" \
+  --data '{
+    "model": "MiniMax-H3",
+    "content": [
+      {
+        "type": "text",
+        "text": "镜头平滑推进，人物从站立自然过渡到转身离开"
+      },
+      {
+        "type": "image_url",
+        "image_url": {
+          "url": "https://media.example.com/first.png"
+        },
+        "role": "first_frame"
+      },
+      {
+        "type": "image_url",
+        "image_url": {
+          "url": "https://media.example.com/last.png"
+        },
+        "role": "last_frame"
       }
     ],
     "resolution": "768P",

@@ -746,17 +746,22 @@ function MiniMaxVideoContractNotice() {
         </li>
         <li>
           {t(
-            'resolution must be 768P, duration must be an integer from 4 to 15, and ratio must be explicit. 16:9 and 9:16 are always available; 1:1 is unavailable with reference audio.'
+            'resolution must be 768P, duration must be an integer from 4 to 15, and ratio must be explicit. 16:9 and 9:16 are always available; 1:1 is available only for text-to-video and reference-image-only input.'
           )}
         </li>
         <li>
           {t(
-            'content accepts up to 16 items and requires non-empty text. Use up to 9 reference_image items, or up to 3 reference_audio items together with at least one reference image.'
+            'content accepts up to 16 items and requires non-empty text. first_frame and last_frame must be provided together; use up to 9 reference_image items, or up to 3 reference_audio items with at least one reference image.'
           )}
         </li>
         <li>
           {t(
-            'The current implementation does not support 2K, adaptive ratio, first_frame, last_frame, reference_video, or aigc_watermark=true.'
+            'Exactly one reference_image plus one reference_audio uses audio-synchronized image animation; text remains required by the V2 contract, while duration controls the requested audio-driven clip length.'
+          )}
+        </li>
+        <li>
+          {t(
+            'The current implementation does not support 2K, adaptive ratio, a single first_frame or last_frame, reference_video, or aigc_watermark=true.'
           )}
         </li>
         <li>

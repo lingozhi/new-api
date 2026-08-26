@@ -667,14 +667,27 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 	workflowID := ""
 	supportsSquare := false
 	maxPromptLength := 0
-	payload := map[string]any{
-		"prompt":   content.Prompt,
-		"duration": *request.Duration,
-	}
+	payload := make(map[string]any)
 
 	switch {
 	case content.FirstFrame != "" || content.LastFrame != "":
-		return "", nil, nil, errors.New("first_frame and last_frame inputs are not supported")
+		if content.FirstFrame == "" || content.LastFrame == "" {
+			return "", nil, nil, errors.New("first_frame and last_frame must be provided together")
+		}
+		workflowID = workflowFirstLastFrame
+		maxPromptLength = 200_000
+		payload["prompt"] = content.Prompt
+		payload["duration"] = *request.Duration
+		payload["first_frame"] = content.FirstFrame
+		payload["last_frame"] = content.LastFrame
+	case len(content.ReferenceImages) == 1 && len(content.ReferenceAudios) == 1:
+		// The V2 request has no separate mode field: one image/audio pair is
+		// audio-synchronized animation, while larger sets remain multimodal references.
+		workflowID = workflowImageAudioSync
+		maxPromptLength = 10_000
+		payload["ref_image_0"] = content.ReferenceImages[0]
+		payload["ref_audio_0"] = content.ReferenceAudios[0]
+		payload["audio_duration"] = *request.Duration
 	case len(content.ReferenceAudios) > 0:
 		if len(content.ReferenceImages) == 0 {
 			return "", nil, nil, errors.New("reference_audio requires at least one reference_image")
@@ -685,6 +698,8 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 		} else {
 			workflowID = workflowReferenceImageAudio
 		}
+		payload["prompt"] = content.Prompt
+		payload["duration"] = *request.Duration
 		for index, mediaURL := range content.ReferenceImages {
 			payload["ref_image_"+strconv.Itoa(index)] = mediaURL
 		}
@@ -699,6 +714,8 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 		} else {
 			workflowID = workflowReferenceImages
 		}
+		payload["prompt"] = content.Prompt
+		payload["duration"] = *request.Duration
 		for index, mediaURL := range content.ReferenceImages {
 			payload["ref_image_"+strconv.Itoa(index)] = mediaURL
 		}
@@ -706,6 +723,8 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 		workflowID = workflowTextToVideo
 		supportsSquare = true
 		maxPromptLength = 200_000
+		payload["prompt"] = content.Prompt
+		payload["duration"] = *request.Duration
 	}
 	if utf8.RuneCountInString(content.Prompt) > maxPromptLength {
 		return "", nil, nil, fmt.Errorf("combined text content exceeds the selected workflow limit of %d characters", maxPromptLength)
@@ -716,11 +735,18 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 		return "", nil, nil, err
 	}
 	payload["resolution"] = resolution
+	inputImageCount := len(content.ReferenceImages)
+	if content.FirstFrame != "" {
+		inputImageCount++
+	}
+	if content.LastFrame != "" {
+		inputImageCount++
+	}
 	properties := &relaycommon.TaskVideoProperties{
 		Resolution:      "768P",
 		Duration:        *request.Duration,
 		Ratio:           actualRatio,
-		InputImageCount: len(content.ReferenceImages),
+		InputImageCount: inputImageCount,
 	}
 	return workflowID, payload, properties, nil
 }
@@ -804,7 +830,7 @@ func summarizeContent(items []dto.MiniMaxVideoContentItem) (contentSummary, erro
 		return contentSummary{}, errors.New("multiple image_url items must declare a role")
 	}
 	if len(unassignedImages) == 1 {
-		if summary.FirstFrame != "" || summary.LastFrame != "" || len(summary.ReferenceImages) > 0 {
+		if summary.FirstFrame != "" || len(summary.ReferenceImages) > 0 {
 			return contentSummary{}, errors.New("an image without role cannot be combined with other images")
 		}
 		summary.FirstFrame = unassignedImages[0]
@@ -833,7 +859,7 @@ func mapResolution(ratio string, supportsSquare bool) (string, string, error) {
 		if supportsSquare {
 			return "768p(1:1)", "1:1", nil
 		}
-		return "", "", errors.New("ratio 1:1 is not supported when reference_audio is used")
+		return "", "", errors.New("ratio 1:1 is not supported for this input combination")
 	case "21:9", "4:3", "3:4":
 		return "", "", errors.New("ratio is not supported at 768P")
 	default:

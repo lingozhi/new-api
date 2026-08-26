@@ -8,8 +8,10 @@ var ModelList = []string{constant.AutoDLModelMiniMaxH3, constant.AutoDLModelInde
 
 const (
 	workflowTextToVideo            = "minimax_h3_lightx2v_no_pic"
+	workflowFirstLastFrame         = "minimax_h3_lightx2v"
 	workflowReferenceImages        = "minimax_h3_lightx2v_v5"
 	workflowReferenceImages15s     = "minimax_h3_lightx2v_v5_15s"
+	workflowImageAudioSync         = "minimax_h3_image_audio_to_video"
 	workflowReferenceImageAudio    = "minimax_h3_image_audio_to_video_v2"
 	workflowReferenceImageAudio15s = "minimax_h3_image_audio_to_video_v2_15s"
 	workflowIndexTTS2              = constant.AutoDLModelIndexTTS2
