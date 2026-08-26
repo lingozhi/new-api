@@ -56,7 +56,7 @@ export function buildMiniMaxVideoParameters(
       required: true,
       range: '1 ~ 16',
       descriptionKey:
-        'Ordered text, frame, and reference media items; at least one non-empty text item is required',
+        'Requires non-empty text; supports paired first_frame and last_frame, up to 9 reference images, and up to 3 reference audios; single-frame and reference-video requests are unsupported',
     },
     {
       name: 'resolution',
@@ -64,7 +64,8 @@ export function buildMiniMaxVideoParameters(
       required: true,
       defaultValue: '768P',
       enumValues: ['768P'],
-      descriptionKey: 'Output resolution; only 768P is currently supported',
+      descriptionKey:
+        'Output resolution; only 768P is supported and 2K is unsupported',
     },
     {
       name: 'duration',
@@ -80,7 +81,7 @@ export function buildMiniMaxVideoParameters(
       required: true,
       enumValues: ['16:9', '9:16', '1:1'],
       descriptionKey:
-        'Explicit output ratio; 1:1 is available only for text-to-video or reference-image-only input',
+        'Required output ratio; 16:9 and 9:16 support all available modes; 1:1 supports only text-to-video or reference-image-only input; adaptive, 21:9, 4:3, and 3:4 are unsupported',
     },
     {
       name: 'audio_sync',
@@ -405,7 +406,9 @@ export function buildMiniMaxVideoAiIntegrationGuide(
     '',
     '## Unsupported options',
     '- 2K, adaptive, 21:9, 4:3, and 3:4 are unsupported.',
-    '- A single first_frame or last_frame and reference_video are unsupported.',
+    '- A single first_frame or last_frame and reference_video are unsupported. first_frame and last_frame must be supplied together.',
+    '- 1:1 is unsupported for first-and-last-frame input or any request containing reference_audio.',
+    '- reference_audio requires at least one reference_image. audio_sync=true requires exactly one reference_image and one reference_audio.',
     '',
     '## Optional terminal callback',
     '- During submission, the gateway sends callback_url a POST with {"challenge":"..."}. The receiver must return a 2xx JSON response containing the identical challenge value within 3 seconds. The task is accepted only after verification succeeds.',

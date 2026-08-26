@@ -77,9 +77,12 @@ describe('MiniMax-H3 video V2 API documentation', () => {
       ]
     )
     assert.equal(byName.get('model')?.defaultValue, 'MiniMax-H3')
+    assert.match(byName.get('content')?.descriptionKey ?? '', /single-frame/)
     assert.deepEqual(byName.get('resolution')?.enumValues, ['768P'])
+    assert.match(byName.get('resolution')?.descriptionKey ?? '', /2K/)
     assert.equal(byName.get('duration')?.range, '4 ~ 15')
     assert.deepEqual(byName.get('ratio')?.enumValues, ['16:9', '9:16', '1:1'])
+    assert.match(byName.get('ratio')?.descriptionKey ?? '', /adaptive/)
     assert.equal(byName.get('callback_url')?.range, '≤ 2048 characters')
     assert.match(
       byName.get('callback_url')?.descriptionKey ?? '',
@@ -234,6 +237,8 @@ describe('MiniMax-H3 video V2 API documentation', () => {
     assert.match(guide, /2K/)
     assert.match(guide, /adaptive/)
     assert.match(guide, /reference_video/)
+    assert.match(guide, /1:1 is unsupported/)
+    assert.match(guide, /reference_audio requires at least one/)
     assert.match(guide, /callback_url/)
     assert.match(guide, /publicly reachable HTTPS URL of at most 2048/)
     assert.match(guide, /identical challenge value within 3 seconds/)

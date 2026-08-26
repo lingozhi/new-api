@@ -4,6 +4,18 @@
 
 本文描述的是当前兼容接口实际开放的能力子集，不是 MiniMax 官方接口的完整能力。当前支持 768P、4～15 秒，以及文生视频、首尾帧、参考图、单图音频同步、多图多音频参考生成；不支持 2K、自适应画幅、单独首帧或尾帧、参考视频。回调仅在任务进入 `succeeded`、`failed` 或 `cancelled` 终态时发送，不会像 MiniMax 官方完整回调那样逐次推送每个状态变化。
 
+## 当前不支持的参数与组合
+
+- `resolution: "2K"` 不支持，只能传 `768P`。
+- `ratio: "adaptive"`、`"21:9"`、`"4:3"`、`"3:4"` 不支持；`ratio` 必须显式填写。
+- `ratio: "1:1"` 只适用于文生视频或纯参考图输入；首尾帧或包含参考音频时不支持。
+- 单独的 `first_frame` 或 `last_frame` 不支持，两者必须成对提供。
+- `type: "video_url"` / `role: "reference_video"` 不支持。
+- 只有参考音频而没有参考图不支持；`reference_audio` 必须与至少一张 `reference_image` 同时提供。
+- `audio_sync: true` 只支持恰好一张 `reference_image` 和一条 `reference_audio`。
+
+上述请求会直接返回参数错误，不会静默忽略参数或自动降级。
+
 ## 接口概览
 
 | 操作 | Method | Path |
