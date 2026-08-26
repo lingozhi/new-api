@@ -1,8 +1,6 @@
 package autodl
 
 import (
-	"bytes"
-	"context"
 	"encoding/base64"
 	"io"
 	"net/http"
@@ -17,12 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type indexTTSAudioRoundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f indexTTSAudioRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
-	return f(request)
-}
-
 func validIndexTTSWAV() []byte {
 	return []byte{
 		'R', 'I', 'F', 'F', 38, 0, 0, 0, 'W', 'A', 'V', 'E',
@@ -32,72 +24,68 @@ func validIndexTTSWAV() []byte {
 	}
 }
 
-func installIndexTTSAudioFetch(t *testing.T, contentType string, body []byte) {
-	t.Helper()
-	previousValidate := validateIndexTTSAudioURL
-	previousClient := indexTTSAudioHTTPClient
-	validateIndexTTSAudioURL = func(string) error { return nil }
-	indexTTSAudioHTTPClient = func() *http.Client {
-		return &http.Client{Transport: indexTTSAudioRoundTripFunc(func(request *http.Request) (*http.Response, error) {
-			return &http.Response{
-				StatusCode:    http.StatusOK,
-				Header:        http.Header{"Content-Type": []string{contentType}},
-				Body:          io.NopCloser(bytes.NewReader(body)),
-				ContentLength: int64(len(body)),
-				Request:       request,
-			}, nil
-		})}
-	}
-	t.Cleanup(func() {
-		validateIndexTTSAudioURL = previousValidate
-		indexTTSAudioHTTPClient = previousClient
-	})
-}
-
-func TestFetchIndexTTSAudioReplacesExternalURLWithValidatedDataURI(t *testing.T) {
-	wav := validIndexTTSWAV()
-	installIndexTTSAudioFetch(t, "application/octet-stream", wav)
-
-	dataURI, total, err := fetchIndexTTSAudioDataURI(context.Background(), "https://media.example.com/voice.wav?signature=secret", 0)
-	require.NoError(t, err)
-	assert.Equal(t, len(wav), total)
-	assert.NotContains(t, dataURI, "media.example.com")
-	assert.Equal(t, "data:audio/wav;base64,"+base64.StdEncoding.EncodeToString(wav), dataURI)
-}
-
-func TestFetchIndexTTSAudioRejectsFakeDataAndMIMEConflicts(t *testing.T) {
-	_, _, err := fetchIndexTTSAudioDataURI(context.Background(), "data:audio/wav;base64,UklGRg==", 0)
-	require.ErrorContains(t, err, "valid WAV or MP3")
-
-	installIndexTTSAudioFetch(t, "audio/mpeg", validIndexTTSWAV())
-	_, _, err = fetchIndexTTSAudioDataURI(context.Background(), "https://media.example.com/voice.wav", 0)
-	require.ErrorContains(t, err, "content type")
-}
-
-func TestIndexTTSMP3ValidationRequiresCompleteConsecutiveFrames(t *testing.T) {
+func validIndexTTSMP3() []byte {
 	header := []byte{0xff, 0xfb, 0x90, 0x64}
 	frameLength, _, _, ok := indexTTSMP3FrameInfo(header)
-	require.True(t, ok)
+	if !ok {
+		panic("invalid IndexTTS2 MP3 fixture header")
+	}
 	frames := make([]byte, frameLength*2)
 	copy(frames, header)
 	copy(frames[frameLength:], header)
-	assert.True(t, isValidIndexTTSMP3(frames))
-	assert.False(t, isValidIndexTTSMP3(header))
+	return frames
 }
 
-func TestIndexTTSAdaptorNeverForwardsReferenceURLsToAutoDL(t *testing.T) {
-	previousMaterialize := materializeIndexTTSAudio
-	materializeIndexTTSAudio = func(_ context.Context, source string, currentBytes int) (string, int, error) {
-		encoded := base64.StdEncoding.EncodeToString([]byte(source))
-		return "data:audio/wav;base64," + encoded, currentBytes + len(source), nil
-	}
-	t.Cleanup(func() { materializeIndexTTSAudio = previousMaterialize })
+func validIndexTTSWAVDataURI() string {
+	return "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(validIndexTTSWAV())
+}
 
+func TestNormalizeIndexTTSAudioPayloadPreservesExternalURLs(t *testing.T) {
+	payload := map[string]any{
+		indexTTSAudioPayloadVoice:   "https://media.example.com/voice.wav?signature=voice",
+		indexTTSAudioPayloadEmotion: "https://media.example.com/emotion.mp3?signature=emotion",
+	}
+
+	require.NoError(t, normalizeIndexTTSAudioPayload(payload))
+	assert.Equal(t, "https://media.example.com/voice.wav?signature=voice", payload[indexTTSAudioPayloadVoice])
+	assert.Equal(t, "https://media.example.com/emotion.mp3?signature=emotion", payload[indexTTSAudioPayloadEmotion])
+
+	err := normalizeIndexTTSAudioPayload(map[string]any{
+		indexTTSAudioPayloadVoice: "https://media.example.com/" + strings.Repeat("a", maxIndexTTSAudioURLBytes),
+	})
+	require.ErrorContains(t, err, "URL is too long")
+}
+
+func TestNormalizeIndexTTSAudioPayloadValidatesDataURIBytes(t *testing.T) {
+	wavURI := "data:audio/x-wav;base64," + base64.StdEncoding.EncodeToString(validIndexTTSWAV())
+	mp3URI := "data:audio/mp3;base64," + base64.StdEncoding.EncodeToString(validIndexTTSMP3())
+	payload := map[string]any{
+		indexTTSAudioPayloadVoice:   wavURI,
+		indexTTSAudioPayloadEmotion: mp3URI,
+	}
+
+	require.NoError(t, normalizeIndexTTSAudioPayload(payload))
+	assert.Equal(t, validIndexTTSWAVDataURI(), payload[indexTTSAudioPayloadVoice])
+	assert.Equal(t, "data:audio/mpeg;base64,"+base64.StdEncoding.EncodeToString(validIndexTTSMP3()), payload[indexTTSAudioPayloadEmotion])
+
+	err := normalizeIndexTTSAudioPayload(map[string]any{
+		indexTTSAudioPayloadVoice: "data:audio/wav;base64,UklGRg==",
+	})
+	require.ErrorContains(t, err, "valid WAV or MP3")
+}
+
+func TestIndexTTSMP3ValidationRequiresCompleteConsecutiveFrames(t *testing.T) {
+	frames := validIndexTTSMP3()
+	assert.True(t, isValidIndexTTSMP3(frames))
+	assert.False(t, isValidIndexTTSMP3(frames[:4]))
+}
+
+func TestIndexTTSAdaptorForwardsCompactReferenceURLs(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	context.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/speech", strings.NewReader(`{
 		"model":"indextts2-v1",
-		"prompt_text":"secure references",
+		"prompt_text":"compact references",
 		"prompt_simple":"https://media.example.com/voice.wav?signature=voice",
 		"emo_ref_audio":"https://media.example.com/emotion.mp3?signature=emotion",
 		"emo_control_method":"与音色参考音频相同"
@@ -112,9 +100,9 @@ func TestIndexTTSAdaptorNeverForwardsReferenceURLsToAutoDL(t *testing.T) {
 	require.NoError(t, err)
 	encodedPayload, err := io.ReadAll(requestBody)
 	require.NoError(t, err)
-	assert.NotContains(t, string(encodedPayload), "media.example.com")
+	assert.Less(t, len(encodedPayload), 1024)
 	var payload map[string]any
 	require.NoError(t, common.Unmarshal(encodedPayload, &payload))
-	assert.True(t, strings.HasPrefix(payload[indexTTSAudioPayloadVoice].(string), "data:audio/wav;base64,"))
-	assert.True(t, strings.HasPrefix(payload[indexTTSAudioPayloadEmotion].(string), "data:audio/wav;base64,"))
+	assert.Equal(t, "https://media.example.com/voice.wav?signature=voice", payload[indexTTSAudioPayloadVoice])
+	assert.Equal(t, "https://media.example.com/emotion.mp3?signature=emotion", payload[indexTTSAudioPayloadEmotion])
 }

@@ -2,12 +2,8 @@ package autodl
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"errors"
-	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
 
@@ -17,34 +13,14 @@ import (
 const (
 	maxIndexTTSAudioURLBytes    = 8 * 1024
 	maxIndexTTSTotalAudioBytes  = 2 * maxAudioDataBytes
-	indexTTSAudioFetchTimeout   = 60 * time.Second
 	maxIndexTTSAudioDuration    = 10 * time.Minute
-	maxConcurrentIndexTTSFetch  = 4
 	indexTTSAudioPayloadVoice   = "prompt_simple"
 	indexTTSAudioPayloadEmotion = "emo_ref_audio"
 )
 
-var (
-	validateIndexTTSAudioURL = service.ValidateStrictHTTPSProtectedFetchURL
-	indexTTSAudioHTTPClient  = service.GetStrictHTTPSDirectSSRFProtectedHTTPClient
-	materializeIndexTTSAudio = fetchIndexTTSAudioDataURI
-	indexTTSAudioFetchSlots  = make(chan struct{}, maxConcurrentIndexTTSFetch)
-)
-
-func materializeIndexTTSAudioPayload(ctx context.Context, payload map[string]any) error {
+func normalizeIndexTTSAudioPayload(payload map[string]any) error {
 	if payload == nil {
 		return errors.New("IndexTTS2 payload is required")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(ctx, indexTTSAudioFetchTimeout)
-	defer cancel()
-	select {
-	case indexTTSAudioFetchSlots <- struct{}{}:
-		defer func() { <-indexTTSAudioFetchSlots }()
-	case <-ctx.Done():
-		return errors.New("IndexTTS2 reference audio fetch capacity is unavailable")
 	}
 	totalBytes := 0
 	for _, field := range []string{indexTTSAudioPayloadVoice, indexTTSAudioPayloadEmotion} {
@@ -54,11 +30,19 @@ func materializeIndexTTSAudioPayload(ctx context.Context, payload map[string]any
 		}
 		source, ok := value.(string)
 		if !ok || strings.TrimSpace(source) == "" {
-			return fmt.Errorf("%s must contain audio", field)
+			return errors.New(field + " must contain audio")
 		}
-		dataURI, nextTotal, err := materializeIndexTTSAudio(ctx, source, totalBytes)
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(source)), "data:") {
+			// The workflow accepts public HTTPS URLs directly. Keeping the URL
+			// avoids expanding every reference file into a large base64 request.
+			if len(source) > maxIndexTTSAudioURLBytes {
+				return errors.New(field + " URL is too long")
+			}
+			continue
+		}
+		dataURI, nextTotal, err := canonicalIndexTTSAudioDataURI(source, totalBytes)
 		if err != nil {
-			return fmt.Errorf("%s could not be loaded as valid audio: %w", field, err)
+			return errors.New(field + " must contain valid audio: " + err.Error())
 		}
 		if nextTotal > maxIndexTTSTotalAudioBytes {
 			return errors.New("IndexTTS2 reference audio exceeds the total size limit")
@@ -67,63 +51,6 @@ func materializeIndexTTSAudioPayload(ctx context.Context, payload map[string]any
 		totalBytes = nextTotal
 	}
 	return nil
-}
-
-func fetchIndexTTSAudioDataURI(ctx context.Context, source string, currentBytes int) (string, int, error) {
-	source = strings.TrimSpace(source)
-	if currentBytes < 0 || currentBytes > maxIndexTTSTotalAudioBytes {
-		return "", currentBytes, errors.New("reference audio total size is invalid")
-	}
-	if strings.HasPrefix(strings.ToLower(source), "data:") {
-		return canonicalIndexTTSAudioDataURI(source, currentBytes)
-	}
-	if len(source) > maxIndexTTSAudioURLBytes {
-		return "", currentBytes, errors.New("reference audio URL is too long")
-	}
-	if err := validateIndexTTSAudioURL(source); err != nil {
-		return "", currentBytes, errors.New("reference audio URL is unsafe")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(ctx, indexTTSAudioFetchTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
-	if err != nil {
-		return "", currentBytes, errors.New("reference audio request is invalid")
-	}
-	req.Header.Set("Accept", "audio/wav, audio/x-wav, audio/wave, audio/mpeg, audio/mp3, application/octet-stream")
-	resp, err := indexTTSAudioHTTPClient().Do(req)
-	if err != nil {
-		return "", currentBytes, errors.New("reference audio download failed")
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", currentBytes, fmt.Errorf("reference audio returned HTTP %d", resp.StatusCode)
-	}
-	remaining := maxIndexTTSTotalAudioBytes - currentBytes
-	itemLimit := maxAudioDataBytes
-	if remaining < itemLimit {
-		itemLimit = remaining
-	}
-	if itemLimit <= 0 || resp.ContentLength > int64(itemLimit) {
-		return "", currentBytes, errors.New("reference audio exceeds the size limit")
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, int64(itemLimit)+1))
-	if err != nil {
-		return "", currentBytes, errors.New("reference audio download failed")
-	}
-	if len(data) == 0 || len(data) > itemLimit {
-		return "", currentBytes, errors.New("reference audio exceeds the size limit")
-	}
-	mimeType, err := detectIndexTTSAudio(data)
-	if err != nil {
-		return "", currentBytes, err
-	}
-	if !indexTTSAudioContentTypeMatches(resp.Header.Get("Content-Type"), mimeType) {
-		return "", currentBytes, errors.New("reference audio content type does not match its bytes")
-	}
-	return encodeIndexTTSAudioDataURI(mimeType, data), currentBytes + len(data), nil
 }
 
 func canonicalIndexTTSAudioDataURI(source string, currentBytes int) (string, int, error) {
@@ -268,9 +195,6 @@ func indexTTSMP3FrameInfo(header []byte) (frameLength, sampleRate, samplesPerFra
 
 func indexTTSAudioContentTypeMatches(contentType, detected string) bool {
 	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
-	if contentType == "" || contentType == "application/octet-stream" {
-		return true
-	}
 	if detected == "audio/wav" {
 		return contentType == "audio/wav" || contentType == "audio/x-wav" || contentType == "audio/wave"
 	}

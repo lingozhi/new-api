@@ -27,7 +27,7 @@ import (
 const (
 	autoDLAudioClientRequestIDDomain   = "autodl-audio-idempotency:v1:"
 	autoDLAudioClientRequestHashDomain = "autodl-audio-request:v1:"
-	autoDLAudioPollInterval            = time.Second
+	autoDLAudioPollInterval            = 500 * time.Millisecond
 	autoDLAudioDownloadTimeout         = 90 * time.Second
 	maxAutoDLAudioResultBytes          = 64 << 20
 )
@@ -237,6 +237,9 @@ func writeAutoDLAudioSpeechTask(c *gin.Context, task *model.Task) {
 		if err == nil {
 			current = latest
 			lastPollErr = nil
+			if current.Status == model.TaskStatusSuccess || current.Status == model.TaskStatusFailure {
+				continue
+			}
 		} else {
 			lastPollErr = err
 			logger.LogWarn(c, fmt.Sprintf("AutoDL audio task poll failed: task_id=%s error=%s", current.TaskID, common.MaskSensitiveInfo(err.Error())))

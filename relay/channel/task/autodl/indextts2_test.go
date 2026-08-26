@@ -1,7 +1,7 @@
 package autodl
 
 import (
-	"context"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,12 +29,7 @@ func validateIndexTTSSpeechRequest(t *testing.T, body string) (*TaskAdaptor, *re
 	c.Request.Header.Set("Idempotency-Key", "indextts2-adaptor-test")
 	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
 	adaptor := &TaskAdaptor{}
-	previousMaterialize := materializeIndexTTSAudio
-	materializeIndexTTSAudio = func(_ context.Context, source string, currentBytes int) (string, int, error) {
-		return source, currentBytes, nil
-	}
 	taskErr := adaptor.ValidateRequestAndSetAction(c, info)
-	materializeIndexTTSAudio = previousMaterialize
 	return adaptor, info, taskErr
 }
 
@@ -120,16 +115,17 @@ func TestIndexTTS2MapsCompleteModelParametersToWorkflowPayload(t *testing.T) {
 }
 
 func TestIndexTTS2MapsEmotionReferenceAudio(t *testing.T) {
+	wavURI := validIndexTTSWAVDataURI()
 	adaptor, info, taskErr := validateIndexTTSSpeechRequest(t, `{
 		"model":"indextts2-v1",
 		"input":"带有参考情绪的语音",
-		"voice":"data:audio/wav;base64,UklGRg==",
+		"voice":"`+wavURI+`",
 		"metadata":{"emotion_audio":"https://media.example.com/emotion.mp3","emotion_random":false}
 	}`)
 	require.Nil(t, taskErr)
 
 	payload := indexTTSPayload(t, adaptor, info)
-	assert.Equal(t, "data:audio/wav;base64,UklGRg==", payload["prompt_simple"])
+	assert.Equal(t, wavURI, payload["prompt_simple"])
 	assert.Equal(t, "https://media.example.com/emotion.mp3", payload["emo_ref_audio"])
 	assert.Equal(t, "与音色参考音频相同", payload["emo_control_method"])
 }
@@ -298,14 +294,16 @@ func TestIndexTTS2ValidatesEmotionMetadata(t *testing.T) {
 }
 
 func TestIndexTTS2AppliesAudioMediaSafetyToVoiceAndEmotion(t *testing.T) {
+	wavURI := validIndexTTSWAVDataURI()
+	mp3URI := "data:audio/mpeg;base64," + base64.StdEncoding.EncodeToString(validIndexTTSMP3())
 	tests := []struct {
 		name      string
 		voice     string
 		metadata  string
 		wantError string
 	}{
-		{name: "WAV data URI", voice: "data:audio/wav;base64,UklGRg=="},
-		{name: "MP3 data URI", voice: "data:audio/mpeg;base64,SUQz"},
+		{name: "WAV data URI", voice: wavURI},
+		{name: "MP3 data URI", voice: mp3URI},
 		{name: "HTTP voice", voice: "http://media.example.com/speaker.wav", wantError: "HTTPS"},
 		{name: "private voice", voice: "https://127.0.0.1/speaker.wav", wantError: "public IP"},
 		{name: "wrong voice MIME", voice: "data:image/png;base64,iVBORw0KGgo=", wantError: "not allowed"},
