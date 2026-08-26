@@ -682,106 +682,7 @@ func ReplayAsyncImageGeneration(c *gin.Context) {
 const (
 	autoDLClientRequestIDContextKey   = "autodl_client_request_id"
 	autoDLClientRequestHashContextKey = "autodl_client_request_hash"
-	autoDLClientRequestIDDomain       = "autodl-video-idempotency:v1:"
-	autoDLClientRequestHashDomain     = "autodl-video-request:v1:"
 )
-
-// ReplayAutoDLVideoGeneration reuses the async-image idempotency contract for
-// MiniMax-compatible video submissions. It runs after authentication/rate
-// limiting and before channel selection or billing.
-func ReplayAutoDLVideoGeneration(c *gin.Context) {
-	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
-	if idempotencyKey == "" {
-		c.Next()
-		return
-	}
-	if len(idempotencyKey) > 256 {
-		c.JSON(http.StatusBadRequest, dto.NewMiniMaxAPIErrorResponse(
-			http.StatusBadRequest,
-			"Idempotency-Key is too long",
-			c.GetString(common.RequestIdKey),
-		))
-		c.Abort()
-		return
-	}
-
-	var request dto.MiniMaxVideoGenerationV2Request
-	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
-		// Let the normal request validator produce the canonical API error.
-		c.Next()
-		return
-	}
-	request.NormalizeCallbackURL()
-	canonicalRequest, err := common.Marshal(request)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, dto.NewMiniMaxAPIErrorResponse(
-			http.StatusInternalServerError,
-			http.StatusText(http.StatusInternalServerError),
-			c.GetString(common.RequestIdKey),
-		))
-		c.Abort()
-		return
-	}
-	// These identities are persisted and therefore must remain stable across
-	// restarts and replicas even when CRYPTO_SECRET is not configured. The task
-	// uniqueness constraint is scoped by platform and user; domain-separated
-	// SHA-256 keeps the raw idempotency key and request body out of the database.
-	clientRequestID := common.Sha256([]byte(autoDLClientRequestIDDomain + idempotencyKey))
-	requestHash := common.Sha256(append([]byte(autoDLClientRequestHashDomain), canonicalRequest...))
-	c.Set(autoDLClientRequestIDContextKey, clientRequestID)
-	c.Set(autoDLClientRequestHashContextKey, requestHash)
-
-	existing, exists, err := model.GetTaskByClientRequestID(constant.TaskPlatformAutoDL, c.GetInt("id"), clientRequestID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, dto.NewMiniMaxAPIErrorResponse(
-			http.StatusInternalServerError,
-			http.StatusText(http.StatusInternalServerError),
-			c.GetString(common.RequestIdKey),
-		))
-		c.Abort()
-		return
-	}
-	if !exists {
-		c.Next()
-		return
-	}
-	if existing.PrivateData.ClientRequestHash != requestHash {
-		c.JSON(http.StatusConflict, dto.NewMiniMaxAPIErrorResponse(
-			http.StatusConflict,
-			"Idempotency-Key was already used with a different request",
-			c.GetString(common.RequestIdKey),
-		))
-		c.Abort()
-		return
-	}
-	writeReplayedAutoDLVideoTask(c, existing)
-}
-
-func writeReplayedAutoDLVideoTask(c *gin.Context, task *model.Task) {
-	if err := model.ArmPreparedTaskWebhook(task.TaskID); err != nil {
-		statusCode := http.StatusInternalServerError
-		message := http.StatusText(statusCode)
-		if errors.Is(err, model.ErrTaskWebhookNoLongerArmable) {
-			statusCode = http.StatusConflict
-			message = "the original callback request was not accepted"
-		}
-		common.SysError(fmt.Sprintf("arm replayed AutoDL task callback failed: task_id=%s error=%v", task.TaskID, err))
-		c.JSON(statusCode, dto.NewMiniMaxAPIErrorResponse(
-			statusCode,
-			message,
-			c.GetString(common.RequestIdKey),
-		))
-		c.Abort()
-		return
-	}
-	c.Header("Idempotency-Replayed", "true")
-	c.Header("Location", "/v2/query/video_generation/"+task.TaskID)
-	if task.Status == model.TaskStatusReserving || task.Status == model.TaskStatusCheckpointPending {
-		c.Header("Retry-After", "2")
-	}
-	c.JSON(http.StatusOK, dto.MiniMaxVideoGenerationV2CreateResponse{TaskID: task.TaskID})
-	c.Abort()
-}
 
 func taskWebhookFromContext(c *gin.Context, status model.TaskWebhookStatus) *model.TaskWebhook {
 	value, exists := c.Get("task_request")
@@ -1527,7 +1428,7 @@ func RelayTask(c *gin.Context) {
 	isMiniMaxVideoV2 := c.Request.URL.Path == "/v2/video_generation"
 	isIndexTTS2Speech := c.Request.URL.Path == "/v1/audio/speech" && relayInfo.OriginModelName == constant.AutoDLModelIndexTTS2
 	isAutoDLDurableSubmission := common.GetContextKeyInt(c, constant.ContextKeyChannelType) == constant.ChannelTypeAutoDL &&
-		(isMiniMaxVideoV2 || isIndexTTS2Speech)
+		isIndexTTS2Speech
 	var checkpointTask *model.Task
 	var replayedAutoDLTask *model.Task
 	defer func() {
@@ -1726,12 +1627,8 @@ func RelayTask(c *gin.Context) {
 
 	if replayedAutoDLTask != nil {
 		taskErr = nil
-		if isIndexTTS2Speech {
-			c.Header("Idempotency-Replayed", "true")
-			writeAutoDLAudioSpeechTask(c, replayedAutoDLTask)
-		} else {
-			writeReplayedAutoDLVideoTask(c, replayedAutoDLTask)
-		}
+		c.Header("Idempotency-Replayed", "true")
+		writeAutoDLAudioSpeechTask(c, replayedAutoDLTask)
 		return
 	}
 
@@ -1867,11 +1764,7 @@ func RelayTask(c *gin.Context) {
 		} else {
 			taskErr = nil
 			c.Header("Retry-After", "2")
-			if isIndexTTS2Speech {
-				writeAutoDLAudioPending(c, checkpointTask)
-			} else {
-				c.JSON(http.StatusOK, dto.MiniMaxVideoGenerationV2CreateResponse{TaskID: checkpointTask.TaskID})
-			}
+			writeAutoDLAudioPending(c, checkpointTask)
 			return
 		}
 	}

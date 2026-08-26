@@ -288,12 +288,12 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, checkpoint *Ta
 		}
 	}
 
-	// 10. AutoDL 没有提交幂等键；总 deadline 必须严格短于 stale
-	// checkpoint 回收窗口，避免仍在进行的请求被另一个 worker 退款。
+	// 10. Durable AutoDL submissions continue after a client disconnect, but
+	// remain bounded so the checkpoint recovery window cannot race the request.
 	originalRequest := c.Request
 	isAutoDLWorkflowSubmission := info.ChannelType == constant.ChannelTypeAutoDL &&
 		constant.AutoDLSupportsRequest(c.Request.URL.Path, info.OriginModelName)
-	if isAutoDLWorkflowSubmission {
+	if checkpoint != nil && isAutoDLWorkflowSubmission {
 		// Once the durable checkpoint is active, a client disconnect must not
 		// cancel an already charged asynchronous submission. Preserve request
 		// values while bounding the detached provider call to two minutes.

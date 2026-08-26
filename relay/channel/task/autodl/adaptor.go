@@ -674,8 +674,13 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 	}
 	workflowID := ""
 	supportsSquare := false
+	supportsSeed := false
 	maxPromptLength := 0
 	payload := make(map[string]any)
+	audioSync := request.AudioSync != nil && *request.AudioSync
+	if audioSync && (content.FirstFrame != "" || content.LastFrame != "" || len(content.ReferenceImages) != 1 || len(content.ReferenceAudios) != 1) {
+		return "", nil, nil, errors.New("audio_sync=true requires exactly one reference_image and one reference_audio")
+	}
 
 	switch {
 	case content.FirstFrame != "" || content.LastFrame != "":
@@ -688,9 +693,7 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 		payload["duration"] = *request.Duration
 		payload["first_frame"] = content.FirstFrame
 		payload["last_frame"] = content.LastFrame
-	case len(content.ReferenceImages) == 1 && len(content.ReferenceAudios) == 1:
-		// The V2 request has no separate mode field: one image/audio pair is
-		// audio-synchronized animation, while larger sets remain multimodal references.
+	case audioSync:
 		workflowID = workflowImageAudioSync
 		maxPromptLength = 10_000
 		payload["ref_image_0"] = content.ReferenceImages[0]
@@ -706,6 +709,7 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 		} else {
 			workflowID = workflowReferenceImageAudio
 		}
+		supportsSeed = true
 		payload["prompt"] = content.Prompt
 		payload["duration"] = *request.Duration
 		for index, mediaURL := range content.ReferenceImages {
@@ -722,6 +726,7 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 		} else {
 			workflowID = workflowReferenceImages
 		}
+		supportsSeed = true
 		payload["prompt"] = content.Prompt
 		payload["duration"] = *request.Duration
 		for index, mediaURL := range content.ReferenceImages {
@@ -736,6 +741,12 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 	}
 	if utf8.RuneCountInString(content.Prompt) > maxPromptLength {
 		return "", nil, nil, fmt.Errorf("combined text content exceeds the selected workflow limit of %d characters", maxPromptLength)
+	}
+	if request.Seed != nil {
+		if !supportsSeed {
+			return "", nil, nil, errors.New("seed is supported only for reference-image generation")
+		}
+		payload["seed"] = *request.Seed
 	}
 
 	resolution, actualRatio, err := mapResolution(ratio, supportsSquare)
@@ -776,9 +787,6 @@ func summarizeContent(items []dto.MiniMaxVideoContentItem) (contentSummary, erro
 		case "text":
 			text := strings.TrimSpace(item.Text)
 			if text != "" {
-				if utf8.RuneCountInString(text) > 7000 {
-					return contentSummary{}, errors.New("each text item must not exceed 7000 characters")
-				}
 				prompts = append(prompts, text)
 			}
 		case "image_url":

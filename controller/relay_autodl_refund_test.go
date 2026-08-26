@@ -172,17 +172,16 @@ func relayAutoDLRefundRequest(t *testing.T, user *model.User, token *model.Token
 	return recorder
 }
 
-func TestRelayTaskAutoDLUpstreamStatusControlsDurableRefund(t *testing.T) {
+func TestRelayTaskAutoDLUpstreamFailureUsesStandardRefund(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	tests := []struct {
 		name           string
 		upstreamStatus int
-		wantRefund     bool
 	}{
-		{name: "400 truncated response is an explicit rejection", upstreamStatus: http.StatusBadRequest, wantRefund: true},
-		{name: "408 truncated response remains ambiguous", upstreamStatus: http.StatusRequestTimeout},
-		{name: "429 truncated response remains ambiguous", upstreamStatus: http.StatusTooManyRequests},
-		{name: "499 truncated response remains ambiguous", upstreamStatus: 499},
+		{name: "400 truncated response", upstreamStatus: http.StatusBadRequest},
+		{name: "408 truncated response", upstreamStatus: http.StatusRequestTimeout},
+		{name: "429 truncated response", upstreamStatus: http.StatusTooManyRequests},
+		{name: "499 truncated response", upstreamStatus: 499},
 	}
 
 	for _, test := range tests {
@@ -190,44 +189,21 @@ func TestRelayTaskAutoDLUpstreamStatusControlsDurableRefund(t *testing.T) {
 			user, token, channel := setupAutoDLRefundControllerTest(t, test.upstreamStatus)
 			recorder := relayAutoDLRefundRequest(t, user, token, channel)
 
-			var task model.Task
-			require.NoError(t, model.DB.Where("platform = ?", constant.TaskPlatformAutoDL).First(&task).Error)
-			require.Positive(t, task.Quota)
-			reservation, err := model.GetImageBillingReservation(task.TaskID)
-			require.NoError(t, err)
 			require.NoError(t, model.DB.First(user, user.Id).Error)
 			require.NoError(t, model.DB.First(token, token.Id).Error)
 			require.NoError(t, model.DB.First(channel, channel.Id).Error)
 
-			if test.wantRefund {
-				assert.Equal(t, test.upstreamStatus, recorder.Code, recorder.Body.String())
-				assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
-				assert.Equal(t, model.ImageBillingReservationRefunded, reservation.Status)
-				assert.Zero(t, reservation.WalletReserved)
-				assert.Zero(t, reservation.TokenReserved)
-				assert.Equal(t, autoDLRefundTestInitialQuota, user.Quota)
-				assert.Equal(t, autoDLRefundTestInitialQuota, token.RemainQuota)
-				assert.Zero(t, token.UsedQuota)
-				assert.Zero(t, channel.UsedQuota)
-				var response dto.MiniMaxAPIErrorResponse
-				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
-				assert.Equal(t, fmt.Sprintf("%d", test.upstreamStatus), response.Error.HTTPCode)
-				return
-			}
-
-			assert.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
-			assert.Equal(t, "2", recorder.Header().Get("Retry-After"))
-			assert.Equal(t, model.TaskStatusCheckpointPending, task.Status)
-			assert.Equal(t, model.ImageBillingReservationActive, reservation.Status)
-			assert.Equal(t, task.Quota, reservation.WalletReserved)
-			assert.Equal(t, task.Quota, reservation.TokenReserved)
-			assert.Equal(t, autoDLRefundTestInitialQuota-task.Quota, user.Quota)
-			assert.Equal(t, autoDLRefundTestInitialQuota-task.Quota, token.RemainQuota)
-			assert.Equal(t, task.Quota, token.UsedQuota)
-			assert.Equal(t, int64(task.Quota), channel.UsedQuota)
-			var response dto.MiniMaxVideoGenerationV2CreateResponse
+			assert.Equal(t, test.upstreamStatus, recorder.Code, recorder.Body.String())
+			assert.Equal(t, autoDLRefundTestInitialQuota, user.Quota)
+			assert.Equal(t, autoDLRefundTestInitialQuota, token.RemainQuota)
+			assert.Zero(t, token.UsedQuota)
+			assert.Zero(t, channel.UsedQuota)
+			var taskCount int64
+			require.NoError(t, model.DB.Model(&model.Task{}).Where("platform = ?", constant.TaskPlatformAutoDL).Count(&taskCount).Error)
+			assert.Zero(t, taskCount)
+			var response dto.MiniMaxAPIErrorResponse
 			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
-			assert.Equal(t, task.TaskID, response.TaskID)
+			assert.Equal(t, fmt.Sprintf("%d", test.upstreamStatus), response.Error.HTTPCode)
 		})
 	}
 }

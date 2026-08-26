@@ -14,7 +14,6 @@ func SetVideoRouter(router *gin.Engine) {
 		middleware.SystemPerformanceCheck(),
 		middleware.TokenAuth(),
 		middleware.ModelRequestRateLimit(),
-		controller.ReplayAutoDLVideoGeneration,
 		middleware.Distribute(),
 	)
 	{

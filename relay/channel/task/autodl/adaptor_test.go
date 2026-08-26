@@ -408,14 +408,36 @@ func TestBuildWorkflowRequestSelectsReferenceMediaWorkflowByDuration(t *testing.
 	}
 }
 
-func TestBuildWorkflowRequestMapsSingleReferencePairToAudioSync(t *testing.T) {
-	workflowID, payload, properties, err := buildWorkflowRequest(newMiniMaxRequest(
+func TestBuildWorkflowRequestDistinguishesReferencePairFromAudioSync(t *testing.T) {
+	referencePrompt := strings.Repeat("a", 8000)
+	referenceRequest := newMiniMaxRequest(
+		15,
+		"9:16",
+		textContent(referencePrompt),
+		imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/portrait.png"),
+		audioContent("https://cdn.example.com/voice.wav"),
+	)
+	referenceRequest.Seed = pointer(int64(0))
+	workflowID, payload, properties, err := buildWorkflowRequest(referenceRequest)
+	require.NoError(t, err)
+	assert.Equal(t, workflowReferenceImageAudio15s, workflowID)
+	assert.Equal(t, referencePrompt, payload["prompt"])
+	assert.Equal(t, 15, payload["duration"])
+	assert.Equal(t, int64(0), payload["seed"], "an explicit zero seed must be forwarded")
+	assert.Equal(t, "https://cdn.example.com/portrait.png", payload["ref_image_0"])
+	assert.Equal(t, "https://cdn.example.com/voice.wav", payload["ref_audio_0"])
+	assert.Equal(t, "768p竖", payload["resolution"])
+	assert.Equal(t, 1, properties.InputImageCount)
+
+	audioSyncRequest := newMiniMaxRequest(
 		8,
 		"9:16",
 		textContent("The portrait speaks naturally with the supplied voice"),
 		imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/portrait.png"),
 		audioContent("https://cdn.example.com/voice.wav"),
-	))
+	)
+	audioSyncRequest.AudioSync = pointer(true)
+	workflowID, payload, properties, err = buildWorkflowRequest(audioSyncRequest)
 
 	require.NoError(t, err)
 	assert.Equal(t, workflowImageAudioSync, workflowID)
@@ -507,6 +529,31 @@ func TestBuildWorkflowRequestRejectsUnsupportedMiniMaxCapabilities(t *testing.T)
 			name:      "reference audio without image",
 			request:   newMiniMaxRequest(6, "16:9", textContent("Follow the voice"), audioContent("https://cdn.example.com/voice.wav")),
 			wantError: "requires at least one reference_image",
+		},
+		{
+			name: "audio sync with multiple images",
+			request: func() *dto.MiniMaxVideoGenerationV2Request {
+				request := newMiniMaxRequest(
+					6,
+					"16:9",
+					textContent("Follow the voice"),
+					imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/one.png"),
+					imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/two.png"),
+					audioContent("https://cdn.example.com/voice.wav"),
+				)
+				request.AudioSync = pointer(true)
+				return request
+			}(),
+			wantError: "audio_sync=true requires exactly one reference_image and one reference_audio",
+		},
+		{
+			name: "seed with text to video",
+			request: func() *dto.MiniMaxVideoGenerationV2Request {
+				request := newMiniMaxRequest(6, "16:9", textContent("A city skyline"))
+				request.Seed = pointer(int64(42))
+				return request
+			}(),
+			wantError: "seed is supported only for reference-image generation",
 		},
 		{
 			name: "AIGC watermark",

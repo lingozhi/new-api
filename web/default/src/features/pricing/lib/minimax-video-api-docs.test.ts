@@ -72,6 +72,8 @@ describe('MiniMax-H3 video V2 API documentation', () => {
         'resolution',
         'duration',
         'ratio',
+        'seed',
+        'audio_sync',
         'callback_url',
         'aigc_watermark',
       ]
@@ -99,8 +101,8 @@ describe('MiniMax-H3 video V2 API documentation', () => {
 
       assert.match(sample, /POST|method: 'POST'|requests\.post/)
       assert.match(sample, /Authorization.*Bearer|Bearer \$\{apiKey\}/)
-      assert.match(sample, /Idempotency-Key/)
-      assert.match(sample, /MINIMAX_IDEMPOTENCY_KEY/)
+      assert.doesNotMatch(sample, /Idempotency-Key/)
+      assert.doesNotMatch(sample, /MINIMAX_IDEMPOTENCY_KEY/)
       assert.doesNotMatch(sample, /randomUUID|uuid\.uuid4|date \+%s/)
       assert.match(sample, /MiniMax-H3/)
       assert.match(sample, /\/v2\/video_generation/)
@@ -120,7 +122,7 @@ describe('MiniMax-H3 video V2 API documentation', () => {
     }
   })
 
-  test('JavaScript retries uncertain and rate-limited submits with the same persisted key', async () => {
+  test('JavaScript submits once and polls the returned task', async () => {
     const sample = buildMiniMaxVideoSample('javascript', context)
     const calls: Array<{ url: string; init?: RequestInit }> = []
     const logged: string[] = []
@@ -133,27 +135,15 @@ describe('MiniMax-H3 video V2 API documentation', () => {
       calls.push({ url: String(input), init })
       attempt += 1
       if (attempt === 1) {
-        throw new TypeError('simulated connection reset')
+        return new Response('{"task_id":"task_simple"}', { status: 200 })
       }
       if (attempt === 2) {
-        return new Response('{"type":"error"}', {
-          status: 429,
-          headers: { 'Retry-After': '0' },
-        })
-      }
-      if (attempt === 3) {
-        return new Response('{"task_id":"task_retry_safe"}', {
-          status: 200,
-          headers: { 'Retry-After': '0' },
-        })
-      }
-      if (attempt === 4) {
         return new Response('{"task":{"status":"queued"}}', {
           status: 200,
           headers: { 'Retry-After': '0' },
         })
       }
-      if (attempt === 5) {
+      if (attempt === 3) {
         return new Response(
           '{"task":{"status":"succeeded","content":{"url":"https://media.example.com/result.mp4"}}}',
           { status: 200 }
@@ -175,7 +165,6 @@ describe('MiniMax-H3 video V2 API documentation', () => {
       {
         env: {
           OPWAN_API_KEY: 'test-api-key',
-          MINIMAX_IDEMPOTENCY_KEY: 'stable-order-123',
         },
       },
       fetchMock,
@@ -190,17 +179,13 @@ describe('MiniMax-H3 video V2 API documentation', () => {
     const submitCalls = calls.filter(
       (call) => call.url === 'https://api.example.com/v2/video_generation'
     )
-    assert.equal(submitCalls.length, 3)
-    assert.deepEqual(
-      submitCalls.map(
-        (call) =>
-          ((call.init?.headers ?? {}) as Record<string, string>)[
-            'Idempotency-Key'
-          ]
-      ),
-      ['stable-order-123', 'stable-order-123', 'stable-order-123']
+    assert.equal(submitCalls.length, 1)
+    assert.equal(
+      ((submitCalls[0]?.init?.headers ?? {}) as Record<string, string>)[
+        'Idempotency-Key'
+      ],
+      undefined
     )
-    assert.equal(new Set(submitCalls.map((call) => call.init?.body)).size, 1)
     assert.equal(
       calls.filter((call) =>
         call.url.startsWith(
@@ -240,9 +225,10 @@ describe('MiniMax-H3 video V2 API documentation', () => {
     assert.match(guide, /at most 9 reference_image/)
     assert.match(guide, /at most 3 reference_audio/)
     assert.match(guide, /role=first_frame.*role=last_frame/)
-    assert.match(guide, /Exactly one reference_image plus one reference_audio/)
-    assert.match(guide, /audio-synchronized image animation/)
-    assert.match(guide, /Idempotency-Key/)
+    assert.match(guide, /multimodal reference generation by default/)
+    assert.match(guide, /audio_sync=true/)
+    assert.match(guide, /seed is optional/)
+    assert.doesNotMatch(guide, /Idempotency-Key/)
     assert.match(guide, /seven days/)
     assert.match(guide, /requested duration in seconds/)
     assert.match(guide, /2K/)

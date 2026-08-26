@@ -17,12 +17,14 @@ type MiniMaxVideoGenerationV2Request struct {
 	Resolution    *string                  `json:"resolution,omitempty"`
 	Duration      *int                     `json:"duration,omitempty"`
 	Ratio         *string                  `json:"ratio,omitempty"`
+	Seed          *int64                   `json:"seed,omitempty"`
+	AudioSync     *bool                    `json:"audio_sync,omitempty"`
 	CallbackURL   *string                  `json:"callback_url,omitempty"`
 	AIGCWatermark *bool                    `json:"aigc_watermark,omitempty"`
 }
 
-// NormalizeCallbackURL gives request validation and idempotency hashing the
-// same representation for an omitted, blank, or surrounding-space URL.
+// NormalizeCallbackURL gives validation and task persistence the same
+// representation for an omitted, blank, or surrounding-space URL.
 func (r *MiniMaxVideoGenerationV2Request) NormalizeCallbackURL() string {
 	if r == nil || r.CallbackURL == nil {
 		return ""

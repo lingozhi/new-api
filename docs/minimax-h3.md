@@ -30,6 +30,8 @@ Authorization: Bearer sk-your-api-key
 | `resolution` | string | 是 | 固定为 `768P`；不支持 `2K` |
 | `duration` | integer | 是 | 4～15 秒 |
 | `ratio` | string | 是 | 必须显式填写；支持情况见下表 |
+| `seed` | integer | 否 | 随机种子；仅参考图或参考图加音频模式支持 |
+| `audio_sync` | boolean | 否 | 默认 `false`；`true` 时必须恰好提供一张 `reference_image` 和一条 `reference_audio` |
 | `callback_url` | string | 否 | 公网可访问的 HTTPS URL，最长 2048 个字符；创建时先进行 challenge 校验 |
 | `aigc_watermark` | boolean | 否 | 只能省略或传 `false`；`true` 不受支持 |
 
@@ -53,7 +55,6 @@ Authorization: Bearer sk-your-api-key
 }
 ```
 
-- 每条 `text` 最多 7000 个 Unicode 字符。
 - 多条文本会以换行连接。
 - 参考图加音频工作流中，合并后的提示词最多 10000 个 Unicode 字符。
 
@@ -103,8 +104,9 @@ Authorization: Bearer sk-your-api-key
 - 最多 3 条。
 - `role` 必须为 `reference_audio`。
 - 必须同时提供至少一张 `reference_image`，不能只用文本加音频生成。
-- 恰好一张 `reference_image` 加一条 `reference_audio` 时，启用单图音频同步，`duration` 表示请求的音频驱动视频时长。该模式由音频驱动，非空文本仍是 V2 请求契约的必填项。
-- 提供多张参考图或多条参考音频时，启用多模态参考生成，并使用提示词控制画面。
+- 默认使用多模态参考生成；恰好一张参考图加一条参考音频也会进入该模式。
+- 需要单图音频同步（自动对口型）时显式传 `audio_sync: true`；此时 `duration` 会转为音频截取时长。
+- `seed` 会转发给多模态参考生成；单图音频同步模式不支持 `seed`。
 
 当前不支持 `type: "video_url"` 的参考视频。
 
@@ -164,12 +166,10 @@ challenge 请求受用户和 API Key 双重限流，并受全局并发保护。�
 ```bash
 export BASE_URL="https://api.opwan.ai"
 export API_KEY="sk-your-api-key"
-export MINIMAX_IDEMPOTENCY_KEY="video-order-20260826-001"
 
 curl --request POST "${BASE_URL}/v2/video_generation" \
   --header "Authorization: Bearer ${API_KEY}" \
   --header "Content-Type: application/json" \
-  --header "Idempotency-Key: ${MINIMAX_IDEMPOTENCY_KEY}" \
   --data '{
     "model": "MiniMax-H3",
     "content": [
@@ -187,12 +187,9 @@ curl --request POST "${BASE_URL}/v2/video_generation" \
 ### 参考图示例
 
 ```bash
-export MINIMAX_IDEMPOTENCY_KEY="video-order-20260826-002"
-
 curl --request POST "${BASE_URL}/v2/video_generation" \
   --header "Authorization: Bearer ${API_KEY}" \
   --header "Content-Type: application/json" \
-  --header "Idempotency-Key: ${MINIMAX_IDEMPOTENCY_KEY}" \
   --data '{
     "model": "MiniMax-H3",
     "content": [
@@ -214,17 +211,14 @@ curl --request POST "${BASE_URL}/v2/video_generation" \
   }'
 ```
 
-### 参考图加音频示例
+### 多模态参考图加音频示例
 
-恰好一张参考图加一条参考音频时，使用音频同步模式：
+不传 `audio_sync` 时，即使只有一张参考图和一条参考音频，也使用多模态参考生成：
 
 ```bash
-export MINIMAX_IDEMPOTENCY_KEY="video-order-20260826-003"
-
 curl --request POST "${BASE_URL}/v2/video_generation" \
   --header "Authorization: Bearer ${API_KEY}" \
   --header "Content-Type: application/json" \
-  --header "Idempotency-Key: ${MINIMAX_IDEMPOTENCY_KEY}" \
   --data '{
     "model": "MiniMax-H3",
     "content": [
@@ -249,19 +243,29 @@ curl --request POST "${BASE_URL}/v2/video_generation" \
     ],
     "resolution": "768P",
     "duration": 8,
-    "ratio": "16:9"
+    "ratio": "16:9",
+    "seed": 42
   }'
 ```
+
+### 单图音频同步示例
+
+需要自动对口型时，使用同样的一张 `reference_image` 和一条 `reference_audio`，并在顶层显式加上：
+
+```json
+{
+  "audio_sync": true
+}
+```
+
+该模式不转发提示词和 `seed`，`duration` 用作音频截取时长。
 
 ### 首尾帧示例
 
 ```bash
-export MINIMAX_IDEMPOTENCY_KEY="video-order-20260826-004"
-
 curl --request POST "${BASE_URL}/v2/video_generation" \
   --header "Authorization: Bearer ${API_KEY}" \
   --header "Content-Type: application/json" \
-  --header "Idempotency-Key: ${MINIMAX_IDEMPOTENCY_KEY}" \
   --data '{
     "model": "MiniMax-H3",
     "content": [
@@ -300,13 +304,7 @@ curl --request POST "${BASE_URL}/v2/video_generation" \
 }
 ```
 
-保存 `task_id`，随后调用查询接口。响应在幂等重放或提交状态不明确时可能包含：
-
-- `Location: /v2/query/video_generation/task_xxx`
-- `Retry-After: 2`
-- `Idempotency-Replayed: true`
-
-`Retry-After` 存在时应优先按该秒数等待。
+保存 `task_id`，随后调用查询接口。
 
 ## 查询与轮询
 
@@ -388,15 +386,9 @@ import requests
 
 base_url = os.environ.get("BASE_URL", "https://api.opwan.ai")
 api_key = os.environ["API_KEY"]
-idempotency_key = os.environ["MINIMAX_IDEMPOTENCY_KEY"]
-if not idempotency_key or len(idempotency_key) > 256:
-    raise RuntimeError(
-        "MINIMAX_IDEMPOTENCY_KEY must be a stable value of at most 256 characters"
-    )
 headers = {
     "Authorization": f"Bearer {api_key}",
     "Content-Type": "application/json",
-    "Idempotency-Key": idempotency_key,
 }
 payload = {
     "model": "MiniMax-H3",
@@ -411,47 +403,24 @@ payload = {
     "ratio": "16:9",
 }
 
-submit_deadline = time.monotonic() + 5 * 60
-while True:
-    try:
-        created = requests.post(
-            f"{base_url}/v2/video_generation",
-            headers=headers,
-            json=payload,
-            timeout=120,
-        )
-    except (requests.ConnectionError, requests.Timeout) as error:
-        if time.monotonic() >= submit_deadline:
-            raise TimeoutError(
-                "Submission remained uncertain; rerun with the same idempotency key"
-            ) from error
-        time.sleep(5)
-        continue
-
-    if created.status_code == 429:
-        if time.monotonic() >= submit_deadline:
-            raise TimeoutError(
-                "Submission remained rate-limited; rerun with the same idempotency key"
-            )
-        time.sleep(max(int(created.headers.get("Retry-After", "15")), 1))
-        continue
-
-    created.raise_for_status()
-    break
+created = requests.post(
+    f"{base_url}/v2/video_generation",
+    headers=headers,
+    json=payload,
+    timeout=120,
+)
+created.raise_for_status()
 
 task_id = created.json()["task_id"]
-delay = int(created.headers.get("Retry-After", "15"))
-
 deadline = time.monotonic() + 15 * 60
 while time.monotonic() < deadline:
-    time.sleep(delay)
     response = requests.get(
         f"{base_url}/v2/query/video_generation/{task_id}",
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=30,
     )
     if response.status_code == 429:
-        delay = max(int(response.headers.get("Retry-After", "15")), 1)
+        time.sleep(max(int(response.headers.get("Retry-After", "15")), 1))
         continue
     response.raise_for_status()
     task = response.json()["task"]
@@ -461,20 +430,10 @@ while time.monotonic() < deadline:
         break
     if task["status"] in {"failed", "cancelled"}:
         raise RuntimeError(task.get("error", task["status"]))
+    time.sleep(15)
 else:
     raise TimeoutError(f"task {task_id} did not finish in 15 minutes")
 ```
-
-## 幂等重试
-
-`Idempotency-Key` 是可选请求头，最长 256 个字符。生产客户端应为每个业务操作生成唯一键：
-
-- 网络超时或连接中断时，使用同一用户、同一个键和完全相同的请求重试。
-- 命中已有任务时返回原 `task_id`，并可能带 `Idempotency-Replayed: true`，不会再次创建任务。
-- 同一个键对应不同的规范化请求时返回 HTTP 409。
-- 不传该头时，不提供重复提交保护。
-
-若创建响应是 HTTP 200 且带 `Retry-After`，任务已经被系统记录，不要换新键重复提交；应保存 `task_id` 并查询状态。
 
 ## 错误格式
 
@@ -499,7 +458,6 @@ else:
 | `400` | 参数无效，或任务不存在、无权访问、超过 7 天查询窗口 |
 | `401` / `403` | API 令牌缺失、无效或认证失败 |
 | `402` | 余额不足 |
-| `409` | 幂等键已用于不同请求 |
 | `413` | JSON 请求体超过 64 MiB |
 | `422` | 生成服务明确拒绝任务提交 |
 | `429` | 请求过于频繁 |
@@ -512,6 +470,6 @@ else:
 
 ## 计费
 
-`MiniMax-H3` 按创建请求的 `duration` 秒数计费，单价以模型广场实时展示为准。例如请求 `duration: 8`，计费乘数就是 8 秒。幂等重放返回原任务，不重复创建任务。
+`MiniMax-H3` 按创建请求的 `duration` 秒数计费，单价以模型广场实时展示为准。例如请求 `duration: 8`，计费乘数就是 8 秒。
 
 完整机器可读定义见 [`docs/openapi/relay.json`](openapi/relay.json) 中的 `/v2/video_generation` 和 `/v2/query/video_generation/{task_id}`。
