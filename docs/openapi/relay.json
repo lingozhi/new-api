@@ -537,8 +537,7 @@
                     ],
                     "resolution": "768P",
                     "duration": 8,
-                    "ratio": "16:9",
-                    "seed": 42
+                    "ratio": "16:9"
                   }
                 },
                 "audioSynchronizedImage": {
@@ -2892,25 +2891,10 @@
             ],
             "description": "必须显式指定，不支持 adaptive。16:9 和 9:16 适用于全部当前工作流；1:1 仅适用于文生视频或纯参考图，不适用于首尾帧或带参考音频的输入。"
           },
-          "seed": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 1,
-            "maximum": 999999999999999,
-            "description": "可选随机种子，仅参考图生成和多模态参考生成支持。"
-          },
           "audio_sync": {
             "type": "boolean",
             "default": false,
             "description": "兼容扩展。仅在恰好包含一张 reference_image 和一条 reference_audio 时可设为 true，用于显式选择音频同步动画；省略或传 false 时按多模态参考生成。"
-          },
-          "aigc_watermark": {
-            "type": "boolean",
-            "enum": [
-              false
-            ],
-            "default": false,
-            "description": "当前通道不支持添加 AIGC 水印，只能省略或传 false。"
           },
           "callback_url": {
             "type": "string",

@@ -83,13 +83,6 @@ export function buildMiniMaxVideoParameters(
         'Explicit output ratio; 1:1 is available only for text-to-video or reference-image-only input',
     },
     {
-      name: 'seed',
-      type: 'integer',
-      range: '1 ~ 999999999999999',
-      descriptionKey:
-        'Optional random seed for reference-image and multimodal reference generation',
-    },
-    {
       name: 'audio_sync',
       type: 'boolean',
       defaultValue: false,
@@ -102,14 +95,6 @@ export function buildMiniMaxVideoParameters(
       range: '≤ 2048 characters',
       descriptionKey:
         'Optional public HTTPS URL; it must echo the create-time challenge within 3 seconds and receives terminal task results',
-    },
-    {
-      name: 'aigc_watermark',
-      type: 'boolean',
-      defaultValue: false,
-      enumValues: ['false'],
-      descriptionKey:
-        'Watermark option reserved by MiniMax V2; the current implementation requires false',
     },
   ]
 }
@@ -126,7 +111,6 @@ function miniMaxVideoRequestBody(context: MiniMaxVideoSampleContext) {
     resolution: '768P',
     duration: 6,
     ratio: '16:9',
-    aigc_watermark: false,
   }
 }
 
@@ -253,7 +237,6 @@ function buildPythonSample(context: MiniMaxVideoSampleContext): string {
     '    "resolution": "768P",',
     '    "duration": 6,',
     '    "ratio": "16:9",',
-    '    "aigc_watermark": False,',
     '}',
     '',
     `response = requests.post("${submitUrl}", headers=headers, json=payload, timeout=120)`,
@@ -328,7 +311,6 @@ function buildNodeSample(
     "    resolution: '768P',",
     '    duration: 6,',
     "    ratio: '16:9',",
-    '    aigc_watermark: false,',
     '}',
     '',
     `let response = await fetch('${submitUrl}', {`,
@@ -418,13 +400,12 @@ export function buildMiniMaxVideoAiIntegrationGuide(
     '- Use role=reference_audio for at most 3 reference_audio items, and include at least one reference image. The combined prompt is then limited to 10000 characters.',
     '- Reference images and audio use multimodal reference generation by default, including exactly one image and one audio item.',
     '- Set audio_sync=true to use audio-synchronized animation with exactly one reference_image and one reference_audio. Text remains required by the V2 request contract, while duration controls the audio clip length.',
-    '- seed is optional from 1 through 999999999999999 for reference-image and multimodal reference generation; it is not supported by text, first/last-frame, or audio_sync modes.',
     '- Media accepts a publicly reachable HTTPS URL on the default port or an allowed base64 data URI.',
     '- callback_url is optional. When present, it must be a publicly reachable HTTPS URL of at most 2048 characters.',
     '',
     '## Unsupported options',
     '- 2K, adaptive, 21:9, 4:3, and 3:4 are unsupported.',
-    '- A single first_frame or last_frame, reference_video, and aigc_watermark=true are unsupported.',
+    '- A single first_frame or last_frame and reference_video are unsupported.',
     '',
     '## Optional terminal callback',
     '- During submission, the gateway sends callback_url a POST with {"challenge":"..."}. The receiver must return a 2xx JSON response containing the identical challenge value within 3 seconds. The task is accepted only after verification succeeds.',

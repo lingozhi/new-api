@@ -58,7 +58,7 @@ describe('MiniMax-H3 video V2 API documentation', () => {
     )
   })
 
-  test('documents every accepted top-level request parameter', () => {
+  test('documents only public top-level request parameters', () => {
     const parameters = buildMiniMaxVideoParameters('MiniMax-H3')
     const byName = new Map(
       parameters.map((parameter) => [parameter.name, parameter])
@@ -72,23 +72,21 @@ describe('MiniMax-H3 video V2 API documentation', () => {
         'resolution',
         'duration',
         'ratio',
-        'seed',
         'audio_sync',
         'callback_url',
-        'aigc_watermark',
       ]
     )
     assert.equal(byName.get('model')?.defaultValue, 'MiniMax-H3')
     assert.deepEqual(byName.get('resolution')?.enumValues, ['768P'])
     assert.equal(byName.get('duration')?.range, '4 ~ 15')
     assert.deepEqual(byName.get('ratio')?.enumValues, ['16:9', '9:16', '1:1'])
-    assert.equal(byName.get('seed')?.range, '1 ~ 999999999999999')
     assert.equal(byName.get('callback_url')?.range, '≤ 2048 characters')
     assert.match(
       byName.get('callback_url')?.descriptionKey ?? '',
       /public HTTPS URL.*challenge.*3 seconds.*terminal task results/
     )
-    assert.deepEqual(byName.get('aigc_watermark')?.enumValues, ['false'])
+    assert.equal(byName.has('seed'), false)
+    assert.equal(byName.has('aigc_watermark'), false)
   })
 
   test('all samples submit, poll to a terminal state, and handle errors', () => {
@@ -119,6 +117,7 @@ describe('MiniMax-H3 video V2 API documentation', () => {
       assert.match(sample, /content.*url|content"\]\["url/i)
       assert.match(sample, /response\.ok|raise_for_status|http_code|HTTP/)
       assert.doesNotMatch(sample, /callback_url/)
+      assert.doesNotMatch(sample, /seed|aigc_watermark/)
       assert.doesNotMatch(sample, /chat\/completions|messages/)
     }
   })
@@ -228,7 +227,7 @@ describe('MiniMax-H3 video V2 API documentation', () => {
     assert.match(guide, /role=first_frame.*role=last_frame/)
     assert.match(guide, /multimodal reference generation by default/)
     assert.match(guide, /audio_sync=true/)
-    assert.match(guide, /seed is optional/)
+    assert.doesNotMatch(guide, /seed|aigc_watermark/)
     assert.doesNotMatch(guide, /Idempotency-Key/)
     assert.match(guide, /seven days/)
     assert.match(guide, /requested duration in seconds/)

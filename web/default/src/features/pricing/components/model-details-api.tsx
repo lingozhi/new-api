@@ -761,7 +761,7 @@ function MiniMaxVideoContractNotice() {
         </li>
         <li>
           {t(
-            'The current implementation does not support 2K, adaptive ratio, a single first_frame or last_frame, reference_video, or aigc_watermark=true.'
+            'The current implementation does not support 2K, adaptive ratio, a single first_frame or last_frame, or reference_video.'
           )}
         </li>
         <li>

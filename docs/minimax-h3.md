@@ -2,7 +2,7 @@
 
 `MiniMax-H3` 通过 MiniMax V2 风格的异步接口接入：调用 `POST /v2/video_generation` 创建任务后，可通过 `GET /v2/query/video_generation/{task_id}` 查询状态，也可选择通过 `callback_url` 接收终态结果。
 
-本文描述的是当前兼容接口实际开放的能力子集，不是 MiniMax 官方接口的完整能力。当前支持 768P、4～15 秒，以及文生视频、首尾帧、参考图、单图音频同步、多图多音频参考生成；不支持 2K、自适应画幅、单独首帧或尾帧、参考视频或 AIGC 水印。回调仅在任务进入 `succeeded`、`failed` 或 `cancelled` 终态时发送，不会像 MiniMax 官方完整回调那样逐次推送每个状态变化。
+本文描述的是当前兼容接口实际开放的能力子集，不是 MiniMax 官方接口的完整能力。当前支持 768P、4～15 秒，以及文生视频、首尾帧、参考图、单图音频同步、多图多音频参考生成；不支持 2K、自适应画幅、单独首帧或尾帧、参考视频。回调仅在任务进入 `succeeded`、`failed` 或 `cancelled` 终态时发送，不会像 MiniMax 官方完整回调那样逐次推送每个状态变化。
 
 ## 接口概览
 
@@ -30,10 +30,8 @@ Authorization: Bearer sk-your-api-key
 | `resolution` | string | 是 | 固定为 `768P`；不支持 `2K` |
 | `duration` | integer | 是 | 4～15 秒 |
 | `ratio` | string | 是 | 必须显式填写；支持情况见下表 |
-| `seed` | integer | 否 | `1`～`999999999999999`；仅参考图或参考图加音频模式支持 |
 | `audio_sync` | boolean | 否 | 默认 `false`；`true` 时必须恰好提供一张 `reference_image` 和一条 `reference_audio` |
 | `callback_url` | string | 否 | 公网可访问的 HTTPS URL，最长 2048 个字符；创建时先进行 challenge 校验 |
-| `aigc_watermark` | boolean | 否 | 只能省略或传 `false`；`true` 不受支持 |
 
 画幅比例支持情况：
 
@@ -106,7 +104,6 @@ Authorization: Bearer sk-your-api-key
 - 必须同时提供至少一张 `reference_image`，不能只用文本加音频生成。
 - 默认使用多模态参考生成；恰好一张参考图加一条参考音频也会进入该模式。
 - 需要单图音频同步（自动对口型）时显式传 `audio_sync: true`；此时 `duration` 会转为音频截取时长。
-- `seed` 会转发给多模态参考生成；单图音频同步模式不支持 `seed`。
 
 当前不支持 `type: "video_url"` 的参考视频。
 
@@ -243,8 +240,7 @@ curl --request POST "${BASE_URL}/v2/video_generation" \
     ],
     "resolution": "768P",
     "duration": 8,
-    "ratio": "16:9",
-    "seed": 42
+    "ratio": "16:9"
   }'
 ```
 
@@ -258,7 +254,7 @@ curl --request POST "${BASE_URL}/v2/video_generation" \
 }
 ```
 
-该模式不转发提示词和 `seed`，`duration` 用作音频截取时长。
+该模式不转发提示词，`duration` 用作音频截取时长。
 
 ### 首尾帧示例
 
