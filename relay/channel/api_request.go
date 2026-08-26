@@ -2,6 +2,7 @@ package channel
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -513,6 +514,19 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		noRedirectClient := *client
 		noRedirectClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
+		}
+		if transport, ok := client.Transport.(*http.Transport); ok && transport != nil {
+			isolatedTransport := transport.Clone()
+			isolatedTransport.ForceAttemptHTTP2 = false
+			isolatedTransport.DisableKeepAlives = true
+			isolatedTransport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+			if isolatedTransport.TLSClientConfig == nil {
+				isolatedTransport.TLSClientConfig = &tls.Config{NextProtos: []string{"http/1.1"}}
+			} else {
+				isolatedTransport.TLSClientConfig = isolatedTransport.TLSClientConfig.Clone()
+				isolatedTransport.TLSClientConfig.NextProtos = []string{"http/1.1"}
+			}
+			noRedirectClient.Transport = isolatedTransport
 		}
 		client = &noRedirectClient
 	}

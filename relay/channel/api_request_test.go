@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -272,6 +274,41 @@ func TestDoRequestBoundsCapacityFallbackResponseHeaders(t *testing.T) {
 	require.ErrorIs(t, err, ErrCapacityFallbackHeaderDeadline)
 	require.Nil(t, resp)
 	assert.Less(t, time.Since(startedAt), 300*time.Millisecond)
+}
+
+func TestDoRequestUsesIsolatedHTTP1TransportForAutoDL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	originalTLSInsecureSkipVerify := common.TLSInsecureSkipVerify
+	common.TLSInsecureSkipVerify = true
+	service.InitHttpClient()
+	t.Cleanup(func() {
+		common.TLSInsecureSkipVerify = originalTLSInsecureSkipVerify
+		service.InitHttpClient()
+	})
+
+	protocol := make(chan string, 1)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		protocol <- r.Proto
+		w.WriteHeader(http.StatusOK)
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	t.Cleanup(server.Close)
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/speech", strings.NewReader("{}"))
+	req, err := http.NewRequest(http.MethodPost, server.URL, strings.NewReader("{}"))
+	require.NoError(t, err)
+
+	resp, err := DoRequest(c, req, &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		ChannelType:    constant.ChannelTypeAutoDL,
+		ChannelSetting: dto.ChannelSettings{},
+	}})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	assert.Equal(t, "HTTP/1.1", <-protocol)
 }
 
 func TestDoRequestKeepsCapacityDeadlineUntilCompleteResponseHeaders(t *testing.T) {
