@@ -108,7 +108,7 @@ describe('IndexTTS2 audio speech API documentation', () => {
       sample.indexOf('location=$(awk') < sample.indexOf('while [ "$status"')
     )
     assert.match(sample, /while \[ "\$status" = "202" \]/)
-    assert.match(sample, /"\$status" = "429"/)
+    assert.doesNotMatch(sample, /"\$status" = "429"/)
     assert.match(sample, /retry-after:/)
     assert.match(sample, /mv "\$BODY_FILE" speech\.wav/)
   })
@@ -116,10 +116,7 @@ describe('IndexTTS2 audio speech API documentation', () => {
   test('Python follows Location and writes WAV bytes without JSON decoding', () => {
     const sample = buildIndexTTSAudioSpeechSample('python', context)
 
-    assert.match(
-      sample,
-      /response\.status_code == 202 or \(response\.status_code == 429 and recovery_url\)/
-    )
+    assert.match(sample, /while response\.status_code == 202:/)
     assert.match(sample, /location = response\.headers\.get\("Location"\)/)
     assert.match(
       sample,
@@ -137,10 +134,7 @@ describe('IndexTTS2 audio speech API documentation', () => {
       const sample = buildIndexTTSAudioSpeechSample(language, context)
 
       assert.match(sample, /randomUUID\(\)/)
-      assert.match(
-        sample,
-        /response\.status === 202 \|\| \(response\.status === 429 && recoveryUrl\)/
-      )
+      assert.match(sample, /while \(response\.status === 202\)/)
       assert.match(
         sample,
         /initialLocation = response\.headers\.get\('Location'\)/
@@ -170,10 +164,7 @@ describe('IndexTTS2 audio speech API documentation', () => {
     assert.match(guide, /POST https:\/\/api\.example\.com\/v1\/audio\/speech/)
     assert.match(guide, /HTTP 200 returns binary audio\/wav/)
     assert.match(guide, /HTTP 202 returns task_id and status/)
-    assert.match(
-      guide,
-      /initial POST returns HTTP 429 with Location, the task was accepted/
-    )
+    assert.doesNotMatch(guide, /initial POST returns HTTP 429 with Location/)
     assert.match(
       guide,
       /GET https:\/\/api\.example\.com\/v1\/audio\/speech\/\{task_id\}/

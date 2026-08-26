@@ -14,7 +14,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
-	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/service"
@@ -52,8 +51,7 @@ func ReplayAutoDLAudioSpeech(c *gin.Context) {
 	if mediaTypeErr != nil || mediaType != gin.MIMEJSON {
 		// Only official JSON requests participate in replay. Non-JSON bodies
 		// continue to channel selection, where AutoDL rejects them before
-		// billing/provider dispatch; this also prevents POST replay polling from
-		// bypassing the IndexTTS2 user-keyed limit.
+		// billing/provider dispatch.
 		c.Next()
 		return
 	}
@@ -63,9 +61,8 @@ func ReplayAutoDLAudioSpeech(c *gin.Context) {
 		return
 	}
 	if storage.Size() > common.MaxAutoDLWorkflowBodyBytes {
-		// Admission rejects oversized IndexTTS2 bodies. Do not materialize an
-		// oversized unclassified/ordinary speech request merely because the
-		// caller also supplied an idempotency header.
+		// The selected channel owns the model-specific error. Do not materialize
+		// an oversized request merely because the caller supplied a replay key.
 		c.Next()
 		return
 	}
@@ -155,6 +152,15 @@ func RelayAudioSpeech(c *gin.Context) {
 		writeAutoDLAudioError(c, http.StatusUnsupportedMediaType, "invalid_request_error", "unsupported_media_type", "indextts2-v1 requires Content-Type: application/json")
 		return
 	}
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		writeAutoDLAudioError(c, http.StatusBadRequest, "invalid_request_error", "invalid_request", "Failed to read request body")
+		return
+	}
+	if storage.Size() > common.MaxAutoDLWorkflowBodyBytes {
+		writeAutoDLAudioError(c, http.StatusRequestEntityTooLarge, "invalid_request_error", "request_too_large", "request body must not exceed 64 MiB")
+		return
+	}
 
 	if setting.ShouldCheckPromptSensitive() {
 		request := &dto.IndexTTS2SpeechRequest{}
@@ -202,7 +208,6 @@ func writeAutoDLAudioSpeechTask(c *gin.Context, task *model.Task) {
 		writeAutoDLAudioError(c, http.StatusNotFound, "invalid_request_error", "task_not_found", "Task not found")
 		return
 	}
-	middleware.ReleaseAutoDLAudioAdmission(c)
 	// The POST body can contain two large base64 audio references. Submission no
 	// longer needs it, so release the disk spool before the synchronous wait.
 	common.CleanupBodyStorage(c)
@@ -285,9 +290,6 @@ func writeAutoDLAudioPending(c *gin.Context, task *model.Task) {
 }
 
 func writeAutoDLAudioResult(c *gin.Context, task *model.Task) {
-	if !middleware.AllowAutoDLAudioArtifactFetch(c) {
-		return
-	}
 	if task.FinishTime > 0 && time.Now().Unix()-task.FinishTime >= int64(30*time.Second/time.Second) {
 		refreshCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 		relay.RefreshAutoDLSuccessTask(refreshCtx, task)

@@ -174,8 +174,6 @@ func SetRelayRouter(router *gin.Engine) {
 	audioSpeechSubmitRouter.POST(
 		"/audio/speech",
 		middleware.TokenAuthRecovery(),
-		middleware.AutoDLAudioAdmission(),
-		middleware.AutoDLAudioReplayRateLimit(),
 		controller.ReplayAutoDLAudioSpeech,
 		middleware.TokenAuth(),
 		middleware.ModelRequestRateLimit(),
@@ -188,7 +186,6 @@ func SetRelayRouter(router *gin.Engine) {
 	audioSpeechTaskRouter.Use(
 		middleware.SystemPerformanceCheck(),
 		middleware.TokenAuthRecovery(),
-		middleware.AutoDLAudioTaskReadRateLimit(),
 		middleware.ModelRequestRateLimit(),
 	)
 	audioSpeechTaskRouter.GET("/:task_id", controller.GetAutoDLAudioSpeechTask)

@@ -2158,33 +2158,11 @@
             }
           },
           "429": {
-            "description": "触发请求、模型或 IndexTTS2 限流。若响应包含 Location，任务已经受理，请按 Retry-After 等待后使用同一 API 令牌 GET 该地址；未包含 Location 时按普通提交限流处理。",
+            "description": "触发现有系统或上游的通用限流。",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "headers": {
-              "X-New-Api-Task-ID": {
-                "description": "任务已经受理时返回的任务 ID。",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "Location": {
-                "description": "任务已经受理时返回的恢复接口路径。",
-                "schema": {
-                  "type": "string",
-                  "example": "/v1/audio/speech/task_xxx"
-                }
-              },
-              "Retry-After": {
-                "description": "存在 Location 时，建议等待后执行恢复 GET 的秒数。",
-                "schema": {
-                  "type": "integer",
-                  "example": 60
                 }
               }
             }
@@ -2315,33 +2293,11 @@
             }
           },
           "429": {
-            "description": "触发任务读取、音频下载或模型请求限流。",
+            "description": "触发现有系统或上游的通用限流。",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            },
-            "headers": {
-              "X-New-Api-Task-ID": {
-                "description": "任务已经完成、但产物下载触发限流时返回的任务 ID。",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "Location": {
-                "description": "任务已经完成、但产物下载触发限流时返回的当前恢复接口路径。",
-                "schema": {
-                  "type": "string",
-                  "example": "/v1/audio/speech/task_xxx"
-                }
-              },
-              "Retry-After": {
-                "description": "建议等待后重试同一恢复地址的秒数。",
-                "schema": {
-                  "type": "integer",
-                  "example": 60
                 }
               }
             }

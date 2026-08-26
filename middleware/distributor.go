@@ -415,14 +415,6 @@ func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
 }
 
 func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
-	if c.Request.URL.Path == constant.AutoDLAudioSpeechPath {
-		if value, exists := c.Get(autoDLAudioModelRequestContextKey); exists {
-			if modelRequest, ok := value.(*ModelRequest); ok && modelRequest != nil {
-				copy := *modelRequest
-				return &copy, nil
-			}
-		}
-	}
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
 		return nil, err

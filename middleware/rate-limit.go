@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/gin-gonic/gin"
 )
 
@@ -112,27 +110,6 @@ func CriticalRateLimit() func(c *gin.Context) {
 
 func DownloadRateLimit() func(c *gin.Context) {
 	return rateLimitFactory(common.DownloadRateLimitNum, common.DownloadRateLimitDuration, "DW")
-}
-
-// AutoDLAudioReplayRateLimit applies a token-keyed, atomic limit only when the
-// admission middleware identified IndexTTS2. It runs before Replay decodes the
-// full request, and ordinary synchronous TTS keeps its existing behavior.
-func AutoDLAudioReplayRateLimit() func(c *gin.Context) {
-	return func(c *gin.Context) {
-		value, exists := c.Get(autoDLAudioModelRequestContextKey)
-		if !exists {
-			return
-		}
-		request, ok := value.(*ModelRequest)
-		if !ok || request == nil || request.Model != constant.AutoDLModelIndexTTS2 {
-			return
-		}
-		if strings.TrimSpace(c.GetHeader("Idempotency-Key")) == "" {
-			abortWithOpenAiMessage(c, http.StatusBadRequest, "Idempotency-Key is required for indextts2-v1")
-			return
-		}
-		autoDLAudioIndexRateLimit(c)
-	}
 }
 
 func UploadRateLimit() func(c *gin.Context) {
