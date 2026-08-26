@@ -417,13 +417,13 @@ func TestBuildWorkflowRequestDistinguishesReferencePairFromAudioSync(t *testing.
 		imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/portrait.png"),
 		audioContent("https://cdn.example.com/voice.wav"),
 	)
-	referenceRequest.Seed = pointer(int64(0))
+	referenceRequest.Seed = pointer(int64(1))
 	workflowID, payload, properties, err := buildWorkflowRequest(referenceRequest)
 	require.NoError(t, err)
 	assert.Equal(t, workflowReferenceImageAudio15s, workflowID)
 	assert.Equal(t, referencePrompt, payload["prompt"])
 	assert.Equal(t, 15, payload["duration"])
-	assert.Equal(t, int64(0), payload["seed"], "an explicit zero seed must be forwarded")
+	assert.Equal(t, int64(1), payload["seed"])
 	assert.Equal(t, "https://cdn.example.com/portrait.png", payload["ref_image_0"])
 	assert.Equal(t, "https://cdn.example.com/voice.wav", payload["ref_audio_0"])
 	assert.Equal(t, "768p竖", payload["resolution"])
@@ -554,6 +554,24 @@ func TestBuildWorkflowRequestRejectsUnsupportedMiniMaxCapabilities(t *testing.T)
 				return request
 			}(),
 			wantError: "seed is supported only for reference-image generation",
+		},
+		{
+			name: "seed below upstream minimum",
+			request: func() *dto.MiniMaxVideoGenerationV2Request {
+				request := newMiniMaxRequest(6, "16:9", textContent("A city skyline"), imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png"))
+				request.Seed = pointer(int64(0))
+				return request
+			}(),
+			wantError: "seed must be an integer between 1 and 999999999999999",
+		},
+		{
+			name: "seed above upstream maximum",
+			request: func() *dto.MiniMaxVideoGenerationV2Request {
+				request := newMiniMaxRequest(6, "16:9", textContent("A city skyline"), imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/ref.png"))
+				request.Seed = pointer(maxMiniMaxH3Seed + 1)
+				return request
+			}(),
+			wantError: "seed must be an integer between 1 and 999999999999999",
 		},
 		{
 			name: "AIGC watermark",

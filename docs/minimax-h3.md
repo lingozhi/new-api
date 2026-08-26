@@ -30,7 +30,7 @@ Authorization: Bearer sk-your-api-key
 | `resolution` | string | 是 | 固定为 `768P`；不支持 `2K` |
 | `duration` | integer | 是 | 4～15 秒 |
 | `ratio` | string | 是 | 必须显式填写；支持情况见下表 |
-| `seed` | integer | 否 | 随机种子；仅参考图或参考图加音频模式支持 |
+| `seed` | integer | 否 | `1`～`999999999999999`；仅参考图或参考图加音频模式支持 |
 | `audio_sync` | boolean | 否 | 默认 `false`；`true` 时必须恰好提供一张 `reference_image` 和一条 `reference_audio` |
 | `callback_url` | string | 否 | 公网可访问的 HTTPS URL，最长 2048 个字符；创建时先进行 challenge 校验 |
 | `aigc_watermark` | boolean | 否 | 只能省略或传 `false`；`true` 不受支持 |

@@ -82,6 +82,7 @@ describe('MiniMax-H3 video V2 API documentation', () => {
     assert.deepEqual(byName.get('resolution')?.enumValues, ['768P'])
     assert.equal(byName.get('duration')?.range, '4 ~ 15')
     assert.deepEqual(byName.get('ratio')?.enumValues, ['16:9', '9:16', '1:1'])
+    assert.equal(byName.get('seed')?.range, '1 ~ 999999999999999')
     assert.equal(byName.get('callback_url')?.range, '≤ 2048 characters')
     assert.match(
       byName.get('callback_url')?.descriptionKey ?? '',

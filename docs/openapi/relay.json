@@ -2895,7 +2895,9 @@
           "seed": {
             "type": "integer",
             "format": "int64",
-            "description": "可选随机种子，仅参考图生成和多模态参考生成支持；显式传 0 也会转发。"
+            "minimum": 1,
+            "maximum": 999999999999999,
+            "description": "可选随机种子，仅参考图生成和多模态参考生成支持。"
           },
           "audio_sync": {
             "type": "boolean",

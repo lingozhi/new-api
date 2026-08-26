@@ -35,8 +35,9 @@ type TaskAdaptor struct {
 }
 
 const (
-	maxCallbackURLCharacters       = 2048
-	validatedCallbackURLContextKey = "autodl_validated_callback_url"
+	maxCallbackURLCharacters             = 2048
+	maxMiniMaxH3Seed               int64 = 999_999_999_999_999
+	validatedCallbackURLContextKey       = "autodl_validated_callback_url"
 )
 
 var verifyJSONWebhookChallenge = service.VerifyJSONWebhookChallenge
@@ -745,6 +746,9 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 	if request.Seed != nil {
 		if !supportsSeed {
 			return "", nil, nil, errors.New("seed is supported only for reference-image generation")
+		}
+		if *request.Seed < 1 || *request.Seed > maxMiniMaxH3Seed {
+			return "", nil, nil, fmt.Errorf("seed must be an integer between 1 and %d", maxMiniMaxH3Seed)
 		}
 		payload["seed"] = *request.Seed
 	}
