@@ -741,7 +741,7 @@ function MiniMaxVideoContractNotice() {
       <ul className='text-muted-foreground grid gap-x-6 gap-y-1.5 text-xs leading-relaxed sm:grid-cols-2'>
         <li>
           {t(
-            'This endpoint implements the MiniMax V2 request shape on the AutoDL workflow backend. Submit returns HTTP 200 with task_id; the gateway polls AutoDL in the background, and authenticated querying remains available.'
+            'This endpoint supports the implemented MiniMax V2-compatible subset. Submit returns HTTP 200 with task_id; processing continues in the background, and authenticated querying remains available.'
           )}
         </li>
         <li>
@@ -756,7 +756,7 @@ function MiniMaxVideoContractNotice() {
         </li>
         <li>
           {t(
-            '2K, adaptive ratio, first_frame, last_frame, reference_video, and aigc_watermark=true are not supported by this AutoDL backend.'
+            'The current implementation does not support 2K, adaptive ratio, first_frame, last_frame, reference_video, or aigc_watermark=true.'
           )}
         </li>
         <li>

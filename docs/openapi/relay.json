@@ -454,7 +454,7 @@
       "post": {
         "summary": "创建 MiniMax-H3 视频任务",
         "deprecated": false,
-        "description": "使用 MiniMax V2 兼容请求创建异步视频任务。当前 AutoDL 通道只支持 MiniMax-H3 的受限子集：768P、4～15 秒、显式画幅比例，以及文生视频、参考图、参考图加参考音频。可选 callback_url 会在创建时通过 challenge 校验，并在网关后台轮询 AutoDL 后只推送终态结果。按请求中的 duration 秒数计费。",
+        "description": "使用 MiniMax V2 兼容请求创建异步视频任务。当前兼容接口只支持 MiniMax-H3 的受限子集：768P、4～15 秒、显式画幅比例，以及文生视频、参考图、参考图加参考音频。可选 callback_url 会在创建时通过 challenge 校验，并在后台处理完成后只推送终态结果。按请求中的 duration 秒数计费。",
         "operationId": "createMiniMaxH3Video",
         "tags": [
           "视频生成/MiniMax V2"
@@ -532,7 +532,7 @@
             "{$request.body#/callback_url}": {
               "post": {
                 "summary": "校验回调地址或推送终态结果",
-                "description": "创建时先 POST challenge，接收器必须在 3 秒内以 2xx JSON 原样回显 challenge。challenge 受用户和 API Key 双重限流及全局并发保护，超限时创建接口返回 429 和 Retry-After。校验成功后，网关在后台轮询 AutoDL，并只在任务进入 succeeded、failed 或 cancelled 终态时推送与查询接口完全相同的请求体，不推送 queued 或 running 变化。终态投递为至少一次；重定向、非 2xx、网络错误和超时按 30/60/120/240 秒退避，最多尝试 5 次。不发送回调签名；投递失败不影响任务状态或计费，认证查询接口在 7 天内可作为回退。",
+                "description": "创建时先 POST challenge，接收器必须在 3 秒内以 2xx JSON 原样回显 challenge。challenge 受用户和 API Key 双重限流及全局并发保护，超限时创建接口返回 429 和 Retry-After。校验成功后，任务在后台处理，并只在进入 succeeded、failed 或 cancelled 终态时推送与查询接口完全相同的请求体，不推送 queued 或 running 变化。终态投递为至少一次；重定向、非 2xx、网络错误和超时按 30/60/120/240 秒退避，最多尝试 5 次。不发送回调签名；投递失败不影响任务状态或计费，认证查询接口在 7 天内可作为回退。",
                 "parameters": [
                   {
                     "name": "X-Webhook-Delivery-Id",
@@ -659,7 +659,7 @@
       "get": {
         "summary": "查询 MiniMax-H3 视频任务",
         "deprecated": false,
-        "description": "查询当前用户最近 7 天内的任务。queued、running 为进行中；succeeded、failed、cancelled 为终态。成功时 content.url 包含 HTTPS 视频地址。",
+        "description": "查询当前用户最近 7 天内的任务。queued、running 为进行中；succeeded、failed、cancelled 为终态。成功时 content.url 包含经过网关代理的 HTTPS 视频地址，下载时需携带同一用户的 Bearer Token。",
         "operationId": "getMiniMaxH3VideoTask",
         "tags": [
           "视频生成/MiniMax V2"
@@ -2174,7 +2174,7 @@
             }
           },
           "502": {
-            "description": "indextts2-v1 上游任务失败，或生成结果不是可安全返回的 WAV 音频。",
+            "description": "indextts2-v1 生成任务失败，或生成结果不是可安全返回的 WAV 音频。",
             "content": {
               "application/json": {
                 "schema": {
@@ -2897,7 +2897,7 @@
             "enum": [
               "768P"
             ],
-            "description": "当前 AutoDL 通道仅支持 768P，不支持 2K。"
+            "description": "当前兼容接口仅支持 768P，不支持 2K。"
           },
           "duration": {
             "type": "integer",
@@ -2926,7 +2926,7 @@
             "type": "string",
             "format": "uri",
             "maxLength": 2048,
-            "description": "可选的公网 HTTPS URL。创建时网关先 POST {\"challenge\":\"...\"}，接收器必须在 3 秒内以 2xx JSON 原样回显 challenge；challenge 超限时创建接口返回 429 和 Retry-After。通过后网关提交并后台轮询 AutoDL，只推送 succeeded、failed 或 cancelled 终态。终态请求体与查询响应相同。"
+            "description": "可选的公网 HTTPS URL。创建时网关先 POST {\"challenge\":\"...\"}，接收器必须在 3 秒内以 2xx JSON 原样回显 challenge；challenge 超限时创建接口返回 429 和 Retry-After。通过后任务在后台处理，只推送 succeeded、failed 或 cancelled 终态。终态请求体与查询响应相同。"
           }
         },
         "description": "请求 JSON 最大 64 MiB。callback_url 可选，最长 2048 个字符；它只接收终态回调，查询接口仍可在 7 天内使用。"
@@ -3172,7 +3172,7 @@
           "url": {
             "type": "string",
             "format": "uri",
-            "description": "任务成功后的 HTTPS 视频地址。"
+            "description": "任务成功后经过网关代理的 HTTPS 视频地址；下载时需携带同一用户的 Bearer Token。"
           }
         }
       },
@@ -5820,7 +5820,7 @@
         }
       },
       "MiniMaxH3Unprocessable": {
-        "description": "AutoDL 明确拒绝任务提交",
+        "description": "生成服务明确拒绝任务提交",
         "content": {
           "application/json": {
             "schema": {
@@ -5850,7 +5850,7 @@
         }
       },
       "MiniMaxH3BadGateway": {
-        "description": "上游服务响应异常",
+        "description": "生成服务响应异常",
         "content": {
           "application/json": {
             "schema": {

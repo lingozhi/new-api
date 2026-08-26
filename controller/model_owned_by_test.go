@@ -40,9 +40,15 @@ func TestChannelOwnerNameUsesAdaptorChannelName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.expected, channelOwnerName(tt.channelType))
+			require.Equal(t, tt.expected, channelOwnerName(tt.channelType, "test-model"))
 		})
 	}
+}
+
+func TestChannelOwnerNameHidesWorkflowProvider(t *testing.T) {
+	require.Equal(t, "minimax", channelOwnerName(constant.ChannelTypeAutoDL, constant.AutoDLModelMiniMaxH3))
+	require.Equal(t, "indextts", channelOwnerName(constant.ChannelTypeAutoDL, constant.AutoDLModelIndexTTS2))
+	require.Equal(t, "custom", channelOwnerName(constant.ChannelTypeAutoDL, "custom-workflow-model"))
 }
 
 func TestBuildOpenAIModelOverridesOwnedBy(t *testing.T) {

@@ -305,7 +305,8 @@ func TestBuildWorkflowRequestRejectsFirstAndLastFramesWithoutAdaptiveRatioSuppor
 	)
 
 	_, _, _, err := buildWorkflowRequest(request)
-	require.ErrorContains(t, err, "cannot preserve MiniMax V2 adaptive aspect-ratio semantics")
+	require.ErrorContains(t, err, "first_frame and last_frame inputs are not supported")
+	assert.NotContains(t, strings.ToLower(err.Error()), "autodl")
 }
 
 func TestBuildWorkflowRequestSelectsReferenceMediaWorkflowByDuration(t *testing.T) {
@@ -405,12 +406,12 @@ func TestBuildWorkflowRequestRejectsUnsupportedMiniMaxCapabilities(t *testing.T)
 		{
 			name:      "single first frame",
 			request:   newMiniMaxRequest(6, "16:9", textContent("Start here"), imageContent(miniMaxRoleFirstFrame, "https://cdn.example.com/first.png")),
-			wantError: "cannot preserve MiniMax V2 adaptive aspect-ratio semantics",
+			wantError: "first_frame and last_frame inputs are not supported",
 		},
 		{
 			name:      "adaptive reference ratio",
 			request:   newMiniMaxRequest(6, "adaptive", textContent("Animate this"), imageContent(miniMaxRoleReferenceImage, "https://cdn.example.com/reference.png")),
-			wantError: "explicit non-adaptive ratio",
+			wantError: "ratio must be explicit",
 		},
 		{
 			name: "omitted reference ratio",
@@ -419,12 +420,12 @@ func TestBuildWorkflowRequestRejectsUnsupportedMiniMaxCapabilities(t *testing.T)
 				request.Ratio = nil
 				return request
 			}(),
-			wantError: "explicit non-adaptive ratio",
+			wantError: "ratio must be explicit",
 		},
 		{
 			name:      "unsupported ratio",
 			request:   newMiniMaxRequest(6, "4:3", textContent("A city skyline")),
-			wantError: "ratio is not available",
+			wantError: "ratio is not supported at 768P",
 		},
 		{
 			name:      "duration above billing boundary",
@@ -451,6 +452,7 @@ func TestBuildWorkflowRequestRejectsUnsupportedMiniMaxCapabilities(t *testing.T)
 		t.Run(test.name, func(t *testing.T) {
 			_, _, _, err := buildWorkflowRequest(test.request)
 			require.ErrorContains(t, err, test.wantError)
+			assert.NotContains(t, strings.ToLower(err.Error()), "autodl")
 		})
 	}
 }
@@ -587,7 +589,7 @@ func TestTaskAdaptorClassifiesNonSuccessJSONBySubmissionCertainty(t *testing.T) 
 		body     string
 		wantCode string
 	}{
-		{name: "known rejection without task id", body: `{"code":"InvalidParameter","data":{}}`, wantCode: "autodl_submission_rejected"},
+		{name: "known rejection without task id", body: `{"code":"InvalidParameter","data":{}}`, wantCode: "generation_submission_rejected"},
 		{name: "empty code", body: `{}`, wantCode: "invalid_upstream_response"},
 		{name: "unknown code", body: `{"code":"Error","data":{}}`, wantCode: "invalid_upstream_response"},
 		{name: "task id makes outcome ambiguous", body: `{"code":"InvalidParameter","data":{"task_id":"possibly-created"}}`, wantCode: "invalid_upstream_response"},
@@ -635,13 +637,13 @@ func TestTaskAdaptorMapsAutoDLTaskStatuses(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusFailure, failed.Status)
 	assert.Equal(t, taskcommon.ProgressComplete, failed.Progress)
-	assert.Equal(t, "AutoDL task failed", failed.Reason)
+	assert.Equal(t, "Generation task failed", failed.Reason)
 
 	cancelled, err := adaptor.ParseTaskResult([]byte(`{"code":"Success","data":{"task_id":"upstream-task","status":"CANCELLED"}}`))
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusFailure, cancelled.Status)
 	assert.Equal(t, taskcommon.ProgressComplete, cancelled.Progress)
-	assert.Equal(t, "AutoDL task cancelled", cancelled.Reason)
+	assert.Equal(t, "Generation task cancelled", cancelled.Reason)
 }
 
 func TestTaskAdaptorRejectsSuccessfulResultWithoutVideoMetadata(t *testing.T) {
@@ -733,20 +735,21 @@ func TestTaskAdaptorConvertsTaskToMiniMaxVideoV2Response(t *testing.T) {
 		assert.Equal(t, "generation", response.Task.TaskType)
 		assert.Equal(t, "video", response.Task.Modality)
 		require.NotNil(t, response.Task.Content)
-		assert.Equal(t, "https://cdn.example.com/result.mp4", response.Task.Content.URL)
+		assert.Equal(t, taskcommon.BuildProxyURL(task.TaskID), response.Task.Content.URL)
+		assert.NotContains(t, response.Task.Content.URL, "cdn.example.com")
 		require.NotNil(t, response.Task.Usage)
 		assert.Equal(t, 12, response.Task.Usage.TotalSeconds)
 		assert.Equal(t, 12, response.Task.Usage.OutputSeconds)
 		assert.Equal(t, 2, response.Task.Usage.InputImageCount)
 	})
 
-	t.Run("failed task", func(t *testing.T) {
+	t.Run("failed task hides provider details", func(t *testing.T) {
 		task := &model.Task{
 			SubmitTime: 100,
 			TaskID:     "task_failed",
 			Action:     constant.TaskActionVideoGenerationV2,
 			Status:     model.TaskStatusFailure,
-			FailReason: "provider rejected the prompt",
+			FailReason: "provider.example rejected the prompt",
 			Properties: model.Properties{OriginModelName: "MiniMax-H3"},
 		}
 
@@ -757,9 +760,29 @@ func TestTaskAdaptorConvertsTaskToMiniMaxVideoV2Response(t *testing.T) {
 		assert.Equal(t, "failed", response.Task.Status)
 		require.NotNil(t, response.Task.Error)
 		assert.Equal(t, "generation_failed", response.Task.Error.Code)
-		assert.Equal(t, "provider rejected the prompt", response.Task.Error.Message)
+		assert.Equal(t, "Video generation failed", response.Task.Error.Message)
+		assert.NotContains(t, string(data), "provider.example")
 		assert.Nil(t, response.Task.Content)
 		assert.Nil(t, response.Task.Usage)
+	})
+
+	t.Run("historical provider failure is redacted", func(t *testing.T) {
+		task := &model.Task{
+			SubmitTime: 100,
+			TaskID:     "task_failed_legacy",
+			Action:     constant.TaskActionVideoGenerationV2,
+			Status:     model.TaskStatusFailure,
+			FailReason: "AutoDL task failed with internal routing detail",
+			Properties: model.Properties{OriginModelName: "MiniMax-H3"},
+		}
+
+		data, err := adaptor.ConvertToMiniMaxVideoV2(task)
+		require.NoError(t, err)
+		var response dto.MiniMaxVideoGenerationV2QueryResponse
+		require.NoError(t, common.Unmarshal(data, &response))
+		require.NotNil(t, response.Task.Error)
+		assert.Equal(t, "Video generation failed", response.Task.Error.Message)
+		assert.NotContains(t, strings.ToLower(string(data)), "autodl")
 	})
 
 	t.Run("cancelled task", func(t *testing.T) {

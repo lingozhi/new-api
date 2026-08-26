@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -92,4 +93,20 @@ func TestRespondTaskErrorDoesNotExposeInternalDatabaseDetails(t *testing.T) {
 	assert.Equal(t, "Internal Server Error", response.Error.Message)
 	assert.NotContains(t, recorder.Body.String(), "tasks")
 	assert.NotContains(t, recorder.Body.String(), "database-secret")
+}
+
+func TestRespondTaskErrorDoesNotExposeWorkflowProvider(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v2/video_generation", nil)
+
+	respondTaskError(c, &dto.TaskError{
+		Message:    "AutoDL rejected the workflow submission",
+		StatusCode: http.StatusUnprocessableEntity,
+	})
+
+	assert.Equal(t, http.StatusUnprocessableEntity, recorder.Code)
+	assert.NotContains(t, strings.ToLower(recorder.Body.String()), "autodl")
+	assert.Contains(t, recorder.Body.String(), "Video generation request failed")
 }

@@ -63,7 +63,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		c.Request.URL.Path == constant.AutoDLAudioSpeechPath
 	if c.Request.Method != http.MethodPost || !isSupportedPath {
 		return service.TaskErrorWrapperLocal(
-			errors.New("AutoDL model is not available on this endpoint"),
+			errors.New("this model is not available on this endpoint"),
 			"unsupported_endpoint",
 			http.StatusBadRequest,
 		)
@@ -168,7 +168,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		if value, exists := common.GetContextKey(c, constant.ContextKeyValidatedAutoDLAudioRequest); exists && value != nil {
 			cached, ok := value.(*dto.AudioRequest)
 			if !ok || cached == nil {
-				return service.TaskErrorWrapperLocal(errors.New("cached AutoDL audio request is invalid"), "invalid_request", http.StatusBadRequest)
+				return service.TaskErrorWrapperLocal(errors.New("cached audio request is invalid"), "invalid_request", http.StatusBadRequest)
 			}
 			request = *cached
 		} else if err := common.UnmarshalBodyReusable(c, &request); err != nil {
@@ -196,7 +196,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return nil
 	default:
 		return service.TaskErrorWrapperLocal(
-			errors.New("AutoDL model is not available on this endpoint"),
+			errors.New("this model is not available on this endpoint"),
 			"unsupported_endpoint",
 			http.StatusBadRequest,
 		)
@@ -286,8 +286,8 @@ func (a *TaskAdaptor) DoResponse(_ *gin.Context, resp *http.Response, _ *relayco
 	if !strings.EqualFold(strings.TrimSpace(workflowResp.Code), "Success") {
 		if strings.TrimSpace(workflowResp.Data.TaskID) == "" && autoDLSubmissionCodeIsDefinitive(workflowResp.Code) {
 			return "", nil, service.TaskErrorWrapper(
-				errors.New("AutoDL rejected the workflow submission"),
-				"autodl_submission_rejected",
+				errors.New("generation request was rejected"),
+				"generation_submission_rejected",
 				http.StatusUnprocessableEntity,
 			)
 		}
@@ -431,7 +431,7 @@ func (a *TaskAdaptor) ParseTaskResultForAction(respBody []byte, action string) (
 				}
 				videoURL, _, err := validateMediaURL(output.URL, mediaKindImage, 0)
 				if err != nil || strings.HasPrefix(strings.ToLower(strings.TrimSpace(videoURL)), "data:") {
-					return nil, &taskPollError{message: "AutoDL returned an unsafe video URL"}
+					return nil, &taskPollError{message: "generation service returned an unsafe video URL"}
 				}
 				result.Url = videoURL
 				break
@@ -448,25 +448,25 @@ func (a *TaskAdaptor) ParseTaskResultForAction(respBody []byte, action string) (
 			}
 			audioURL, _, err := validateMediaURL(output.URL, mediaKindAudio, 0)
 			if err != nil || strings.HasPrefix(strings.ToLower(strings.TrimSpace(audioURL)), "data:") {
-				return nil, &taskPollError{message: "AutoDL returned an unsafe audio URL"}
+				return nil, &taskPollError{message: "generation service returned an unsafe audio URL"}
 			}
 			result.Url = audioURL
 			break
 		}
 		if result.Url == "" {
 			if action == constant.TaskActionAudioSpeech {
-				return nil, &taskPollError{message: "AutoDL task succeeded without an expected audio result"}
+				return nil, &taskPollError{message: "generation task succeeded without an expected audio result"}
 			}
-			return nil, &taskPollError{message: "AutoDL task succeeded without a video result"}
+			return nil, &taskPollError{message: "generation task succeeded without a video result"}
 		}
 	case "CANCELLED":
 		result.Status = model.TaskStatusFailure
 		result.Progress = taskcommon.ProgressComplete
-		result.Reason = "AutoDL task cancelled"
+		result.Reason = "Generation task cancelled"
 	case autoDLStatusFailed, autoDLStatusFailure, "FAIL", "ERROR":
 		result.Status = model.TaskStatusFailure
 		result.Progress = taskcommon.ProgressComplete
-		result.Reason = "AutoDL task failed"
+		result.Reason = "Generation task failed"
 	default:
 		return nil, &taskPollError{message: "AutoDL returned an unknown task status", temporary: true}
 	}
@@ -523,7 +523,7 @@ func (a *TaskAdaptor) ValidateTaskSuccess(ctx context.Context, task *model.Task,
 		return nil
 	}
 	if result == nil || strings.TrimSpace(result.Url) == "" {
-		return &taskPollError{message: "AutoDL task succeeded without an audio result"}
+		return &taskPollError{message: "generation task succeeded without an audio result"}
 	}
 	storage, err := service.FetchValidatedWAV(ctx, result.Url, service.MaxGeneratedWAVBytes)
 	if err != nil {
@@ -612,17 +612,13 @@ func (a *TaskAdaptor) buildMiniMaxVideoV2Response(originTask *model.Task) (dto.M
 		if err != nil || strings.HasPrefix(strings.ToLower(validatedURL), "data:") {
 			return dto.MiniMaxVideoGenerationV2QueryResponse{}, errors.New("successful AutoDL task has no valid HTTPS video result")
 		}
-		videoTask.Content = &dto.MiniMaxVideoTaskOutput{URL: validatedURL}
+		videoTask.Content = &dto.MiniMaxVideoTaskOutput{URL: taskcommon.BuildProxyURL(originTask.TaskID)}
 	}
 	if originTask.Status == model.TaskStatusFailure {
 		if videoTask.Status != "cancelled" {
-			message := strings.TrimSpace(originTask.FailReason)
-			if message == "" {
-				message = "AutoDL task failed"
-			}
 			videoTask.Error = &dto.MiniMaxVideoTaskError{
 				Code:    "generation_failed",
-				Message: message,
+				Message: "Video generation failed",
 			}
 		}
 	}
@@ -641,7 +637,7 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 		return "", nil, nil, errors.New("resolution is invalid")
 	}
 	if *request.Resolution != "768P" {
-		return "", nil, nil, errors.New("AutoDL MiniMax-H3 supports resolution 768P only")
+		return "", nil, nil, errors.New("MiniMax-H3 supports resolution 768P only")
 	}
 	if request.Duration == nil {
 		return "", nil, nil, errors.New("duration is required")
@@ -650,7 +646,7 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 		return "", nil, nil, errors.New("duration must be an integer between 4 and 15")
 	}
 	if request.AIGCWatermark != nil && *request.AIGCWatermark {
-		return "", nil, nil, errors.New("aigc_watermark=true is not supported by the AutoDL workflow backend")
+		return "", nil, nil, errors.New("aigc_watermark=true is not supported")
 	}
 
 	content, err := summarizeContent(request.Content)
@@ -666,7 +662,7 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 		ratio = strings.TrimSpace(*request.Ratio)
 	}
 	if ratio == "" || ratio == "adaptive" {
-		return "", nil, nil, errors.New("AutoDL workflows require an explicit non-adaptive ratio because they cannot infer the input media aspect ratio")
+		return "", nil, nil, errors.New("ratio must be explicit; adaptive is not supported")
 	}
 	workflowID := ""
 	supportsSquare := false
@@ -678,10 +674,10 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 
 	switch {
 	case content.FirstFrame != "" || content.LastFrame != "":
-		return "", nil, nil, errors.New("first_frame and last_frame inputs are not supported because the AutoDL workflow cannot preserve MiniMax V2 adaptive aspect-ratio semantics")
+		return "", nil, nil, errors.New("first_frame and last_frame inputs are not supported")
 	case len(content.ReferenceAudios) > 0:
 		if len(content.ReferenceImages) == 0 {
-			return "", nil, nil, errors.New("reference_audio requires at least one reference_image for the AutoDL workflow")
+			return "", nil, nil, errors.New("reference_audio requires at least one reference_image")
 		}
 		maxPromptLength = 10_000
 		if *request.Duration > 10 {
@@ -712,7 +708,7 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 		maxPromptLength = 200_000
 	}
 	if utf8.RuneCountInString(content.Prompt) > maxPromptLength {
-		return "", nil, nil, fmt.Errorf("combined text content exceeds the selected AutoDL workflow limit of %d characters", maxPromptLength)
+		return "", nil, nil, fmt.Errorf("combined text content exceeds the selected workflow limit of %d characters", maxPromptLength)
 	}
 
 	resolution, actualRatio, err := mapResolution(ratio, supportsSquare)
@@ -795,7 +791,7 @@ func summarizeContent(items []dto.MiniMaxVideoContentItem) (contentSummary, erro
 			if item.Role != miniMaxRoleReferenceVideo {
 				return contentSummary{}, errors.New("video_url role must be reference_video")
 			}
-			return contentSummary{}, errors.New("reference_video is not supported by the AutoDL workflow backend")
+			return contentSummary{}, errors.New("reference_video is not supported")
 		default:
 			return contentSummary{}, errors.New("content item type is unsupported")
 		}
@@ -837,9 +833,9 @@ func mapResolution(ratio string, supportsSquare bool) (string, string, error) {
 		if supportsSquare {
 			return "768p(1:1)", "1:1", nil
 		}
-		return "", "", errors.New("ratio 1:1 is not supported for this AutoDL workflow")
+		return "", "", errors.New("ratio 1:1 is not supported when reference_audio is used")
 	case "21:9", "4:3", "3:4":
-		return "", "", errors.New("ratio is not available in the AutoDL 768P workflows")
+		return "", "", errors.New("ratio is not supported at 768P")
 	default:
 		return "", "", errors.New("ratio is invalid")
 	}

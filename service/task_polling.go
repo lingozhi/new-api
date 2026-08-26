@@ -157,7 +157,7 @@ func sweepStaleTaskSubmissionReservations(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		applied, err := model.RefundTaskBillingReservation(taskID, "AutoDL 视频提交未开始，已退款")
+		applied, err := model.RefundTaskBillingReservation(taskID, "视频生成任务提交未开始，已退款")
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("sweep stale AutoDL submission reservation %s: %v", taskID, err))
 			continue
@@ -178,7 +178,7 @@ func sweepPendingTaskSubmissionRefunds(ctx context.Context) {
 	for _, task := range tasks {
 		reason := task.ProviderError
 		if reason == "" {
-			reason = "AutoDL video submission was rejected"
+			reason = "Generation request was rejected"
 		}
 		if err := failTasksWithRefund(ctx, []*model.Task{task}, reason); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("retry rejected AutoDL submission refund for task %s: %v", task.TaskID, err))
@@ -198,7 +198,7 @@ func sweepStaleTaskSubmissionCheckpoints(ctx context.Context) {
 	if len(tasks) == 0 {
 		return
 	}
-	reason := "AutoDL 视频提交结果不确定，已停止重试；为避免重复生成未自动退款"
+	reason := "视频生成任务提交结果不确定，已停止重试；为避免重复生成未自动退款"
 	if err := failTasksWithoutRefund(ctx, tasks, reason); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("sweep stale AutoDL submission checkpoints: %v", err))
 		return
@@ -236,7 +236,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 		if isLegacy {
 			task.FailReason = legacyReason
 		} else if isAmbiguousAutoDL {
-			task.FailReason = fmt.Sprintf("AutoDL 任务轮询超时（%d分钟）；上游结果不确定，未自动退款", constant.TaskTimeoutMinutes)
+			task.FailReason = fmt.Sprintf("视频生成任务轮询超时（%d分钟）；服务端结果不确定，未自动退款", constant.TaskTimeoutMinutes)
 		} else {
 			task.FailReason = reason
 		}
@@ -355,7 +355,7 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 				}
 			}
 			err := failTasksWithRefund(ctx, refundableTasks, "upstream task id is missing")
-			err = errors.Join(err, failTasksWithoutRefund(ctx, ambiguousAutoDLTasks, "AutoDL upstream task id is missing; no automatic refund was issued"))
+			err = errors.Join(err, failTasksWithoutRefund(ctx, ambiguousAutoDLTasks, "Generation task id is missing; no automatic refund was issued"))
 			if err != nil {
 				logger.LogError(ctx, fmt.Sprintf("Fix null task_id task error: %v", err))
 				runErr = errors.Join(runErr, fmt.Errorf("fail tasks without upstream IDs for platform %s: %w", platform, err))

@@ -104,7 +104,7 @@ func validateMediaURL(value, mediaKind string, currentDataBytes int) (string, in
 		return validateMediaDataURI(value, mediaKind, currentDataBytes)
 	}
 	if len(value) >= len("mm_file:") && strings.EqualFold(value[:len("mm_file:")], "mm_file:") {
-		return "", currentDataBytes, errors.New("mm_file URLs cannot be resolved by AutoDL")
+		return "", currentDataBytes, errors.New("mm_file URLs are not supported")
 	}
 
 	parsed, err := url.ParseRequestURI(value)

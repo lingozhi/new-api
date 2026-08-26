@@ -118,7 +118,17 @@ func init() {
 	})
 }
 
-func channelOwnerName(channelType int) string {
+func channelOwnerName(channelType int, modelName string) string {
+	if channelType == constant.ChannelTypeAutoDL {
+		switch modelName {
+		case constant.AutoDLModelMiniMaxH3:
+			return minimax.ChannelName
+		case constant.AutoDLModelIndexTTS2:
+			return "indextts"
+		default:
+			return "custom"
+		}
+	}
 	apiType, success := common.ChannelType2APIType(channelType)
 	if !success {
 		return strings.ToLower(constant.GetChannelTypeName(channelType))
@@ -146,9 +156,13 @@ func getPreferredModelOwners(modelNames []string, groups []string) map[string]st
 	ownerByChannelType := make(map[int]string)
 	owners := make(map[string]string, len(channelTypes))
 	for modelName, channelType := range channelTypes {
+		if channelType == constant.ChannelTypeAutoDL {
+			owners[modelName] = channelOwnerName(channelType, modelName)
+			continue
+		}
 		owner, ok := ownerByChannelType[channelType]
 		if !ok {
-			owner = channelOwnerName(channelType)
+			owner = channelOwnerName(channelType, modelName)
 			ownerByChannelType[channelType] = owner
 		}
 		if owner != "" {

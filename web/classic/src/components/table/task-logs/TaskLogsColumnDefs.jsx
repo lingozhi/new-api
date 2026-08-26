@@ -161,6 +161,18 @@ const renderPlatform = (platform, t) => {
           Suno
         </Tag>
       );
+    case 'minimax':
+      return (
+        <Tag color='orange' shape='circle'>
+          MiniMax
+        </Tag>
+      );
+    case 'indextts':
+      return (
+        <Tag color='purple' shape='circle'>
+          IndexTTS
+        </Tag>
+      );
     default:
       return (
         <Tag color='white' shape='circle'>

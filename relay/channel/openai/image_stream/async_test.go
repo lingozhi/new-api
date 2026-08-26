@@ -2588,6 +2588,8 @@ func TestDeliverDueImageWebhooksUsesMiniMaxQueryPayload(t *testing.T) {
 		require.NoError(t, err)
 		assert.JSONEq(t, string(expected), string(actual))
 		assert.NotContains(t, string(actual), `"task_id"`)
+		assert.NotContains(t, string(actual), "cdn.example.com")
+		assert.NotContains(t, strings.ToLower(string(actual)), "autodl")
 		return nil
 	}
 	t.Cleanup(func() { sendAsyncImageWebhook = previousSender })

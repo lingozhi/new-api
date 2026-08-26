@@ -223,7 +223,7 @@ describe('MiniMax-H3 video V2 API documentation', () => {
     assert.doesNotMatch(sample, /BODY_FILE="minimax-video\.json"/)
   })
 
-  test('AI guide identifies the implemented subset instead of claiming full upstream support', () => {
+  test('AI guide identifies the implemented subset without exposing implementation providers', () => {
     const guide = buildMiniMaxVideoAiIntegrationGuide(context)
 
     assert.match(
@@ -257,6 +257,13 @@ describe('MiniMax-H3 video V2 API documentation', () => {
     assert.match(guide, /at least once/)
     assert.match(guide, /No callback signature is sent/)
     assert.match(guide, /does not change task status or billing/)
+    assert.doesNotMatch(guide, /AutoDL/i)
+    assert.doesNotMatch(
+      buildMiniMaxVideoParameters('MiniMax-H3')
+        .map((parameter) => parameter.descriptionKey)
+        .join('\n'),
+      /AutoDL/i
+    )
   })
 
   test('uses per-second pricing and hides synthetic performance data', () => {

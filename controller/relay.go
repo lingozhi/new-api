@@ -1537,7 +1537,7 @@ func RelayTask(c *gin.Context) {
 		if checkpointTask != nil {
 			switch checkpointTask.Status {
 			case model.TaskStatusReserving:
-				if _, err := model.RefundTaskBillingReservation(checkpointTask.TaskID, "AutoDL workflow submission did not start"); err != nil {
+				if _, err := model.RefundTaskBillingReservation(checkpointTask.TaskID, "generation task submission did not start"); err != nil {
 					common.SysError(fmt.Sprintf("refund AutoDL submission reservation: task_id=%s channel_id=%d error=%v", checkpointTask.TaskID, checkpointTask.ChannelId, err))
 				}
 			}
@@ -1810,7 +1810,7 @@ func RelayTask(c *gin.Context) {
 		checkpointTask.Status == model.TaskStatusCheckpointPending &&
 		autoDLSubmissionWasExplicitlyRejected(taskErr)
 	if submissionExplicitlyRejected {
-		const rejectionReason = "AutoDL workflow submission was rejected"
+		const rejectionReason = "Generation request was rejected"
 		marked, markErr := checkpointTask.MarkSubmissionRejected(rejectionReason)
 		if markErr == nil && marked {
 			if refundErr := service.FailTaskWithRefund(context.WithoutCancel(c.Request.Context()), checkpointTask, rejectionReason); refundErr != nil {
@@ -1886,7 +1886,7 @@ func autoDLSubmissionWasExplicitlyRejected(taskErr *dto.TaskError) bool {
 		return false
 	}
 	switch taskErr.Code {
-	case "autodl_submission_rejected":
+	case "generation_submission_rejected":
 		return true
 	case "fail_to_fetch_task":
 		// AutoDL does not publish a blanket guarantee for custom 4xx statuses.
@@ -1945,6 +1945,12 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 			statusCode = http.StatusPaymentRequired
 		}
 		message := taskErr.Message
+		if strings.Contains(strings.ToLower(message), "autodl") {
+			message = "Video generation request failed"
+		}
+		if statusCode == http.StatusTooManyRequests {
+			message = "Video generation service is busy; please try again later"
+		}
 		if statusCode >= http.StatusInternalServerError {
 			logger.LogError(c, fmt.Sprintf(
 				"MiniMax V2 internal error: status=%d code=%s detail=%s",

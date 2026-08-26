@@ -179,6 +179,7 @@ func TestIndexTTS2ValidatesOpenAISpeechCompatibility(t *testing.T) {
 			require.NotNil(t, taskErr)
 			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 			assert.Contains(t, strings.ToLower(taskErr.Message), strings.ToLower(test.wantError))
+			assert.NotContains(t, strings.ToLower(taskErr.Message), "autodl")
 		})
 	}
 }

@@ -93,7 +93,7 @@ func TestAutoDLSubmissionRefundDecisionMatchesUpstreamHTTPContract(t *testing.T)
 		{name: "local lookalike cannot prove rejection", code: "fail_to_fetch_task", statusCode: http.StatusBadRequest, local: true},
 		{name: "response read failure is ambiguous", code: "read_upstream_error_failed", statusCode: http.StatusBadGateway},
 		{name: "malformed success response is ambiguous", code: "invalid_upstream_response", statusCode: http.StatusBadGateway},
-		{name: "application parameter rejection", code: "autodl_submission_rejected", statusCode: http.StatusUnprocessableEntity, wantRefund: true},
+		{name: "application parameter rejection", code: "generation_submission_rejected", statusCode: http.StatusUnprocessableEntity, wantRefund: true},
 		{name: "nil error is ambiguous"},
 	}
 

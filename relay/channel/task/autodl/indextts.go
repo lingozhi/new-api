@@ -38,17 +38,17 @@ func buildIndexTTSWorkflowRequest(request *dto.AudioRequest) (string, map[string
 		return "", nil, errors.New("input must contain between 1 and 2048 characters")
 	}
 	if strings.TrimSpace(request.Instructions) != "" {
-		return "", nil, errors.New("instructions are not supported by AutoDL IndexTTS2")
+		return "", nil, errors.New("instructions are not supported by indextts2-v1")
 	}
 	responseFormat := strings.ToLower(strings.TrimSpace(request.ResponseFormat))
 	if responseFormat != "" && responseFormat != "wav" {
 		return "", nil, errors.New("response_format must be wav")
 	}
 	if request.Speed != nil && *request.Speed != 1 {
-		return "", nil, errors.New("speed must be 1 for AutoDL IndexTTS2")
+		return "", nil, errors.New("speed must be 1 for indextts2-v1")
 	}
 	if strings.EqualFold(strings.TrimSpace(request.StreamFormat), "sse") {
-		return "", nil, errors.New("SSE streaming is not supported by AutoDL IndexTTS2")
+		return "", nil, errors.New("SSE streaming is not supported by indextts2-v1")
 	}
 
 	voice, totalDataBytes, err := validateMediaURL(request.Voice, mediaKindAudio, 0)

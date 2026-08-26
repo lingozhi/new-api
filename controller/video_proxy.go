@@ -208,6 +208,11 @@ func VideoProxy(c *gin.Context) {
 
 	if resp.StatusCode != http.StatusOK {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Video upstream returned status %d for task %s", resp.StatusCode, taskID))
+		if isAutoDLTask {
+			videoProxyError(c, http.StatusBadGateway, "server_error",
+				fmt.Sprintf("Video service returned status %d", resp.StatusCode))
+			return
+		}
 		videoProxyError(c, http.StatusBadGateway, "server_error",
 			fmt.Sprintf("Upstream service returned status %d", resp.StatusCode))
 		return
@@ -216,7 +221,7 @@ func VideoProxy(c *gin.Context) {
 	contentType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
 	if isAutoDLTask && !strings.HasPrefix(contentType, "video/") && contentType != "application/octet-stream" {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("AutoDL result for task %s returned non-video content type %q", taskID, contentType))
-		videoProxyError(c, http.StatusBadGateway, "server_error", "Upstream did not return video content")
+		videoProxyError(c, http.StatusBadGateway, "server_error", "Video service did not return video content")
 		return
 	}
 

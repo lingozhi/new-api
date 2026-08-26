@@ -2,7 +2,7 @@
 
 `MiniMax-H3` 通过 MiniMax V2 风格的异步接口接入：调用 `POST /v2/video_generation` 创建任务后，可通过 `GET /v2/query/video_generation/{task_id}` 查询状态，也可选择通过 `callback_url` 接收终态结果。
 
-本文描述的是当前 AutoDL 通道实际开放的能力子集，不是 MiniMax 官方接口的完整能力。当前只支持 768P、4～15 秒，以及文生视频、参考图、参考图加参考音频三种工作流；不支持 2K、自适应画幅、首尾帧、参考视频或 AIGC 水印。回调仅在任务进入 `succeeded`、`failed` 或 `cancelled` 终态时发送，不会像 MiniMax 官方完整回调那样逐次推送每个状态变化。
+本文描述的是当前兼容接口实际开放的能力子集，不是 MiniMax 官方接口的完整能力。当前只支持 768P、4～15 秒，以及文生视频、参考图、参考图加参考音频三种工作流；不支持 2K、自适应画幅、首尾帧、参考视频或 AIGC 水印。回调仅在任务进入 `succeeded`、`failed` 或 `cancelled` 终态时发送，不会像 MiniMax 官方完整回调那样逐次推送每个状态变化。
 
 ## 接口概览
 
@@ -23,7 +23,7 @@ Authorization: Bearer sk-your-api-key
 
 ### 请求字段
 
-| 字段 | 类型 | 必填 | 当前 AutoDL 约束 |
+| 字段 | 类型 | 必填 | 当前接口约束 |
 | --- | --- | --- | --- |
 | `model` | string | 是 | 固定为 `MiniMax-H3` |
 | `content` | array | 是 | 1～16 项，必须至少有一条非空 `text` |
@@ -105,7 +105,7 @@ data URI 限制：
 - 一个请求内全部 data URI 解码后合计最大 64 MiB。
 - `mm_file:` 不受支持。
 
-公网 URL 的媒体内容由上游读取；网关不会在本地下载它来验证尺寸或时长。请确保 URL 在任务执行期间保持可访问。
+公网 URL 的媒体内容由生成服务读取；网关不会在本地下载它来验证尺寸或时长。请确保 URL 在任务执行期间保持可访问。
 
 ### `callback_url` 回调
 
@@ -129,7 +129,7 @@ Content-Type: application/json
 {"challenge":"gateway-generated-value"}
 ```
 
-只有 challenge 校验通过后，网关才会向 AutoDL 提交任务，并在后台轮询上游状态。本兼容层只在任务进入 `succeeded`、`failed` 或 `cancelled` 时发送终态回调；不会推送 `queued` 或 `running` 状态变化。终态回调的 JSON 请求体与查询接口当时返回的 `{"task": {...}}` 结构完全相同。
+只有 challenge 校验通过后，网关才会接受任务，并在后台维护任务状态。本兼容层只在任务进入 `succeeded`、`failed` 或 `cancelled` 时发送终态回调；不会推送 `queued` 或 `running` 状态变化。终态回调的 JSON 请求体与查询接口当时返回的 `{"task": {...}}` 结构完全相同。
 
 challenge 请求受用户和 API Key 双重限流，并受全局并发保护。请求过于频繁或当前校验容量已满时，创建接口返回 `429 callback_rate_limit_exceeded`，同时通过 `Retry-After` 响应头给出建议重试秒数；失败的 challenge 尝试也会计入限流。
 
@@ -283,7 +283,7 @@ curl --request GET \
     "created_at": 1787688000,
     "updated_at": 1787688060,
     "content": {
-      "url": "https://media.example.com/result.mp4"
+      "url": "https://api.opwan.ai/v1/videos/task_xxx/content"
     },
     "resolution": "768P",
     "duration": 8,
@@ -299,6 +299,8 @@ curl --request GET \
   }
 }
 ```
+
+`task.content.url` 是经过网关代理的视频地址，不包含生成服务的真实地址。下载时必须携带同一用户的 Bearer Token；请在 7 天查询窗口内保存结果。
 
 失败任务会包含：
 
@@ -443,10 +445,10 @@ else:
 | `402` | 余额不足 |
 | `409` | 幂等键已用于不同请求 |
 | `413` | JSON 请求体超过 64 MiB |
-| `422` | AutoDL 明确拒绝任务提交 |
+| `422` | 生成服务明确拒绝任务提交 |
 | `429` | 请求过于频繁 |
 | `500` | 内部服务错误 |
-| `502` | 上游响应异常 |
+| `502` | 生成服务响应异常 |
 | `503` | 服务暂时不可用 |
 | `529` | 服务过载 |
 

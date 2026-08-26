@@ -64,8 +64,7 @@ export function buildMiniMaxVideoParameters(
       required: true,
       defaultValue: '768P',
       enumValues: ['768P'],
-      descriptionKey:
-        'Output resolution; the AutoDL workflow supports 768P only',
+      descriptionKey: 'Output resolution; only 768P is currently supported',
     },
     {
       name: 'duration',
@@ -96,7 +95,7 @@ export function buildMiniMaxVideoParameters(
       defaultValue: false,
       enumValues: ['false'],
       descriptionKey:
-        'Watermark option reserved by MiniMax V2; true is not supported by this AutoDL backend',
+        'Watermark option reserved by MiniMax V2; the current implementation requires false',
     },
   ]
 }
@@ -481,13 +480,13 @@ export function buildMiniMaxVideoAiIntegrationGuide(
     '- Media accepts a publicly reachable HTTPS URL on the default port or an allowed base64 data URI.',
     '- callback_url is optional. When present, it must be a publicly reachable HTTPS URL of at most 2048 characters.',
     '',
-    '## Unsupported upstream options',
+    '## Unsupported options',
     '- 2K, adaptive, 21:9, 4:3, and 3:4 are unsupported.',
     '- first_frame, last_frame, reference_video, and aigc_watermark=true are unsupported.',
     '',
     '## Optional terminal callback',
-    '- During submission, the gateway sends callback_url a POST with {"challenge":"..."}. The receiver must return a 2xx JSON response containing the identical challenge value within 3 seconds. The task is submitted to AutoDL only after verification succeeds.',
-    '- After verification, the gateway polls AutoDL in the background. This compatibility layer sends callbacks only for terminal succeeded, failed, or cancelled tasks, not for every queued or running transition.',
+    '- During submission, the gateway sends callback_url a POST with {"challenge":"..."}. The receiver must return a 2xx JSON response containing the identical challenge value within 3 seconds. The task is accepted only after verification succeeds.',
+    '- After verification, processing continues in the background. This compatibility layer sends callbacks only for terminal succeeded, failed, or cancelled tasks, not for every queued or running transition.',
     '- The terminal callback body is exactly the same {"task":{...}} response returned by the query endpoint.',
     '- A terminal delivery is acknowledged by any 2xx response. Redirects, non-2xx responses, network errors, and timeouts are retried up to five total attempts, with 30, 60, 120, and 240 second delays after the initial attempt.',
     '- Terminal deliveries include X-Webhook-Delivery-Id and X-Webhook-Timestamp. Delivery is at least once, so deduplicate retries by the stable delivery ID.',
@@ -496,8 +495,8 @@ export function buildMiniMaxVideoAiIntegrationGuide(
     '',
     '## Async task lifecycle',
     '- A successful submit returns HTTP 200 with {"task_id":"task_..."}. It is not an HTTP 202 contract.',
-    '- The gateway polls AutoDL in the background. Clients may poll the query endpoint with the same user token until queued or running becomes succeeded, failed, or cancelled.',
-    '- On success, read task.content.url and store the result promptly because provider URLs can expire.',
+    '- Processing continues in the background. Clients may poll the query endpoint with the same user token until queued or running becomes succeeded, failed, or cancelled.',
+    '- On success, task.content.url is an authenticated gateway URL. Download it with the same user token and store the result promptly.',
     '- Tasks can be queried for seven days after submission.',
     '- Respect Retry-After when present; otherwise wait 15 seconds. Apply a client-side deadline.',
     '',

@@ -107,7 +107,7 @@ curl --request POST "${BASE_URL}/v1/audio/speech" \
 [happy, angry, sad, afraid, disgusted, melancholic, surprised, calm]
 ```
 
-当前上游工作流尚未开放 `surprised`，所以第 7 项必须为 `0`。
+当前实现尚未开放 `surprised`，所以第 7 项必须为 `0`。
 
 `emotion_audio`、`emotion_vector`、`emotion_random: true` 三种控制互斥。`emotion_random: false` 不会启用随机控制，可与另外一种控制同时出现。
 
@@ -192,10 +192,10 @@ POST 在任务已经受理、但生成结果下载触发限流时，也可能直
 | `415` | IndexTTS2 请求不是 `application/json` |
 | `429` | 触发提交、任务读取、下载或模型请求限流；若带 `Location`，按已受理任务恢复 |
 | `500` | 幂等处理、任务存储或查询等内部服务失败 |
-| `502` | 上游任务失败，或结果不是可安全返回的有效 WAV |
+| `502` | 生成任务失败，或结果不是可安全返回的有效 WAV |
 
 ## 计费
 
-`indextts2-v1` 按成功提交的任务次数计费，当前单价以模型广场展示为准。幂等重放不会再次计费。请求校验失败不会提交任务；上游已经受理后的任务失败不会退回按次费用。
+`indextts2-v1` 按成功提交的任务次数计费，当前单价以模型广场展示为准。幂等重放不会再次计费。请求校验失败不会提交任务；服务已经受理后的任务失败不会退回按次费用。
 
 完整机器可读定义见 [`docs/openapi/relay.json`](openapi/relay.json) 中的 `/v1/audio/speech` 与 `/v1/audio/speech/{task_id}`。

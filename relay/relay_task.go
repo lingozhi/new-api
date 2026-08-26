@@ -321,7 +321,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo, checkpoint *Ta
 			// or reset; the controller needs this status to decide whether the
 			// provider definitively rejected the request or may have created a task.
 			return nil, service.TaskErrorWrapper(
-				fmt.Errorf("AutoDL upstream returned HTTP %d", resp.StatusCode),
+				fmt.Errorf("generation service rejected the request (HTTP %d)", resp.StatusCode),
 				"fail_to_fetch_task",
 				resp.StatusCode,
 			)
@@ -824,12 +824,12 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 	}
 }
 
-func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+func taskModel2Dto(task *model.Task, includeInternalRouting bool) *dto.TaskDto {
 	resultURL := ""
 	if task.Status == model.TaskStatusSuccess {
 		resultURL = task.GetResultURL()
 	}
-	return &dto.TaskDto{
+	taskDto := &dto.TaskDto{
 		ID:         task.ID,
 		CreatedAt:  task.CreatedAt,
 		UpdatedAt:  task.UpdatedAt,
@@ -851,4 +851,48 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		Username:   task.Username,
 		Data:       task.Data,
 	}
+	if includeInternalRouting || task.Platform != constant.TaskPlatformAutoDL {
+		return taskDto
+	}
+
+	properties := task.Properties
+	properties.UpstreamModelName = ""
+	taskDto.Properties = properties
+	taskDto.ChannelId = 0
+	taskDto.Data = nil
+	taskDto.FailReason = ""
+	if task.Status == model.TaskStatusFailure {
+		switch task.Action {
+		case constant.TaskActionVideoGenerationV2:
+			taskDto.FailReason = "Video generation failed"
+		case constant.TaskActionAudioSpeech:
+			taskDto.FailReason = "Audio generation failed"
+		default:
+			taskDto.FailReason = "Generation task failed"
+		}
+	}
+	switch task.Properties.OriginModelName {
+	case constant.AutoDLModelMiniMaxH3:
+		taskDto.Platform = "minimax"
+		if task.Status == model.TaskStatusSuccess {
+			taskDto.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+		}
+	case constant.AutoDLModelIndexTTS2:
+		taskDto.Platform = "indextts"
+		taskDto.ResultURL = ""
+	default:
+		taskDto.Platform = "custom"
+		taskDto.ResultURL = ""
+	}
+	return taskDto
+}
+
+// TaskModel2Dto returns the client-safe task representation.
+func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+	return taskModel2Dto(task, false)
+}
+
+// TaskModel2AdminDto retains routing diagnostics for authenticated admin views.
+func TaskModel2AdminDto(task *model.Task) *dto.TaskDto {
+	return taskModel2Dto(task, true)
 }

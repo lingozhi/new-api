@@ -455,7 +455,7 @@ func autoDLAudioIndexRateLimit(c *gin.Context) bool {
 	}
 	if !allowed {
 		c.Header("Retry-After", strconv.FormatInt(common.DownloadRateLimitDuration, 10))
-		abortWithOpenAiMessage(c, http.StatusTooManyRequests, "AutoDL audio request rate limit exceeded")
+		abortWithOpenAiMessage(c, http.StatusTooManyRequests, "audio request rate limit exceeded")
 		return false
 	}
 	return true
@@ -473,7 +473,7 @@ func AutoDLAudioTaskReadRateLimit() gin.HandlerFunc {
 		}
 		if !allowed {
 			c.Header("Retry-After", strconv.FormatInt(common.DownloadRateLimitDuration, 10))
-			abortWithOpenAiMessage(c, http.StatusTooManyRequests, "AutoDL audio task read rate limit exceeded")
+			abortWithOpenAiMessage(c, http.StatusTooManyRequests, "audio task read rate limit exceeded")
 		}
 	}
 }
@@ -490,7 +490,7 @@ func AllowAutoDLAudioArtifactFetch(c *gin.Context) bool {
 	}
 	if !allowed {
 		c.Header("Retry-After", strconv.FormatInt(common.DownloadRateLimitDuration, 10))
-		abortWithOpenAiMessage(c, http.StatusTooManyRequests, "AutoDL audio artifact rate limit exceeded")
+		abortWithOpenAiMessage(c, http.StatusTooManyRequests, "audio result rate limit exceeded")
 		return false
 	}
 	return true

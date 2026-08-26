@@ -342,7 +342,7 @@ func TestRejectedAutoDLSubmissionRefundIsRecoveredBySweep(t *testing.T) {
 	activated, err := model.ActivatePreparedAutoDLTaskCheckpoint(task)
 	require.NoError(t, err)
 	require.True(t, activated)
-	marked, err := task.MarkSubmissionRejected("AutoDL video submission was rejected")
+	marked, err := task.MarkSubmissionRejected("Generation request was rejected")
 	require.NoError(t, err)
 	require.True(t, marked)
 
@@ -359,7 +359,7 @@ func TestRejectedAutoDLSubmissionRefundIsRecoveredBySweep(t *testing.T) {
 	var stored model.Task
 	require.NoError(t, model.DB.First(&stored, task.ID).Error)
 	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), stored.Status)
-	assert.Equal(t, "AutoDL video submission was rejected", stored.FailReason)
+	assert.Equal(t, "Generation request was rejected", stored.FailReason)
 	assert.Equal(t, 5000, getUserQuota(t, userID))
 	assert.Equal(t, 3000, getTokenRemainQuota(t, tokenID))
 	reservation, err := model.GetImageBillingReservation(task.TaskID)
