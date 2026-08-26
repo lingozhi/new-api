@@ -60,12 +60,33 @@ describe('IndexTTS2 audio speech API documentation', () => {
 
     assert.deepEqual(
       [...byName.keys()],
-      ['model', 'input', 'voice', 'response_format', 'speed', 'metadata']
+      [
+        'model',
+        'emo_afraid',
+        'emo_angry',
+        'emo_calm',
+        'emo_control_method',
+        'emo_disgusted',
+        'emo_happy',
+        'emo_melancholic',
+        'emo_random',
+        'emo_ref_audio',
+        'emo_sad',
+        'emo_surprised',
+        'prompt_simple',
+        'prompt_text',
+      ]
     )
     assert.equal(byName.get('model')?.defaultValue, 'public-index-alias')
-    assert.equal(byName.get('input')?.range, '1 ~ 2048')
-    assert.deepEqual(byName.get('response_format')?.enumValues, ['wav'])
-    assert.equal(byName.get('speed')?.defaultValue, 1)
+    assert.equal(byName.get('prompt_text')?.range, '1 ~ 2048')
+    assert.equal(byName.get('emo_happy')?.range, '0 ~ 1.4')
+    assert.equal(byName.get('emo_random')?.defaultValue, false)
+    assert.deepEqual(byName.get('emo_surprised')?.enumValues, ['0'])
+    assert.deepEqual(byName.get('emo_control_method')?.enumValues, [
+      '与音色参考音频相同',
+      '使用情感参考音频',
+      '使用情感向量控制',
+    ])
   })
 
   test('cURL saves the binary response and shows authenticated 202 recovery', () => {
@@ -76,9 +97,14 @@ describe('IndexTTS2 audio speech API documentation', () => {
     assert.match(sample, /Content-Type: application\/json/)
     assert.match(sample, /Idempotency-Key: indextts2-<UNIQUE_ID>/)
     assert.match(sample, /"model": "indextts2-v1"/)
-    assert.match(sample, /"voice": "<REFERENCE_AUDIO_URL>"/)
-    assert.match(sample, /"response_format": "wav"/)
-    assert.match(sample, /"speed": 1/)
+    assert.match(
+      sample,
+      /"prompt_text": "你好，这是一段 IndexTTS2 语音合成示例。"/
+    )
+    assert.match(sample, /"prompt_simple": "<REFERENCE_AUDIO_URL>"/)
+    assert.match(sample, /"emo_ref_audio": "<EMOTION_AUDIO_URL>"/)
+    assert.match(sample, /"emo_happy": 0.5/)
+    assert.match(sample, /"emo_control_method": "使用情感参考音频"/)
     assert.match(sample, /BODY_FILE="speech\.response"/)
     assert.ok(
       sample.indexOf('location=$(awk') < sample.indexOf('while [ "$status"')
@@ -159,12 +185,9 @@ describe('IndexTTS2 audio speech API documentation', () => {
     assert.match(guide, /15 MiB/)
     assert.match(guide, /30 MiB/)
     assert.match(guide, /64 MiB/)
-    assert.match(
-      guide,
-      /happy, angry, sad, afraid, disgusted, melancholic, surprised, calm/
-    )
-    assert.match(guide, /surprised value currently must be 0/)
-    assert.match(guide, /mutually exclusive/)
+    assert.match(guide, /emo_happy, emo_angry, emo_sad, emo_afraid/)
+    assert.match(guide, /emo_surprised currently accepts only 0/)
+    assert.match(guide, /cannot be mixed with direct emo_\* fields/)
     assert.match(guide, /stream_format=sse is unsupported/)
   })
 })

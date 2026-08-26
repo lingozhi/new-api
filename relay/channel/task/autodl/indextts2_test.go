@@ -84,6 +84,41 @@ func TestIndexTTS2MapsOpenAISpeechRequestToWorkflowPayload(t *testing.T) {
 	assert.NotContains(t, payload, "response_format")
 }
 
+func TestIndexTTS2MapsCompleteModelParametersToWorkflowPayload(t *testing.T) {
+	adaptor, info, taskErr := validateIndexTTSSpeechRequest(t, `{
+		"model":"indextts2-v1",
+		"emo_sad":0,
+		"emo_calm":0.3,
+		"emo_angry":0,
+		"emo_happy":0.5,
+		"emo_afraid":0,
+		"emo_random":false,
+		"prompt_text":"你好，这是一段测试文本",
+		"emo_disgusted":0,
+		"emo_ref_audio":"https://media.example.com/emotion.mp3",
+		"emo_surprised":"0",
+		"prompt_simple":"https://media.example.com/speaker.wav",
+		"emo_melancholic":0,
+		"emo_control_method":"使用情感参考音频"
+	}`)
+	require.Nil(t, taskErr)
+
+	payload := indexTTSPayload(t, adaptor, info)
+	assert.Equal(t, "你好，这是一段测试文本", payload["prompt_text"])
+	assert.Equal(t, "https://media.example.com/speaker.wav", payload["prompt_simple"])
+	assert.Equal(t, "使用情感参考音频", payload["emo_control_method"])
+	assert.Equal(t, "https://media.example.com/emotion.mp3", payload["emo_ref_audio"])
+	assert.Equal(t, float64(0), payload["emo_sad"])
+	assert.Equal(t, float64(0.3), payload["emo_calm"])
+	assert.Equal(t, float64(0), payload["emo_angry"])
+	assert.Equal(t, float64(0.5), payload["emo_happy"])
+	assert.Equal(t, float64(0), payload["emo_afraid"])
+	assert.Equal(t, float64(0), payload["emo_disgusted"])
+	assert.Equal(t, float64(0), payload["emo_melancholic"])
+	assert.Equal(t, float64(0), payload["emo_surprised"])
+	assert.Equal(t, false, payload["emo_random"])
+}
+
 func TestIndexTTS2MapsEmotionReferenceAudio(t *testing.T) {
 	adaptor, info, taskErr := validateIndexTTSSpeechRequest(t, `{
 		"model":"indextts2-v1",
@@ -122,6 +157,10 @@ func TestIndexTTS2ValidatesOpenAISpeechCompatibility(t *testing.T) {
 		{
 			name: "one character input",
 			body: `{"model":"indextts2-v1","input":"声","voice":"https://media.example.com/speaker.wav"}`,
+		},
+		{
+			name: "complete model text and audio parameters",
+			body: `{"model":"indextts2-v1","prompt_text":"声","prompt_simple":"https://media.example.com/speaker.wav","emo_control_method":"与音色参考音频相同"}`,
 		},
 		{
 			name: "2048 unicode character input and explicit WAV",
@@ -167,6 +206,16 @@ func TestIndexTTS2ValidatesOpenAISpeechCompatibility(t *testing.T) {
 			body:      `{"model":"indextts2-v1","input":"hello","voice":"https://media.example.com/speaker.wav","stream_format":"sse"}`,
 			wantError: "stream",
 		},
+		{
+			name:      "conflicting text aliases",
+			body:      `{"model":"indextts2-v1","input":"one","prompt_text":"two","voice":"https://media.example.com/speaker.wav"}`,
+			wantError: "match",
+		},
+		{
+			name:      "conflicting audio aliases",
+			body:      `{"model":"indextts2-v1","input":"hello","voice":"https://media.example.com/one.wav","prompt_simple":"https://media.example.com/two.wav"}`,
+			wantError: "match",
+		},
 	}
 
 	for _, test := range tests {
@@ -180,6 +229,38 @@ func TestIndexTTS2ValidatesOpenAISpeechCompatibility(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 			assert.Contains(t, strings.ToLower(taskErr.Message), strings.ToLower(test.wantError))
 			assert.NotContains(t, strings.ToLower(taskErr.Message), "autodl")
+		})
+	}
+}
+
+func TestIndexTTS2ValidatesCompleteModelEmotionParameters(t *testing.T) {
+	tests := []struct {
+		name      string
+		fields    string
+		wantError string
+	}{
+		{name: "provider upper boundary", fields: `,"emo_happy":1.4`},
+		{name: "numeric surprised zero", fields: `,"emo_surprised":0`},
+		{name: "string surprised zero", fields: `,"emo_surprised":"0"`},
+		{name: "negative emotion", fields: `,"emo_afraid":-0.01`, wantError: "emo_afraid"},
+		{name: "emotion above range", fields: `,"emo_calm":1.4001`, wantError: "emo_calm"},
+		{name: "unsupported surprise", fields: `,"emo_surprised":0.1`, wantError: "emo_surprised"},
+		{name: "unsupported surprise string", fields: `,"emo_surprised":"0.1"`, wantError: "emo_surprised"},
+		{name: "unsupported control method", fields: `,"emo_control_method":"unsupported"`, wantError: "emo_control_method"},
+		{name: "direct fields and legacy metadata conflict", fields: `,"emo_random":false,"metadata":{"emotion_random":false}`, wantError: "cannot be combined"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			body := `{"model":"indextts2-v1","prompt_text":"hello","prompt_simple":"https://media.example.com/speaker.wav"` + test.fields + `}`
+			_, _, taskErr := validateIndexTTSSpeechRequest(t, body)
+			if test.wantError == "" {
+				require.Nil(t, taskErr)
+				return
+			}
+			require.NotNil(t, taskErr)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			assert.Contains(t, strings.ToLower(taskErr.Message), strings.ToLower(test.wantError))
 		})
 	}
 }

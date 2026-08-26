@@ -1,8 +1,8 @@
 # IndexTTS2 v1 文本转语音接口
 
-`indextts2-v1` 通过 OpenAI Speech 风格的 `POST /v1/audio/speech` 接入。它复用通用的 `model`、`input`、`voice`、`response_format` 和 `speed` 字段，并在 `metadata` 中提供 IndexTTS2 情绪控制。
+`indextts2-v1` 通过 `POST /v1/audio/speech` 接入，并开放模型的完整文本、音色参考、情绪参考和情绪数值参数。请求必须是 JSON，并必须带 `Idempotency-Key`。
 
-与普通 OpenAI TTS 模型不同，IndexTTS2 使用参考音频克隆音色：`voice` 必须是 WAV/MP3 音频来源，不能传 `alloy`、`nova` 等命名音色。请求必须是 JSON，并必须带 `Idempotency-Key`。
+IndexTTS2 使用参考音频克隆音色：`prompt_simple` 必须是 WAV/MP3 音频来源，不能传 `alloy`、`nova` 等命名音色。旧版的 `input`、`voice` 和 `metadata` 参数仍兼容，但新接入应优先使用本文列出的完整模型参数。
 
 ## 请求
 
@@ -19,8 +19,9 @@
 ```json
 {
   "model": "indextts2-v1",
-  "input": "你好，欢迎使用 IndexTTS2。",
-  "voice": "https://media.example.com/reference.wav"
+  "prompt_text": "你好，欢迎使用 IndexTTS2。",
+  "prompt_simple": "https://media.example.com/reference.wav",
+  "emo_control_method": "与音色参考音频相同"
 }
 ```
 
@@ -29,14 +30,19 @@
 ```json
 {
   "model": "indextts2-v1",
-  "input": "你好，欢迎使用 IndexTTS2。",
-  "voice": "https://media.example.com/reference.wav",
-  "response_format": "wav",
-  "speed": 1,
-  "metadata": {
-    "emotion_vector": [0.2, 0, 0.1, 0, 0, 0, 0, 0.3],
-    "emotion_random": false
-  }
+  "emo_sad": 0,
+  "emo_calm": 0.3,
+  "emo_angry": 0,
+  "emo_happy": 0.5,
+  "emo_afraid": 0,
+  "emo_random": false,
+  "prompt_text": "你好，这是一段测试文本",
+  "emo_disgusted": 0,
+  "emo_ref_audio": "https://media.example.com/emotion.mp3",
+  "emo_surprised": 0,
+  "prompt_simple": "https://media.example.com/reference.wav",
+  "emo_melancholic": 0,
+  "emo_control_method": "使用情感参考音频"
 }
 ```
 
@@ -52,10 +58,9 @@ curl --request POST "${BASE_URL}/v1/audio/speech" \
   --header "Idempotency-Key: tts-order-20260826-001" \
   --data '{
     "model": "indextts2-v1",
-    "input": "你好，欢迎使用 IndexTTS2。",
-    "voice": "https://media.example.com/reference.wav",
-    "response_format": "wav",
-    "speed": 1
+    "prompt_text": "你好，欢迎使用 IndexTTS2。",
+    "prompt_simple": "https://media.example.com/reference.wav",
+    "emo_control_method": "与音色参考音频相同"
   }' \
   --dump-header response.headers \
   --output response.body
@@ -68,17 +73,41 @@ curl --request POST "${BASE_URL}/v1/audio/speech" \
 | 字段 | 类型 | 必填 | 约束 |
 | --- | --- | --- | --- |
 | `model` | string | 是 | 固定为 `indextts2-v1` |
-| `input` | string | 是 | 1–2048 个 Unicode 字符，不能只有空白 |
-| `voice` | string | 是 | 公网 HTTPS WAV/MP3 URL，或允许的 base64 音频 data URI |
-| `response_format` | string | 否 | 只能是 `wav`；省略时也返回 WAV |
-| `speed` | number | 否 | 只能是 `1` |
-| `metadata` | object | 否 | IndexTTS2 情绪控制，见下节 |
+| `emo_afraid` | number | 否 | 恐惧情绪强度，`0`–`1.4`，默认 `0` |
+| `emo_angry` | number | 否 | 愤怒情绪强度，`0`–`1.4`，默认 `0` |
+| `emo_calm` | number | 否 | 平静情绪强度，`0`–`1.4`，默认 `0` |
+| `emo_control_method` | string | 是 | `与音色参考音频相同`、`使用情感参考音频`、`使用情感向量控制` |
+| `emo_disgusted` | number | 否 | 厌恶情绪强度，`0`–`1.4`，默认 `0` |
+| `emo_happy` | number | 否 | 开心情绪强度，`0`–`1.4`，默认 `0` |
+| `emo_melancholic` | number | 否 | 忧郁情绪强度，`0`–`1.4`，默认 `0` |
+| `emo_random` | boolean | 否 | 是否使用随机情绪，默认 `false` |
+| `emo_ref_audio` | string | 否 | 情绪参考音频；来源和安全限制与 `prompt_simple` 相同 |
+| `emo_sad` | number | 否 | 悲伤情绪强度，`0`–`1.4`，默认 `0` |
+| `emo_surprised` | number 或 string | 否 | 当前只能为 `0` 或 `"0"` |
+| `prompt_simple` | string | 是 | 音色参考音频；公网 HTTPS WAV/MP3 URL 或允许的 base64 data URI |
+| `prompt_text` | string | 是 | 1–2048 个 Unicode 字符，不能只有空白 |
 
-`instructions` 不受支持，`stream_format: "sse"` 不受支持。
+`instructions` 不受支持，`stream_format: "sse"` 不受支持。输出固定为 WAV。
+
+### 兼容参数
+
+已有客户端可以继续使用：
+
+| 兼容参数 | 映射/约束 |
+| --- | --- |
+| `input` | `prompt_text` 的别名；两者同时提供时内容必须一致 |
+| `voice` | `prompt_simple` 的别名；两者同时提供时内容必须一致 |
+| `response_format` | 只能为 `wav` |
+| `speed` | 只能为 `1` |
+| `metadata.emotion_audio` | 映射为 `emo_ref_audio`，并选择情绪参考音频模式 |
+| `metadata.emotion_vector` | 8 项数组，依次映射 `happy`、`angry`、`sad`、`afraid`、`disgusted`、`melancholic`、`surprised`、`calm` |
+| `metadata.emotion_random` | 映射为 `emo_random` |
+
+`metadata` 情绪别名不能与顶层 `emo_*` 参数混用。
 
 ### 参考音频
 
-`voice` 和 `metadata.emotion_audio` 接受两种来源：
+`prompt_simple` 和 `emo_ref_audio` 接受两种来源：
 
 1. 公网 `https://` URL。只能使用默认 HTTPS 端口 443，不允许 URL userinfo；目标必须返回可验证的 WAV 或 MP3。
 2. 严格 base64 data URI。允许的 MIME 为 `audio/wav`、`audio/x-wav`、`audio/mpeg`、`audio/mp3`，格式必须为 `data:<MIME>;base64,<DATA>`。
@@ -86,30 +115,20 @@ curl --request POST "${BASE_URL}/v1/audio/speech" \
 限制：
 
 - 每段音频解码后最大 15 MiB。
-- `voice` 与 `emotion_audio` 解码后合计最大 30 MiB。
+- `prompt_simple` 与 `emo_ref_audio` 解码后合计最大 30 MiB。
 - 每段音频最长 10 分钟。
 - 整个 JSON 请求体最大 64 MiB。
 - 输出必须是有效 WAV，最大 64 MiB。
 
 ### 情绪控制
 
-未传 `metadata` 时，生成结果沿用 `voice` 参考音频的情绪。
+`emo_control_method` 决定实际情绪来源：
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `emotion_audio` | string | 独立的情绪参考音频；来源和安全限制与 `voice` 相同 |
-| `emotion_vector` | number[8] | 8 维情绪向量，每项范围 `0`–`1.4` |
-| `emotion_random` | boolean | `true` 时启用随机情绪；默认 `false` |
+- `与音色参考音频相同`：沿用 `prompt_simple` 中的情绪。
+- `使用情感参考音频`：使用 `emo_ref_audio`；其他情绪数值仍可随请求发送。
+- `使用情感向量控制`：使用 `emo_happy`、`emo_angry`、`emo_sad`、`emo_afraid`、`emo_disgusted`、`emo_melancholic`、`emo_calm` 和 `emo_random`。
 
-向量顺序固定为：
-
-```text
-[happy, angry, sad, afraid, disgusted, melancholic, surprised, calm]
-```
-
-当前实现尚未开放 `surprised`，所以第 7 项必须为 `0`。
-
-`emotion_audio`、`emotion_vector`、`emotion_random: true` 三种控制互斥。`emotion_random: false` 不会启用随机控制，可与另外一种控制同时出现。
+七个可调情绪数值的范围均为 `0`–`1.4`。`emo_surprised` 是当前保留参数，只能为 `0`。所有可选情绪数值省略时按 `0` 处理，`emo_random` 省略时按 `false` 处理。
 
 ## 响应
 

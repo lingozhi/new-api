@@ -164,9 +164,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 				http.StatusUnsupportedMediaType,
 			)
 		}
-		var request dto.AudioRequest
+		var request dto.IndexTTS2SpeechRequest
 		if value, exists := common.GetContextKey(c, constant.ContextKeyValidatedAutoDLAudioRequest); exists && value != nil {
-			cached, ok := value.(*dto.AudioRequest)
+			cached, ok := value.(*dto.IndexTTS2SpeechRequest)
 			if !ok || cached == nil {
 				return service.TaskErrorWrapperLocal(errors.New("cached audio request is invalid"), "invalid_request", http.StatusBadRequest)
 			}
@@ -183,12 +183,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		}
 		if value, exists := common.GetContextKey(c, constant.ContextKeyValidatedAutoDLAudioRequest); exists {
-			if cached, ok := value.(*dto.AudioRequest); ok && cached != nil {
-				*cached = dto.AudioRequest{}
+			if cached, ok := value.(*dto.IndexTTS2SpeechRequest); ok && cached != nil {
+				*cached = dto.IndexTTS2SpeechRequest{}
 			}
 			common.SetContextKey(c, constant.ContextKeyValidatedAutoDLAudioRequest, nil)
 		}
-		request = dto.AudioRequest{}
+		request = dto.IndexTTS2SpeechRequest{}
 
 		a.workflowID = workflowID
 		a.requestBody = payload

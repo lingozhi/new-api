@@ -39,6 +39,46 @@ type IndexTTS2Metadata struct {
 	EmotionRandom *bool      `json:"emotion_random,omitempty"`
 }
 
+// IndexTTS2SpeechRequest accepts both the model's complete workflow contract
+// and the earlier OpenAI Speech aliases. The workflow fields are pointers so
+// explicit zero and false values survive request decoding.
+type IndexTTS2SpeechRequest struct {
+	AudioRequest
+	PromptText       *string         `json:"prompt_text,omitempty"`
+	PromptSimple     *string         `json:"prompt_simple,omitempty"`
+	EmoControlMethod *string         `json:"emo_control_method,omitempty"`
+	EmoAfraid        *float64        `json:"emo_afraid,omitempty"`
+	EmoAngry         *float64        `json:"emo_angry,omitempty"`
+	EmoCalm          *float64        `json:"emo_calm,omitempty"`
+	EmoDisgusted     *float64        `json:"emo_disgusted,omitempty"`
+	EmoHappy         *float64        `json:"emo_happy,omitempty"`
+	EmoMelancholic   *float64        `json:"emo_melancholic,omitempty"`
+	EmoRandom        *bool           `json:"emo_random,omitempty"`
+	EmoRefAudio      *string         `json:"emo_ref_audio,omitempty"`
+	EmoSad           *float64        `json:"emo_sad,omitempty"`
+	EmoSurprised     json.RawMessage `json:"emo_surprised,omitempty"`
+}
+
+func (r *IndexTTS2SpeechRequest) EffectivePromptText() string {
+	if r != nil && r.PromptText != nil {
+		return *r.PromptText
+	}
+	if r == nil {
+		return ""
+	}
+	return r.Input
+}
+
+func (r *IndexTTS2SpeechRequest) EffectivePromptSimple() string {
+	if r != nil && r.PromptSimple != nil {
+		return *r.PromptSimple
+	}
+	if r == nil {
+		return ""
+	}
+	return r.Voice
+}
+
 func (r *AudioRequest) GetTokenCountMeta() *types.TokenCountMeta {
 	meta := &types.TokenCountMeta{
 		CombineText: r.Input,

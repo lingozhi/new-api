@@ -1944,7 +1944,7 @@
       "post": {
         "summary": "文本转语音",
         "deprecated": false,
-        "description": "将文本转换为音频。普通 OpenAI 兼容 TTS 请求继续使用 SpeechRequest。使用 indextts2-v1 时，必须发送 JSON 请求体和 Idempotency-Key 请求头；voice 必须是可公开访问的 HTTPS WAV/MP3 地址，或允许的 WAV/MP3 base64 data URI。相同 API 令牌、相同 Idempotency-Key 和相同规范化请求会复用原任务；同一个键对应不同请求时返回 409。服务会同步等待任务，完成时返回 WAV；等待超时时返回 202，可根据 Location 调用恢复接口。",
+        "description": "将文本转换为音频。普通 OpenAI 兼容 TTS 请求继续使用 SpeechRequest。使用 indextts2-v1 时，必须发送 JSON 请求体和 Idempotency-Key 请求头；完整模型参数使用 prompt_text、prompt_simple、emo_control_method 与顶层 emo_* 字段，input、voice 和 metadata 作为兼容别名保留。prompt_simple 与 emo_ref_audio 必须是可公开访问的 HTTPS WAV/MP3 地址，或允许的 WAV/MP3 base64 data URI。相同 API 令牌、相同 Idempotency-Key 和相同规范化请求会复用原任务；同一个键对应不同请求时返回 409。服务会同步等待任务，完成时返回 WAV；等待超时时返回 202，可根据 Location 调用恢复接口。",
         "operationId": "createSpeech",
         "tags": [
           "OpenAI音频(Audio)"
@@ -2004,22 +2004,19 @@
                   "summary": "IndexTTS2（请求头还需 Idempotency-Key）",
                   "value": {
                     "model": "indextts2-v1",
-                    "input": "你好，欢迎使用 IndexTTS2。",
-                    "voice": "https://media.example.com/reference.wav",
-                    "response_format": "wav",
-                    "speed": 1,
-                    "metadata": {
-                      "emotion_vector": [
-                        0.2,
-                        0,
-                        0.1,
-                        0,
-                        0,
-                        0,
-                        0,
-                        0.3
-                      ]
-                    }
+                    "emo_sad": 0,
+                    "emo_calm": 0.3,
+                    "emo_angry": 0,
+                    "emo_happy": 0.5,
+                    "emo_afraid": 0,
+                    "emo_random": false,
+                    "prompt_text": "你好，这是一段测试文本",
+                    "emo_disgusted": 0,
+                    "emo_ref_audio": "https://media.example.com/emotion.mp3",
+                    "emo_surprised": 0,
+                    "prompt_simple": "https://media.example.com/reference.wav",
+                    "emo_melancholic": 0,
+                    "emo_control_method": "使用情感参考音频"
                   }
                 }
               }
@@ -5003,11 +5000,28 @@
       },
       "IndexTTS2SpeechRequest": {
         "type": "object",
-        "description": "indextts2-v1 的 OpenAI Speech 兼容请求。请求头必须包含 Idempotency-Key，且 Content-Type 必须为 application/json。instructions 不受支持；SSE 流式输出不受支持。",
+        "description": "indextts2-v1 的完整模型请求。请求头必须包含 Idempotency-Key，且 Content-Type 必须为 application/json。新客户端应使用 prompt_text、prompt_simple、emo_control_method 和顶层 emo_* 参数；input、voice 与 metadata 仅作为兼容别名保留。instructions 与 SSE 流式输出不受支持，输出固定为 WAV。",
         "required": [
-          "model",
-          "input",
-          "voice"
+          "model"
+        ],
+        "allOf": [
+          {
+            "anyOf": [
+              {
+                "required": [
+                  "prompt_text",
+                  "prompt_simple",
+                  "emo_control_method"
+                ]
+              },
+              {
+                "required": [
+                  "input",
+                  "voice"
+                ]
+              }
+            ]
+          }
         ],
         "properties": {
           "model": {
@@ -5016,16 +5030,114 @@
               "indextts2-v1"
             ]
           },
-          "input": {
+          "emo_afraid": {
+            "type": "number",
+            "description": "恐惧情绪强度。",
+            "minimum": 0,
+            "maximum": 1.4,
+            "default": 0
+          },
+          "emo_angry": {
+            "type": "number",
+            "description": "愤怒情绪强度。",
+            "minimum": 0,
+            "maximum": 1.4,
+            "default": 0
+          },
+          "emo_calm": {
+            "type": "number",
+            "description": "平静情绪强度。",
+            "minimum": 0,
+            "maximum": 1.4,
+            "default": 0
+          },
+          "emo_control_method": {
+            "type": "string",
+            "description": "情绪控制模式。",
+            "enum": [
+              "与音色参考音频相同",
+              "使用情感参考音频",
+              "使用情感向量控制"
+            ],
+            "default": "与音色参考音频相同"
+          },
+          "emo_disgusted": {
+            "type": "number",
+            "description": "厌恶情绪强度。",
+            "minimum": 0,
+            "maximum": 1.4,
+            "default": 0
+          },
+          "emo_happy": {
+            "type": "number",
+            "description": "开心情绪强度。",
+            "minimum": 0,
+            "maximum": 1.4,
+            "default": 0
+          },
+          "emo_melancholic": {
+            "type": "number",
+            "description": "忧郁情绪强度。",
+            "minimum": 0,
+            "maximum": 1.4,
+            "default": 0
+          },
+          "emo_random": {
+            "type": "boolean",
+            "description": "是否使用随机情绪。",
+            "default": false
+          },
+          "emo_ref_audio": {
+            "type": "string",
+            "description": "可选情绪参考音频。格式、安全、15 MiB 大小和 10 分钟时长限制与 prompt_simple 相同。"
+          },
+          "emo_sad": {
+            "type": "number",
+            "description": "悲伤情绪强度。",
+            "minimum": 0,
+            "maximum": 1.4,
+            "default": 0
+          },
+          "emo_surprised": {
+            "description": "惊讶情绪保留参数；当前只接受数值 0 或字符串 \"0\"。",
+            "oneOf": [
+              {
+                "type": "number",
+                "enum": [
+                  0
+                ]
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "0"
+                ]
+              }
+            ],
+            "default": 0
+          },
+          "prompt_simple": {
+            "type": "string",
+            "description": "音色参考音频，不是 alloy 等命名音色。可传返回有效 WAV/MP3 的公网 HTTPS URL（仅默认 443 端口，不允许 userinfo），或 data:audio/wav、data:audio/x-wav、data:audio/mpeg、data:audio/mp3 的严格 base64 URI。单个音频解码后最大 15 MiB，时长最大 10 分钟。",
+            "minLength": 1
+          },
+          "prompt_text": {
             "type": "string",
             "description": "要合成的 UTF-8 文本。去除空白后不得为空。",
             "minLength": 1,
             "maxLength": 2048,
             "pattern": "\\S"
           },
+          "input": {
+            "type": "string",
+            "description": "prompt_text 的兼容别名；两者同时提供时内容必须一致。",
+            "minLength": 1,
+            "maxLength": 2048,
+            "pattern": "\\S"
+          },
           "voice": {
             "type": "string",
-            "description": "音色参考音频，不是 alloy 等命名音色。可传返回有效 WAV/MP3 的公网 HTTPS URL（仅默认 443 端口，不允许 userinfo），或 data:audio/wav、data:audio/x-wav、data:audio/mpeg、data:audio/mp3 的严格 base64 URI。单个音频解码后最大 15 MiB，时长最大 10 分钟。",
+            "description": "prompt_simple 的兼容别名；两者同时提供时内容必须一致。",
             "minLength": 1
           },
           "response_format": {
@@ -5043,13 +5155,18 @@
             "default": 1
           },
           "metadata": {
-            "$ref": "#/components/schemas/IndexTTS2Metadata"
+            "description": "旧版情绪参数兼容对象；不能与顶层 emo_* 参数混用。",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/IndexTTS2Metadata"
+              }
+            ]
           }
         }
       },
       "IndexTTS2Metadata": {
         "type": "object",
-        "description": "可选情绪控制。emotion_audio、emotion_vector 与 emotion_random=true 三者互斥；emotion_random=false 可与其他模式一起发送且不启用随机模式。三个控制均未启用时，使用 voice 参考音频的情绪。voice 与 emotion_audio 解码后的总大小不得超过 30 MiB。",
+        "description": "旧版情绪控制兼容对象。emotion_audio、emotion_vector 与 emotion_random=true 三者互斥；emotion_random=false 可与其他模式一起发送且不启用随机模式。三个控制均未启用时，使用 voice 参考音频的情绪。voice 与 emotion_audio 解码后的总大小不得超过 30 MiB。",
         "properties": {
           "emotion_audio": {
             "type": "string",

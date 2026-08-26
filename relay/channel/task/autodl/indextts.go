@@ -23,19 +23,30 @@ var indexTTSEmotionFields = [...]string{
 	"emo_calm",
 }
 
-func buildIndexTTSWorkflowRequest(request *dto.AudioRequest) (string, map[string]any, error) {
+func buildIndexTTSWorkflowRequest(request *dto.IndexTTS2SpeechRequest) (string, map[string]any, error) {
 	if request == nil {
 		return "", nil, errors.New("request is required")
 	}
 	if request.Model != constant.AutoDLModelIndexTTS2 {
 		return "", nil, fmt.Errorf("model must be %s", constant.AutoDLModelIndexTTS2)
 	}
-	if !utf8.ValidString(request.Input) {
-		return "", nil, errors.New("input must be valid UTF-8")
+	if request.PromptText != nil && request.Input != "" && request.Input != *request.PromptText {
+		return "", nil, errors.New("input and prompt_text must match when both are provided")
 	}
-	inputLength := utf8.RuneCountInString(request.Input)
-	if inputLength < 1 || inputLength > 2048 || strings.TrimSpace(request.Input) == "" {
-		return "", nil, errors.New("input must contain between 1 and 2048 characters")
+	promptText := request.EffectivePromptText()
+	promptTextField := "input"
+	if request.PromptText != nil {
+		promptTextField = "prompt_text"
+	}
+	if !utf8.ValidString(promptText) {
+		return "", nil, fmt.Errorf("%s must be valid UTF-8", promptTextField)
+	}
+	inputLength := utf8.RuneCountInString(promptText)
+	if inputLength < 1 || inputLength > 2048 || strings.TrimSpace(promptText) == "" {
+		return "", nil, fmt.Errorf("%s must contain between 1 and 2048 characters", promptTextField)
+	}
+	if request.PromptSimple != nil && request.Voice != "" && request.Voice != *request.PromptSimple {
+		return "", nil, errors.New("voice and prompt_simple must match when both are provided")
 	}
 	if strings.TrimSpace(request.Instructions) != "" {
 		return "", nil, errors.New("instructions are not supported by indextts2-v1")
@@ -51,22 +62,105 @@ func buildIndexTTSWorkflowRequest(request *dto.AudioRequest) (string, map[string
 		return "", nil, errors.New("SSE streaming is not supported by indextts2-v1")
 	}
 
-	voice, totalDataBytes, err := validateMediaURL(request.Voice, mediaKindAudio, 0)
+	promptSimpleField := "voice"
+	if request.PromptSimple != nil {
+		promptSimpleField = "prompt_simple"
+	}
+	promptSimple, totalDataBytes, err := validateMediaURL(request.EffectivePromptSimple(), mediaKindAudio, 0)
 	if err != nil {
-		return "", nil, fmt.Errorf("voice is invalid: %w", err)
+		return "", nil, fmt.Errorf("%s is invalid: %w", promptSimpleField, err)
 	}
 	payload := map[string]any{
-		"prompt_text":        request.Input,
-		"prompt_simple":      voice,
+		"prompt_text":        promptText,
+		"prompt_simple":      promptSimple,
 		"emo_control_method": indexTTSControlSameAsVoice,
 		"emo_random":         false,
 	}
 
+	directEmotionValues := []struct {
+		name  string
+		value *float64
+	}{
+		{name: "emo_afraid", value: request.EmoAfraid},
+		{name: "emo_angry", value: request.EmoAngry},
+		{name: "emo_calm", value: request.EmoCalm},
+		{name: "emo_disgusted", value: request.EmoDisgusted},
+		{name: "emo_happy", value: request.EmoHappy},
+		{name: "emo_melancholic", value: request.EmoMelancholic},
+		{name: "emo_sad", value: request.EmoSad},
+	}
+	hasDirectEmotionVector := len(request.EmoSurprised) > 0
+	for _, field := range directEmotionValues {
+		if field.value != nil {
+			hasDirectEmotionVector = true
+			break
+		}
+	}
+	hasDirectEmotionParameters := request.EmoControlMethod != nil || hasDirectEmotionVector ||
+		request.EmoRandom != nil || request.EmoRefAudio != nil
+
 	var metadata dto.IndexTTS2Metadata
 	if len(request.Metadata) > 0 {
+		if hasDirectEmotionParameters {
+			return "", nil, errors.New("metadata emotion aliases cannot be combined with emo_* parameters")
+		}
 		if err := common.Unmarshal(request.Metadata, &metadata); err != nil {
 			return "", nil, errors.New("metadata must be a valid IndexTTS2 metadata object")
 		}
+	}
+
+	if hasDirectEmotionParameters {
+		if request.EmoControlMethod != nil {
+			controlMethod := strings.TrimSpace(*request.EmoControlMethod)
+			switch controlMethod {
+			case indexTTSControlSameAsVoice, indexTTSControlEmotionAudio, indexTTSControlEmotionVector:
+				payload["emo_control_method"] = controlMethod
+			default:
+				return "", nil, errors.New("emo_control_method is not supported")
+			}
+		} else if request.EmoRefAudio != nil {
+			payload["emo_control_method"] = indexTTSControlEmotionAudio
+		} else if hasDirectEmotionVector || (request.EmoRandom != nil && *request.EmoRandom) {
+			payload["emo_control_method"] = indexTTSControlEmotionVector
+		}
+
+		for _, field := range directEmotionValues {
+			if field.value == nil {
+				continue
+			}
+			value := *field.value
+			if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 1.4 {
+				return "", nil, fmt.Errorf("%s must be between 0 and 1.4", field.name)
+			}
+			payload[field.name] = value
+		}
+
+		if len(request.EmoSurprised) > 0 {
+			var surprised float64
+			if err := common.Unmarshal(request.EmoSurprised, &surprised); err != nil {
+				var surprisedText string
+				if textErr := common.Unmarshal(request.EmoSurprised, &surprisedText); textErr != nil || surprisedText != "0" {
+					return "", nil, errors.New("emo_surprised must be 0")
+				}
+			}
+			if surprised != 0 {
+				return "", nil, errors.New("emo_surprised must be 0")
+			}
+			payload["emo_surprised"] = float64(0)
+		}
+
+		if request.EmoRandom != nil {
+			payload["emo_random"] = *request.EmoRandom
+		}
+		if request.EmoRefAudio != nil {
+			emotionAudio, _, err := validateMediaURL(*request.EmoRefAudio, mediaKindAudio, totalDataBytes)
+			if err != nil {
+				return "", nil, fmt.Errorf("emo_ref_audio is invalid: %w", err)
+			}
+			payload["emo_ref_audio"] = emotionAudio
+		}
+
+		return workflowIndexTTS2, payload, nil
 	}
 
 	hasEmotionAudio := metadata.EmotionAudio != nil

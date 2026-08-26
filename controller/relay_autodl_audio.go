@@ -70,7 +70,7 @@ func ReplayAutoDLAudioSpeech(c *gin.Context) {
 		return
 	}
 
-	request := &dto.AudioRequest{}
+	request := &dto.IndexTTS2SpeechRequest{}
 	if err := common.UnmarshalBodyReusable(c, request); err != nil || request.Model != constant.AutoDLModelIndexTTS2 {
 		// The normal relay path owns malformed JSON and non-AutoDL models.
 		c.Next()
@@ -132,7 +132,7 @@ func ReplayAutoDLAudioSpeech(c *gin.Context) {
 	}
 
 	c.Header("Idempotency-Replayed", "true")
-	*request = dto.AudioRequest{}
+	*request = dto.IndexTTS2SpeechRequest{}
 	common.SetContextKey(c, constant.ContextKeyValidatedAutoDLAudioRequest, nil)
 	writeAutoDLAudioSpeechTask(c, existing)
 	c.Abort()
@@ -157,14 +157,14 @@ func RelayAudioSpeech(c *gin.Context) {
 	}
 
 	if setting.ShouldCheckPromptSensitive() {
-		request := &dto.AudioRequest{}
+		request := &dto.IndexTTS2SpeechRequest{}
 		if value, exists := common.GetContextKey(c, constant.ContextKeyValidatedAutoDLAudioRequest); exists && value != nil {
-			if cached, ok := value.(*dto.AudioRequest); ok && cached != nil {
+			if cached, ok := value.(*dto.IndexTTS2SpeechRequest); ok && cached != nil {
 				request = cached
 			}
 		}
 		if request.Model != "" || common.UnmarshalBodyReusable(c, request) == nil {
-			contains, words := service.CheckSensitiveText(request.Input)
+			contains, words := service.CheckSensitiveText(request.EffectivePromptText())
 			if contains {
 				logger.LogWarn(c, fmt.Sprintf("user sensitive words detected in AutoDL audio input: matches=%d", len(words)))
 				writeAutoDLAudioError(c, http.StatusBadRequest, "invalid_request_error", string(types.ErrorCodeSensitiveWordsDetected), "The input contains sensitive words")

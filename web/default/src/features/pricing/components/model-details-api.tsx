@@ -830,22 +830,22 @@ function AudioSpeechContractNotice() {
         </li>
         <li>
           {t(
-            'voice and metadata.emotion_audio accept a public HTTPS WAV/MP3 URL or a matching base64 data URI. Named OpenAI voices are not supported.'
+            'prompt_simple and emo_ref_audio accept a public HTTPS WAV/MP3 URL or a matching base64 data URI. Named OpenAI voices are not supported.'
           )}
         </li>
         <li>
           {t(
-            'input accepts 1–2048 UTF-8 characters. The request body is limited to 64 MiB, each reference audio to 15 MiB, both references together to 30 MiB, reference duration to 10 minutes, and generated WAV to 64 MiB.'
+            'prompt_text accepts 1–2048 UTF-8 characters. The request body is limited to 64 MiB, each reference audio to 15 MiB, both references together to 30 MiB, reference duration to 10 minutes, and generated WAV to 64 MiB.'
           )}
         </li>
         <li>
           {t(
-            'metadata.emotion_vector uses exactly eight values in this order: happy, angry, sad, afraid, disgusted, melancholic, surprised, calm. Values must be 0–1.4 and surprised must be 0.'
+            'emo_happy, emo_angry, emo_sad, emo_afraid, emo_disgusted, emo_melancholic, and emo_calm accept values from 0–1.4; emo_surprised must be 0.'
           )}
         </li>
         <li>
           {t(
-            'emotion_audio, emotion_vector, and emotion_random=true are mutually exclusive. instructions and SSE streaming are unsupported; response_format must be wav and speed must be 1.'
+            'emo_control_method selects the speaker reference, emotion reference audio, or emotion values. emo_random defaults to false; instructions and SSE streaming are unsupported.'
           )}
         </li>
       </ul>

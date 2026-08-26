@@ -97,9 +97,10 @@ func TestIndexTTSAdaptorNeverForwardsReferenceURLsToAutoDL(t *testing.T) {
 	context, _ := gin.CreateTestContext(httptest.NewRecorder())
 	context.Request = httptest.NewRequest(http.MethodPost, "/v1/audio/speech", strings.NewReader(`{
 		"model":"indextts2-v1",
-		"input":"secure references",
-		"voice":"https://media.example.com/voice.wav?signature=voice",
-		"metadata":{"emotion_audio":"https://media.example.com/emotion.mp3?signature=emotion"}
+		"prompt_text":"secure references",
+		"prompt_simple":"https://media.example.com/voice.wav?signature=voice",
+		"emo_ref_audio":"https://media.example.com/emotion.mp3?signature=emotion",
+		"emo_control_method":"使用情感参考音频"
 	}`))
 	context.Request.Header.Set("Content-Type", "application/json")
 	context.Request.Header.Set("Idempotency-Key", "indextts2-reference-test")

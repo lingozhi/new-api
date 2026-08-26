@@ -104,9 +104,9 @@ func TestIndexTTSAudioReplayRunsBeforeChannelDistribution(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, user, token := setupAutoDLAudioRouterTest(t)
 	const idempotencyKey = "router-index-tts-replay"
-	requestBody := []byte(`{"model":"indextts2-v1","input":"replay without selecting a channel","voice":"https://media.example.com/speaker.wav","response_format":"wav"}`)
+	requestBody := []byte(`{"model":"indextts2-v1","prompt_text":"replay without selecting a channel","prompt_simple":"https://media.example.com/speaker.wav","emo_control_method":"使用情感向量控制","emo_happy":0.4,"emo_random":false}`)
 
-	var request dto.AudioRequest
+	var request dto.IndexTTS2SpeechRequest
 	require.NoError(t, common.Unmarshal(requestBody, &request))
 	canonicalRequest, err := common.Marshal(request)
 	require.NoError(t, err)
