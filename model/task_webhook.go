@@ -11,10 +11,21 @@ import (
 
 type TaskWebhookStatus string
 
+var ErrTaskWebhookNoLongerArmable = errors.New("task callback was cancelled before the task handle was exposed")
+
 const (
+	// Prepared webhooks are durable but cannot be delivered until the related
+	// task crosses the provider-call checkpoint. This prevents a local billing
+	// or validation failure from producing a callback for a task the API never
+	// accepted.
+	TaskWebhookStatusPrepared  TaskWebhookStatus = "prepared"
 	TaskWebhookStatusPending   TaskWebhookStatus = "pending"
 	TaskWebhookStatusDelivered TaskWebhookStatus = "delivered"
 	TaskWebhookStatusFailed    TaskWebhookStatus = "failed"
+	// Unaccepted means local submission failed before any successful response
+	// exposed the task handle. It is distinct from an exhausted delivery so a
+	// later idempotent replay can reject only callbacks that were never promised.
+	TaskWebhookStatusUnaccepted TaskWebhookStatus = "unaccepted"
 )
 
 type TaskWebhook struct {
@@ -100,6 +111,81 @@ func InsertTaskWithWebhook(task *Task, webhook *TaskWebhook) error {
 		webhook.TaskID = task.TaskID
 		return tx.Create(webhook).Error
 	})
+}
+
+func armPreparedTaskWebhookTx(tx *gorm.DB, taskID string, now int64) error {
+	if tx == nil || taskID == "" {
+		return errors.New("task webhook activation requires a transaction and task id")
+	}
+	return tx.Model(&TaskWebhook{}).
+		Where("task_id = ? AND status = ?", taskID, TaskWebhookStatusPrepared).
+		Updates(map[string]any{
+			"status":          TaskWebhookStatusPending,
+			"next_attempt_at": now,
+			"updated_at":      now,
+		}).Error
+}
+
+// ArmPreparedTaskWebhook records that the API has exposed this task handle (or
+// durably accepted it upstream), so every later terminal state must notify the
+// registered callback even if submission ultimately fails.
+func ArmPreparedTaskWebhook(taskID string) error {
+	if taskID == "" {
+		return errors.New("task webhook activation requires a task id")
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		now := common.GetTimestamp()
+		result := tx.Model(&TaskWebhook{}).
+			Where("task_id = ? AND status = ?", taskID, TaskWebhookStatusPrepared).
+			Updates(map[string]any{
+				"status":          TaskWebhookStatusPending,
+				"next_attempt_at": now,
+				"updated_at":      now,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 1 {
+			return nil
+		}
+
+		var webhook TaskWebhook
+		query := lockForUpdate(tx).
+			Select("status", "url").
+			Where("task_id = ?", taskID).
+			Limit(1).
+			Find(&webhook)
+		if query.Error != nil {
+			return query.Error
+		}
+		if query.RowsAffected == 0 {
+			return nil
+		}
+		if webhook.Status == TaskWebhookStatusUnaccepted {
+			return ErrTaskWebhookNoLongerArmable
+		}
+		return nil
+	})
+}
+
+func cancelUnacceptedTaskWebhookTx(tx *gorm.DB, taskID string, reason string, now int64) error {
+	if tx == nil || taskID == "" {
+		return errors.New("task webhook cancellation requires a transaction and task id")
+	}
+	if len(reason) > 2000 {
+		reason = reason[:2000]
+	}
+	return tx.Model(&TaskWebhook{}).
+		Where("task_id = ? AND status = ?", taskID, TaskWebhookStatusPrepared).
+		Updates(map[string]any{
+			"status":           TaskWebhookStatusUnaccepted,
+			"url":              "",
+			"secret":           "",
+			"lease_token":      "",
+			"lease_expires_at": 0,
+			"last_error":       reason,
+			"updated_at":       now,
+		}).Error
 }
 
 func FindPendingImageTasks(limit int) ([]*Task, error) {

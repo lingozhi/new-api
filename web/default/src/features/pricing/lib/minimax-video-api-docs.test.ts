@@ -80,6 +80,11 @@ describe('MiniMax-H3 video V2 API documentation', () => {
     assert.deepEqual(byName.get('resolution')?.enumValues, ['768P'])
     assert.equal(byName.get('duration')?.range, '4 ~ 15')
     assert.deepEqual(byName.get('ratio')?.enumValues, ['16:9', '9:16', '1:1'])
+    assert.equal(byName.get('callback_url')?.range, '≤ 2048 characters')
+    assert.match(
+      byName.get('callback_url')?.descriptionKey ?? '',
+      /public HTTPS URL.*challenge.*3 seconds.*terminal task results/
+    )
     assert.deepEqual(byName.get('aigc_watermark')?.enumValues, ['false'])
   })
 
@@ -110,6 +115,7 @@ describe('MiniMax-H3 video V2 API documentation', () => {
       assert.match(sample, /15 minutes|900|900_000/)
       assert.match(sample, /content.*url|content"\]\["url/i)
       assert.match(sample, /response\.ok|raise_for_status|http_code|HTTP/)
+      assert.doesNotMatch(sample, /callback_url/)
       assert.doesNotMatch(sample, /chat\/completions|messages/)
     }
   })
@@ -240,6 +246,17 @@ describe('MiniMax-H3 video V2 API documentation', () => {
     assert.match(guide, /adaptive/)
     assert.match(guide, /reference_video/)
     assert.match(guide, /callback_url/)
+    assert.match(guide, /publicly reachable HTTPS URL of at most 2048/)
+    assert.match(guide, /identical challenge value within 3 seconds/)
+    assert.match(guide, /only for terminal succeeded, failed, or cancelled/)
+    assert.match(guide, /exactly the same \{"task":\{\.\.\.\}\}/)
+    assert.match(guide, /up to five total attempts/)
+    assert.match(guide, /30, 60, 120, and 240 second delays/)
+    assert.match(guide, /X-Webhook-Delivery-Id/)
+    assert.match(guide, /X-Webhook-Timestamp/)
+    assert.match(guide, /at least once/)
+    assert.match(guide, /No callback signature is sent/)
+    assert.match(guide, /does not change task status or billing/)
   })
 
   test('uses per-second pricing and hides synthetic performance data', () => {

@@ -711,6 +711,7 @@ func ReplayAutoDLVideoGeneration(c *gin.Context) {
 		c.Next()
 		return
 	}
+	request.NormalizeCallbackURL()
 	canonicalRequest, err := common.Marshal(request)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.NewMiniMaxAPIErrorResponse(
@@ -757,6 +758,22 @@ func ReplayAutoDLVideoGeneration(c *gin.Context) {
 }
 
 func writeReplayedAutoDLVideoTask(c *gin.Context, task *model.Task) {
+	if err := model.ArmPreparedTaskWebhook(task.TaskID); err != nil {
+		statusCode := http.StatusInternalServerError
+		message := http.StatusText(statusCode)
+		if errors.Is(err, model.ErrTaskWebhookNoLongerArmable) {
+			statusCode = http.StatusConflict
+			message = "the original callback request was not accepted"
+		}
+		common.SysError(fmt.Sprintf("arm replayed AutoDL task callback failed: task_id=%s error=%v", task.TaskID, err))
+		c.JSON(statusCode, dto.NewMiniMaxAPIErrorResponse(
+			statusCode,
+			message,
+			c.GetString(common.RequestIdKey),
+		))
+		c.Abort()
+		return
+	}
 	c.Header("Idempotency-Replayed", "true")
 	c.Header("Location", "/v2/query/video_generation/"+task.TaskID)
 	if task.Status == model.TaskStatusReserving || task.Status == model.TaskStatusCheckpointPending {
@@ -764,6 +781,22 @@ func writeReplayedAutoDLVideoTask(c *gin.Context, task *model.Task) {
 	}
 	c.JSON(http.StatusOK, dto.MiniMaxVideoGenerationV2CreateResponse{TaskID: task.TaskID})
 	c.Abort()
+}
+
+func taskWebhookFromContext(c *gin.Context, status model.TaskWebhookStatus) *model.TaskWebhook {
+	value, exists := c.Get("task_request")
+	if !exists {
+		return nil
+	}
+	request, ok := value.(relaycommon.TaskSubmitReq)
+	if !ok || request.WebhookURL == "" {
+		return nil
+	}
+	return &model.TaskWebhook{
+		URL:    request.WebhookURL,
+		Secret: request.WebhookSecret,
+		Status: status,
+	}
 }
 
 func asyncImageEditIdentityRequest(formData url.Values) *dto.ImageRequest {
@@ -1539,7 +1572,8 @@ func RelayTask(c *gin.Context) {
 				TokenRequired: task.PrivateData.TokenBillingEnabled,
 				ExpectedQuota: expectedQuota,
 			}
-			if err := model.InsertPreparedTaskBillingReservation(task, nil, reservation); err != nil {
+			webhook := taskWebhookFromContext(c, model.TaskWebhookStatusPrepared)
+			if err := model.InsertPreparedTaskBillingReservation(task, webhook, reservation); err != nil {
 				if task.ClientRequestID != nil {
 					existing, exists, lookupErr := model.GetTaskByClientRequestID(platform, relayInfo.UserId, *task.ClientRequestID)
 					if lookupErr != nil {
@@ -1746,16 +1780,7 @@ func RelayTask(c *gin.Context) {
 			task.Quota = result.Quota
 			task.Data = result.TaskData
 			task.Action = relayInfo.Action
-			var webhook *model.TaskWebhook
-			if value, exists := c.Get("task_request"); exists {
-				if request, ok := value.(relaycommon.TaskSubmitReq); ok && request.WebhookURL != "" {
-					webhook = &model.TaskWebhook{
-						TaskID: task.TaskID,
-						URL:    request.WebhookURL,
-						Secret: request.WebhookSecret,
-					}
-				}
-			}
+			webhook := taskWebhookFromContext(c, model.TaskWebhookStatusPending)
 			if insertErr := model.InsertTaskWithWebhook(task, webhook); insertErr != nil {
 				common.SysError(fmt.Sprintf(
 					"insert accepted task failed: public_task_id=%s upstream_task_id=%s channel_id=%d error=%v",
@@ -1827,14 +1852,28 @@ func RelayTask(c *gin.Context) {
 			taskErr.Code,
 		))
 		service.LogTaskConsumption(c, relayInfo)
-		taskErr = nil
-		c.Header("Retry-After", "2")
-		if isIndexTTS2Speech {
-			writeAutoDLAudioPending(c, checkpointTask)
+		if armErr := model.ArmPreparedTaskWebhook(checkpointTask.TaskID); armErr != nil {
+			common.SysError(fmt.Sprintf(
+				"arm ambiguous AutoDL task callback failed: task_id=%s channel_id=%d error=%v",
+				checkpointTask.TaskID,
+				checkpointTask.ChannelId,
+				armErr,
+			))
+			taskErr = service.TaskErrorWrapperLocal(
+				errors.New("failed to persist AutoDL callback acceptance"),
+				"persist_callback_acceptance_failed",
+				http.StatusInternalServerError,
+			)
 		} else {
-			c.JSON(http.StatusOK, dto.MiniMaxVideoGenerationV2CreateResponse{TaskID: checkpointTask.TaskID})
+			taskErr = nil
+			c.Header("Retry-After", "2")
+			if isIndexTTS2Speech {
+				writeAutoDLAudioPending(c, checkpointTask)
+			} else {
+				c.JSON(http.StatusOK, dto.MiniMaxVideoGenerationV2CreateResponse{TaskID: checkpointTask.TaskID})
+			}
+			return
 		}
-		return
 	}
 
 	if taskErr != nil {

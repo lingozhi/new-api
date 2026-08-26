@@ -3791,6 +3791,36 @@ func asyncImageUpstreamStatus(err error) int {
 	return http.StatusBadGateway
 }
 
+type taskWebhookPayloadBuilder interface {
+	BuildTaskWebhookPayload(task *model.Task) (payload any, handled bool, err error)
+}
+
+func buildTaskWebhookPayload(task *model.Task) (any, error) {
+	if task.Platform == constant.TaskPlatformOpenAIImage {
+		return BuildImageTaskResponse(task), nil
+	}
+	if service.GetTaskAdaptorFunc != nil {
+		if adaptor := service.GetTaskAdaptorFunc(task.Platform); adaptor != nil {
+			if builder, ok := adaptor.(taskWebhookPayloadBuilder); ok {
+				payload, handled, err := builder.BuildTaskWebhookPayload(task)
+				if handled || err != nil {
+					return payload, err
+				}
+			}
+		}
+	}
+	return gin.H{
+		"task_id":    task.TaskID,
+		"platform":   task.Platform,
+		"status":     task.Status,
+		"progress":   task.Progress,
+		"result_url": task.GetResultURL(),
+		"error":      task.FailReason,
+		"created_at": task.SubmitTime,
+		"updated_at": task.UpdatedAt,
+	}, nil
+}
+
 func deliverDueImageWebhooks(ctx context.Context) (int, int, error) {
 	now := common.GetTimestamp()
 	webhooks, err := model.ClaimDueTaskWebhooks(now, now+int64(asyncImageWebhookLease/time.Second), asyncImageWebhookBatch)
@@ -3844,20 +3874,14 @@ func deliverDueImageWebhooks(ctx context.Context) (int, int, error) {
 				results <- deliveryResult{}
 				return
 			}
-			var payload any
-			if task.Platform == constant.TaskPlatformOpenAIImage {
-				payload = BuildImageTaskResponse(task)
-			} else {
-				payload = gin.H{
-					"task_id":    task.TaskID,
-					"platform":   task.Platform,
-					"status":     task.Status,
-					"progress":   task.Progress,
-					"result_url": task.GetResultURL(),
-					"error":      task.FailReason,
-					"created_at": task.SubmitTime,
-					"updated_at": task.UpdatedAt,
+			payload, err := buildTaskWebhookPayload(task)
+			if err != nil {
+				if persistErr := recordImageWebhookFailure(webhook, err); persistErr != nil {
+					results <- deliveryResult{err: persistErr}
+					return
 				}
+				results <- deliveryResult{retried: true}
+				return
 			}
 			if err := sendAsyncImageWebhook(ctx, webhookURL, secret, webhook.DeliveryID(), payload); err != nil {
 				if persistErr := recordImageWebhookFailure(webhook, err); persistErr != nil {

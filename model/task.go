@@ -667,35 +667,69 @@ func (t *Task) CompleteSubmissionCheckpoint(upstreamTaskID string, data json.Raw
 	privateData := t.PrivateData
 	privateData.UpstreamTaskID = upstreamTaskID
 	updatedAt := common.GetTimestamp()
-	result := DB.Model(&Task{}).
-		Where("id = ? AND task_id = ? AND status = ?", t.ID, t.TaskID, TaskStatusCheckpointPending).
-		Updates(map[string]any{
-			"status":       TaskStatusNotStart,
-			"progress":     "0%",
-			"quota":        quota,
-			"private_data": privateData,
-			"data":         data,
-			"updated_at":   updatedAt,
-		})
-	if result.Error != nil || result.RowsAffected != 1 {
-		var durable Task
-		reloadErr := DB.Where("id = ? AND task_id = ?", t.ID, t.TaskID).First(&durable).Error
+	completed := false
+	var durable Task
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&Task{}).
+			Where("id = ? AND task_id = ? AND status = ?", t.ID, t.TaskID, TaskStatusCheckpointPending).
+			Updates(map[string]any{
+				"status":       TaskStatusNotStart,
+				"progress":     "0%",
+				"quota":        quota,
+				"private_data": privateData,
+				"data":         data,
+				"updated_at":   updatedAt,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 1 {
+			if err := armPreparedTaskWebhookTx(tx, t.TaskID, updatedAt); err != nil {
+				return err
+			}
+			completed = true
+			return nil
+		}
+
+		if err := tx.Where("id = ? AND task_id = ?", t.ID, t.TaskID).First(&durable).Error; err != nil {
+			return err
+		}
+		if durable.Status != TaskStatusNotStart ||
+			durable.Progress != "0%" ||
+			durable.Quota != quota ||
+			durable.PrivateData.UpstreamTaskID != upstreamTaskID ||
+			!bytes.Equal(durable.Data, data) {
+			return nil
+		}
+		if err := armPreparedTaskWebhookTx(tx, t.TaskID, updatedAt); err != nil {
+			return err
+		}
+		completed = true
+		return nil
+	})
+	if err != nil {
+		var recovered Task
+		reloadErr := DB.Where("id = ? AND task_id = ?", t.ID, t.TaskID).First(&recovered).Error
 		if reloadErr == nil &&
-			durable.Status == TaskStatusNotStart &&
-			durable.Progress == "0%" &&
-			durable.Quota == quota &&
-			durable.PrivateData.UpstreamTaskID == upstreamTaskID &&
-			bytes.Equal(durable.Data, data) {
-			*t = durable
+			recovered.Status == TaskStatusNotStart &&
+			recovered.Progress == "0%" &&
+			recovered.Quota == quota &&
+			recovered.PrivateData.UpstreamTaskID == upstreamTaskID &&
+			bytes.Equal(recovered.Data, data) {
+			if armErr := ArmPreparedTaskWebhook(t.TaskID); armErr != nil {
+				return false, errors.Join(err, armErr)
+			}
+			*t = recovered
 			return true, nil
 		}
-		if result.Error != nil {
-			return false, result.Error
-		}
-		if reloadErr != nil {
-			return false, reloadErr
-		}
+		return false, err
+	}
+	if !completed {
 		return false, nil
+	}
+	if durable.ID != 0 {
+		*t = durable
+		return true, nil
 	}
 
 	t.Status = TaskStatusNotStart

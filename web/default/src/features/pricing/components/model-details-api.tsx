@@ -741,7 +741,7 @@ function MiniMaxVideoContractNotice() {
       <ul className='text-muted-foreground grid gap-x-6 gap-y-1.5 text-xs leading-relaxed sm:grid-cols-2'>
         <li>
           {t(
-            'This endpoint implements the MiniMax V2 request shape on the AutoDL workflow backend. Submit returns HTTP 200 with task_id; poll the authenticated query endpoint until the task is terminal.'
+            'This endpoint implements the MiniMax V2 request shape on the AutoDL workflow backend. Submit returns HTTP 200 with task_id; the gateway polls AutoDL in the background, and authenticated querying remains available.'
           )}
         </li>
         <li>
@@ -756,7 +756,17 @@ function MiniMaxVideoContractNotice() {
         </li>
         <li>
           {t(
-            '2K, adaptive ratio, first_frame, last_frame, reference_video, non-empty callback_url, and aigc_watermark=true are not supported by this AutoDL backend.'
+            '2K, adaptive ratio, first_frame, last_frame, reference_video, and aigc_watermark=true are not supported by this AutoDL backend.'
+          )}
+        </li>
+        <li>
+          {t(
+            'callback_url is optional and must be a public HTTPS URL of at most 2048 characters. It is challenge-verified within 3 seconds before submission and receives only terminal task payloads.'
+          )}
+        </li>
+        <li>
+          {t(
+            'Terminal callbacks use the query-response body and at-least-once delivery with stable ID and timestamp headers. Return 2xx to acknowledge; there is no signature, and failed delivery does not affect the task.'
           )}
         </li>
         <li>

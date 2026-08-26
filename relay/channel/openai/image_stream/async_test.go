@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	taskautodl "github.com/QuantumNous/new-api/relay/channel/task/autodl"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/service"
@@ -2537,6 +2538,56 @@ func TestDeliverDueImageWebhooksDeliversGenericTaskPayload(t *testing.T) {
 		assert.Equal(t, task.TaskID, body["task_id"])
 		assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), body["status"])
 		assert.Equal(t, "https://cdn.example.com/result.webp", body["result_url"])
+		return nil
+	}
+	t.Cleanup(func() { sendAsyncImageWebhook = previousSender })
+
+	delivered, retried, err := deliverDueImageWebhooks(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 1, delivered)
+	assert.Zero(t, retried)
+}
+
+func TestDeliverDueImageWebhooksUsesMiniMaxQueryPayload(t *testing.T) {
+	setupAsyncImageSubmitTestDB(t)
+	now := common.GetTimestamp()
+	task := &model.Task{
+		TaskID:    "task_minimax_callback_payload",
+		Platform:  constant.TaskPlatformAutoDL,
+		Action:    constant.TaskActionVideoGenerationV2,
+		Status:    model.TaskStatusSuccess,
+		CreatedAt: now - 30,
+		UpdatedAt: now,
+		Properties: model.Properties{
+			OriginModelName: constant.AutoDLModelMiniMaxH3,
+			Video: &relaycommon.TaskVideoProperties{
+				Resolution:      "768P",
+				Duration:        6,
+				Ratio:           "16:9",
+				InputImageCount: 1,
+			},
+		},
+		PrivateData: model.TaskPrivateData{ResultURL: "https://cdn.example.com/result.mp4"},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+	hook := &model.TaskWebhook{TaskID: task.TaskID, URL: "https://example.com/minimax-callback"}
+	require.NoError(t, model.DB.Create(hook).Error)
+
+	previousFactory := service.GetTaskAdaptorFunc
+	service.GetTaskAdaptorFunc = func(constant.TaskPlatform) service.TaskPollingAdaptor {
+		return &taskautodl.TaskAdaptor{}
+	}
+	t.Cleanup(func() { service.GetTaskAdaptorFunc = previousFactory })
+
+	previousSender := sendAsyncImageWebhook
+	sendAsyncImageWebhook = func(_ context.Context, _ string, _ string, deliveryID string, payload any) error {
+		assert.Equal(t, task.TaskID, deliveryID)
+		actual, err := common.Marshal(payload)
+		require.NoError(t, err)
+		expected, err := (&taskautodl.TaskAdaptor{}).ConvertToMiniMaxVideoV2(task)
+		require.NoError(t, err)
+		assert.JSONEq(t, string(expected), string(actual))
+		assert.NotContains(t, string(actual), `"task_id"`)
 		return nil
 	}
 	t.Cleanup(func() { sendAsyncImageWebhook = previousSender })

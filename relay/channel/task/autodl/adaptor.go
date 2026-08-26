@@ -33,6 +33,13 @@ type TaskAdaptor struct {
 	requestBody map[string]any
 }
 
+const (
+	maxCallbackURLCharacters       = 2048
+	validatedCallbackURLContextKey = "autodl_validated_callback_url"
+)
+
+var verifyJSONWebhookChallenge = service.VerifyJSONWebhookChallenge
+
 type taskPollError struct {
 	message   string
 	temporary bool
@@ -89,6 +96,51 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		if err != nil {
 			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 		}
+		callbackURL := request.NormalizeCallbackURL()
+		if utf8.RuneCountInString(callbackURL) > maxCallbackURLCharacters {
+			return service.TaskErrorWrapperLocal(
+				errors.New("callback_url must not exceed 2048 characters"),
+				"invalid_request",
+				http.StatusBadRequest,
+			)
+		}
+		if callbackURL != "" {
+			if !common.StableCryptoSecretConfigured() || !common.AsyncImageEncryptedWritesEnabled() || !constant.UpdateTask {
+				return service.TaskErrorWrapperLocal(
+					errors.New("callback_url is temporarily unavailable because secure background callbacks are not configured"),
+					"callback_unavailable",
+					http.StatusServiceUnavailable,
+				)
+			}
+			if c.GetString(validatedCallbackURLContextKey) != callbackURL {
+				userID := c.GetInt("id")
+				tokenID := common.GetContextKeyInt(c, constant.ContextKeyTokenId)
+				if err := verifyJSONWebhookChallenge(c.Request.Context(), callbackURL, userID, tokenID); err != nil {
+					if retryAfter, limited := service.WebhookChallengeRetryAfter(err); limited {
+						c.Header("Retry-After", strconv.Itoa(retryAfter))
+						return service.TaskErrorWrapperLocal(
+							errors.New("callback_url challenge rate limit exceeded"),
+							"callback_rate_limit_exceeded",
+							http.StatusTooManyRequests,
+						)
+					}
+					if errors.Is(err, service.ErrWebhookChallengePrincipalUnavailable) {
+						return service.TaskErrorWrapperLocal(
+							errors.New("authenticated callback challenge identity is unavailable"),
+							"callback_unavailable",
+							http.StatusInternalServerError,
+						)
+					}
+					return service.TaskErrorWrapperLocal(
+						errors.New("callback_url challenge validation failed: "+common.MaskSensitiveInfo(err.Error())),
+						"invalid_request",
+						http.StatusBadRequest,
+					)
+				}
+				c.Set(validatedCallbackURLContextKey, callbackURL)
+			}
+		}
+		c.Set("task_request", relaycommon.TaskSubmitReq{WebhookURL: callbackURL})
 
 		a.request = &request
 		a.workflowID = workflowID
@@ -481,11 +533,33 @@ func (a *TaskAdaptor) ValidateTaskSuccess(ctx context.Context, task *model.Task,
 }
 
 func (a *TaskAdaptor) ConvertToMiniMaxVideoV2(originTask *model.Task) ([]byte, error) {
+	response, err := a.buildMiniMaxVideoV2Response(originTask)
+	if err != nil {
+		return nil, err
+	}
+	return common.Marshal(response)
+}
+
+// BuildTaskWebhookPayload lets the shared durable webhook worker reuse the
+// exact MiniMax query response mapping instead of maintaining a second status
+// and result conversion path.
+func (a *TaskAdaptor) BuildTaskWebhookPayload(originTask *model.Task) (any, bool, error) {
+	if originTask == nil || originTask.Action != constant.TaskActionVideoGenerationV2 {
+		return nil, false, nil
+	}
+	response, err := a.buildMiniMaxVideoV2Response(originTask)
+	if err != nil {
+		return nil, true, err
+	}
+	return response, true, nil
+}
+
+func (a *TaskAdaptor) buildMiniMaxVideoV2Response(originTask *model.Task) (dto.MiniMaxVideoGenerationV2QueryResponse, error) {
 	if originTask == nil {
-		return nil, errors.New("task is required")
+		return dto.MiniMaxVideoGenerationV2QueryResponse{}, errors.New("task is required")
 	}
 	if originTask.Action != constant.TaskActionVideoGenerationV2 {
-		return nil, errors.New("task is not a MiniMax video generation")
+		return dto.MiniMaxVideoGenerationV2QueryResponse{}, errors.New("task is not a MiniMax video generation")
 	}
 
 	createdAt := originTask.CreatedAt
@@ -498,7 +572,7 @@ func (a *TaskAdaptor) ConvertToMiniMaxVideoV2(originTask *model.Task) ([]byte, e
 	}
 	status, err := miniMaxTaskStatus(originTask.Status)
 	if err != nil {
-		return nil, err
+		return dto.MiniMaxVideoGenerationV2QueryResponse{}, err
 	}
 
 	videoTask := dto.MiniMaxVideoTask{
@@ -536,7 +610,7 @@ func (a *TaskAdaptor) ConvertToMiniMaxVideoV2(originTask *model.Task) ([]byte, e
 		resultURL := strings.TrimSpace(originTask.PrivateData.ResultURL)
 		validatedURL, _, err := validateMediaURL(resultURL, mediaKindImage, 0)
 		if err != nil || strings.HasPrefix(strings.ToLower(validatedURL), "data:") {
-			return nil, errors.New("successful AutoDL task has no valid HTTPS video result")
+			return dto.MiniMaxVideoGenerationV2QueryResponse{}, errors.New("successful AutoDL task has no valid HTTPS video result")
 		}
 		videoTask.Content = &dto.MiniMaxVideoTaskOutput{URL: validatedURL}
 	}
@@ -553,7 +627,7 @@ func (a *TaskAdaptor) ConvertToMiniMaxVideoV2(originTask *model.Task) ([]byte, e
 		}
 	}
 
-	return common.Marshal(dto.MiniMaxVideoGenerationV2QueryResponse{Task: videoTask})
+	return dto.MiniMaxVideoGenerationV2QueryResponse{Task: videoTask}, nil
 }
 
 func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string, map[string]any, *relaycommon.TaskVideoProperties, error) {
@@ -574,9 +648,6 @@ func buildWorkflowRequest(request *dto.MiniMaxVideoGenerationV2Request) (string,
 	}
 	if *request.Duration < 4 || *request.Duration > 15 {
 		return "", nil, nil, errors.New("duration must be an integer between 4 and 15")
-	}
-	if request.CallbackURL != nil && strings.TrimSpace(*request.CallbackURL) != "" {
-		return "", nil, nil, errors.New("callback_url is not supported by the AutoDL workflow backend")
 	}
 	if request.AIGCWatermark != nil && *request.AIGCWatermark {
 		return "", nil, nil, errors.New("aigc_watermark=true is not supported by the AutoDL workflow backend")

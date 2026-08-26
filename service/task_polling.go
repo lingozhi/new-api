@@ -119,6 +119,12 @@ func failTasksWithoutRefund(ctx context.Context, tasks []*model.Task, reason str
 			continue
 		}
 		oldStatus := task.Status
+		if task.Platform == constant.TaskPlatformAutoDL && oldStatus == model.TaskStatusCheckpointPending {
+			if err := model.ArmPreparedTaskWebhook(task.TaskID); err != nil {
+				combinedErr = errors.Join(combinedErr, fmt.Errorf("arm callback before failing ambiguous task %s: %w", task.TaskID, err))
+				continue
+			}
+		}
 		task.Status = model.TaskStatusFailure
 		task.Progress = taskcommon.ProgressComplete
 		task.FailReason = reason

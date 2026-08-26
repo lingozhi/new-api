@@ -1970,6 +1970,11 @@ func FailActiveAutoDLTaskBillingReservation(task *Task, fromStatus TaskStatus) (
 				if lockedTask.Status != TaskStatusFailure {
 					return errors.New("refunded AutoDL reservation has a non-failed task")
 				}
+				if fromStatus == TaskStatusCheckpointPending {
+					if err := cancelUnacceptedTaskWebhookTx(tx, task.TaskID, task.FailReason, common.GetTimestamp()); err != nil {
+						return err
+					}
+				}
 				copy := lockedReservation
 				refundedReservation = &copy
 				return nil
@@ -2056,6 +2061,11 @@ func FailActiveAutoDLTaskBillingReservation(task *Task, fromStatus TaskStatus) (
 			}
 			if ledger.RowsAffected != 1 {
 				return errors.New("AutoDL billing reservation refund lost")
+			}
+			if fromStatus == TaskStatusCheckpointPending {
+				if err := cancelUnacceptedTaskWebhookTx(tx, task.TaskID, reason, now); err != nil {
+					return err
+				}
 			}
 
 			lockedReservation.Status = ImageBillingReservationRefunded
@@ -2200,6 +2210,9 @@ func refundImageBillingReservationDB(taskID string, reason string) (bool, int, i
 		}
 		if taskUpdate.RowsAffected != 1 {
 			return errors.New("image billing reservation task terminalization lost")
+		}
+		if err := cancelUnacceptedTaskWebhookTx(tx, taskID, reason, now); err != nil {
+			return err
 		}
 		if task.Platform == constant.TaskPlatformOpenAIImage {
 			if err := scheduleImageInputCleanupTx(tx, taskID, now); err != nil {

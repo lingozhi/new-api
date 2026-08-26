@@ -185,6 +185,7 @@ func TestActiveAutoDLReservationStopsEscrowingAfterTaskTerminalState(t *testing.
 
 func TestAutoDLReservationActivatesCheckpointBeforeProviderPolling(t *testing.T) {
 	truncateTables(t)
+	require.NoError(t, DB.AutoMigrate(&TaskWebhook{}))
 
 	user := &User{
 		Username: "autodl-activation-user",
@@ -214,7 +215,12 @@ func TestAutoDLReservationActivatesCheckpointBeforeProviderPolling(t *testing.T)
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	require.NoError(t, InsertPreparedTaskBillingReservation(task, nil, &ImageBillingReservation{
+	webhook := &TaskWebhook{
+		TaskID: task.TaskID,
+		URL:    "https://example.com/minimax-callback",
+		Status: TaskWebhookStatusPrepared,
+	}
+	require.NoError(t, InsertPreparedTaskBillingReservation(task, webhook, &ImageBillingReservation{
 		TaskID:        task.TaskID,
 		RequestID:     "request_autodl_activation",
 		UserID:        user.Id,
@@ -230,6 +236,8 @@ func TestAutoDLReservationActivatesCheckpointBeforeProviderPolling(t *testing.T)
 	assert.True(t, activated)
 	assert.EqualValues(t, TaskStatusCheckpointPending, task.Status)
 	assert.Empty(t, GetAllUnFinishSyncTasks(10))
+	require.NoError(t, DB.First(webhook, webhook.ID).Error)
+	assert.Equal(t, TaskWebhookStatusPrepared, webhook.Status)
 
 	reservation, err := GetImageBillingReservation(task.TaskID)
 	require.NoError(t, err)
@@ -245,6 +253,8 @@ func TestAutoDLReservationActivatesCheckpointBeforeProviderPolling(t *testing.T)
 	require.NoError(t, err)
 	assert.True(t, completed)
 	require.Len(t, GetAllUnFinishSyncTasks(10), 1)
+	require.NoError(t, DB.First(webhook, webhook.ID).Error)
+	assert.Equal(t, TaskWebhookStatusPending, webhook.Status)
 }
 
 func TestActiveAutoDLReservationRefundRestoresLegacyWalletAndTokenAcrossQuotaCeiling(t *testing.T) {
@@ -280,7 +290,12 @@ func TestActiveAutoDLReservationRefundRestoresLegacyWalletAndTokenAcrossQuotaCei
 		CreatedAt:  now,
 		UpdatedAt:  now,
 	}
-	require.NoError(t, InsertPreparedTaskBillingReservation(task, nil, &ImageBillingReservation{
+	webhook := &TaskWebhook{
+		TaskID: task.TaskID,
+		URL:    "https://example.com/minimax-callback?token=secret",
+		Status: TaskWebhookStatusPrepared,
+	}
+	require.NoError(t, InsertPreparedTaskBillingReservation(task, webhook, &ImageBillingReservation{
 		TaskID:        task.TaskID,
 		RequestID:     "request_autodl_legacy_refund",
 		UserID:        user.Id,
@@ -328,6 +343,10 @@ func TestActiveAutoDLReservationRefundRestoresLegacyWalletAndTokenAcrossQuotaCei
 	assert.Equal(t, ImageBillingReservationRefunded, reservation.Status)
 	assert.Zero(t, reservation.WalletReserved)
 	assert.Zero(t, reservation.TokenReserved)
+	require.NoError(t, DB.First(webhook, webhook.ID).Error)
+	assert.Equal(t, TaskWebhookStatusUnaccepted, webhook.Status)
+	assert.Empty(t, webhook.URL)
+	assert.Empty(t, webhook.Secret)
 
 	handled, won, err = FailActiveAutoDLTaskBillingReservation(task, fromStatus)
 	require.NoError(t, err)

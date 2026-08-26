@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 )
@@ -18,6 +19,21 @@ type MiniMaxVideoGenerationV2Request struct {
 	Ratio         *string                  `json:"ratio,omitempty"`
 	CallbackURL   *string                  `json:"callback_url,omitempty"`
 	AIGCWatermark *bool                    `json:"aigc_watermark,omitempty"`
+}
+
+// NormalizeCallbackURL gives request validation and idempotency hashing the
+// same representation for an omitted, blank, or surrounding-space URL.
+func (r *MiniMaxVideoGenerationV2Request) NormalizeCallbackURL() string {
+	if r == nil || r.CallbackURL == nil {
+		return ""
+	}
+	callbackURL := strings.TrimSpace(*r.CallbackURL)
+	if callbackURL == "" {
+		r.CallbackURL = nil
+		return ""
+	}
+	r.CallbackURL = &callbackURL
+	return callbackURL
 }
 
 type MiniMaxVideoContentItems []MiniMaxVideoContentItem

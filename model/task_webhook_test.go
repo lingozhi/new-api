@@ -64,6 +64,108 @@ func TestInsertTaskWithWebhookAndClaimImageTask(t *testing.T) {
 	assert.Equal(t, TaskWebhookStatusPending, due[0].Status)
 }
 
+func TestPreparedTaskWebhookCannotDeliverUntilArmed(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.AutoMigrate(&TaskWebhook{}))
+	now := common.GetTimestamp()
+	task := &Task{
+		TaskID:     "task_prepared_webhook",
+		Platform:   constant.TaskPlatformAutoDL,
+		Status:     TaskStatusSuccess,
+		SubmitTime: now,
+	}
+	require.NoError(t, DB.Create(task).Error)
+	hook := &TaskWebhook{
+		TaskID: task.TaskID,
+		URL:    "https://example.com/minimax-callback",
+		Status: TaskWebhookStatusPrepared,
+	}
+	require.NoError(t, DB.Create(hook).Error)
+
+	due, err := FindDueTaskWebhooks(now, 10)
+	require.NoError(t, err)
+	assert.Empty(t, due)
+
+	require.NoError(t, ArmPreparedTaskWebhook(task.TaskID))
+	due, err = FindDueTaskWebhooks(now, 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	assert.Equal(t, hook.ID, due[0].ID)
+}
+
+func TestCancelledTaskWebhookCannotBeArmedByLateReplay(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.AutoMigrate(&TaskWebhook{}))
+	now := common.GetTimestamp()
+	hook := &TaskWebhook{
+		TaskID: "task_cancelled_before_replay",
+		URL:    "https://example.com/minimax-callback",
+		Status: TaskWebhookStatusPrepared,
+	}
+	require.NoError(t, DB.Create(hook).Error)
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return cancelUnacceptedTaskWebhookTx(tx, hook.TaskID, "submission rejected", now)
+	}))
+
+	err := ArmPreparedTaskWebhook(hook.TaskID)
+	assert.ErrorIs(t, err, ErrTaskWebhookNoLongerArmable)
+}
+
+func TestCancellingUnacceptedTaskWebhookClearsCredentials(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.AutoMigrate(&TaskWebhook{}))
+	now := common.GetTimestamp()
+	hook := &TaskWebhook{
+		TaskID: "task_cancel_prepared_webhook",
+		URL:    "https://example.com/minimax-callback?token=secret",
+		Secret: "secret",
+		Status: TaskWebhookStatusPrepared,
+	}
+	require.NoError(t, DB.Create(hook).Error)
+
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return cancelUnacceptedTaskWebhookTx(tx, hook.TaskID, "submission rejected", now)
+	}))
+	require.NoError(t, DB.First(hook, hook.ID).Error)
+	assert.Equal(t, TaskWebhookStatusUnaccepted, hook.Status)
+	assert.Equal(t, "submission rejected", hook.LastError)
+	assert.Empty(t, hook.URL)
+	assert.Empty(t, hook.Secret)
+}
+
+func TestCancellingAfterTaskHandleExposurePreservesCallback(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.AutoMigrate(&TaskWebhook{}))
+	now := common.GetTimestamp()
+	task := &Task{
+		TaskID:     "task_callback_promised_before_rejection",
+		Platform:   constant.TaskPlatformAutoDL,
+		Status:     TaskStatusFailure,
+		SubmitTime: now,
+	}
+	require.NoError(t, DB.Create(task).Error)
+	hook := &TaskWebhook{
+		TaskID: task.TaskID,
+		URL:    "https://example.com/minimax-callback",
+		Status: TaskWebhookStatusPrepared,
+	}
+	require.NoError(t, DB.Create(hook).Error)
+	require.NoError(t, ArmPreparedTaskWebhook(task.TaskID))
+
+	require.NoError(t, DB.Transaction(func(tx *gorm.DB) error {
+		return cancelUnacceptedTaskWebhookTx(tx, task.TaskID, "submission rejected", now)
+	}))
+	require.NoError(t, DB.First(hook, hook.ID).Error)
+	assert.Equal(t, TaskWebhookStatusPending, hook.Status)
+	webhookURL, _, err := hook.DeliveryCredentials()
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/minimax-callback", webhookURL)
+	due, err := FindDueTaskWebhooks(now, 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	assert.Equal(t, hook.ID, due[0].ID)
+}
+
 func TestTaskWebhookReaderFirstModeWritesLegacyCredentials(t *testing.T) {
 	truncateTables(t)
 	t.Setenv("ASYNC_IMAGE_ENCRYPTED_WRITES_ENABLED", "false")
@@ -122,6 +224,22 @@ func TestTaskWebhookFailureClearsCallbackCredentials(t *testing.T) {
 	assert.Equal(t, TaskWebhookStatusFailed, hook.Status)
 	assert.Empty(t, hook.URL)
 	assert.Empty(t, hook.Secret)
+}
+
+func TestExhaustedTaskWebhookRemainsReplayable(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.AutoMigrate(&TaskWebhook{}))
+
+	hook := &TaskWebhook{
+		TaskID: "task_exhausted_webhook_replay",
+		URL:    "https://example.com/minimax-callback",
+		Status: TaskWebhookStatusPending,
+	}
+	require.NoError(t, DB.Create(hook).Error)
+	require.NoError(t, MarkTaskWebhookFailed(hook, "delivery exhausted"))
+	assert.Equal(t, TaskWebhookStatusFailed, hook.Status)
+
+	require.NoError(t, ArmPreparedTaskWebhook(hook.TaskID))
 }
 
 func TestFindDueTaskWebhooksIncludesOrphanForTerminalCleanup(t *testing.T) {

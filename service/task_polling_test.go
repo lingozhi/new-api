@@ -274,6 +274,12 @@ func TestStaleAutoDLSubmissionCheckpointIsFailedWithoutRefundOrResubmit(t *testi
 	task.SubmitTime = time.Now().Add(-taskSubmissionCheckpointTimeout - time.Second).Unix()
 	task.UpdatedAt = task.SubmitTime
 	require.NoError(t, model.DB.Create(task).Error)
+	webhook := &model.TaskWebhook{
+		TaskID: task.TaskID,
+		URL:    "https://example.com/minimax-callback",
+		Status: model.TaskWebhookStatusPrepared,
+	}
+	require.NoError(t, model.DB.Create(webhook).Error)
 
 	sweepStaleTaskSubmissionCheckpoints(context.Background())
 
@@ -285,6 +291,12 @@ func TestStaleAutoDLSubmissionCheckpointIsFailedWithoutRefundOrResubmit(t *testi
 	assert.Equal(t, chargedUserQuota, getUserQuota(t, userID))
 	assert.Equal(t, chargedTokenQuota, getTokenRemainQuota(t, tokenID))
 	assert.Equal(t, preConsumed, getTokenUsedQuota(t, tokenID))
+	require.NoError(t, model.DB.First(webhook, webhook.ID).Error)
+	assert.Equal(t, model.TaskWebhookStatusPending, webhook.Status)
+	due, err := model.FindDueTaskWebhooks(time.Now().Unix(), 10)
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	assert.Equal(t, webhook.ID, due[0].ID)
 }
 
 func TestRejectedAutoDLSubmissionRefundIsRecoveredBySweep(t *testing.T) {

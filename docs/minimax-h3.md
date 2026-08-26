@@ -1,8 +1,8 @@
 # MiniMax-H3 视频生成接口
 
-`MiniMax-H3` 通过 MiniMax V2 风格的异步接口接入：先调用 `POST /v2/video_generation` 创建任务，再调用 `GET /v2/query/video_generation/{task_id}` 查询任务状态。
+`MiniMax-H3` 通过 MiniMax V2 风格的异步接口接入：调用 `POST /v2/video_generation` 创建任务后，可通过 `GET /v2/query/video_generation/{task_id}` 查询状态，也可选择通过 `callback_url` 接收终态结果。
 
-本文描述的是当前 AutoDL 通道实际开放的能力子集，不是 MiniMax 官方接口的完整能力。当前只支持 768P、4～15 秒，以及文生视频、参考图、参考图加参考音频三种工作流；不支持 2K、自适应画幅、首尾帧、参考视频、回调或 AIGC 水印。
+本文描述的是当前 AutoDL 通道实际开放的能力子集，不是 MiniMax 官方接口的完整能力。当前只支持 768P、4～15 秒，以及文生视频、参考图、参考图加参考音频三种工作流；不支持 2K、自适应画幅、首尾帧、参考视频或 AIGC 水印。回调仅在任务进入 `succeeded`、`failed` 或 `cancelled` 终态时发送，不会像 MiniMax 官方完整回调那样逐次推送每个状态变化。
 
 ## 接口概览
 
@@ -30,9 +30,8 @@ Authorization: Bearer sk-your-api-key
 | `resolution` | string | 是 | 固定为 `768P`；不支持 `2K` |
 | `duration` | integer | 是 | 4～15 秒 |
 | `ratio` | string | 是 | 必须显式填写；支持情况见下表 |
+| `callback_url` | string | 否 | 公网可访问的 HTTPS URL，最长 2048 个字符；创建时先进行 challenge 校验 |
 | `aigc_watermark` | boolean | 否 | 只能省略或传 `false`；`true` 不受支持 |
-
-不要传 `callback_url`。当前通道不支持回调，应使用查询接口轮询。
 
 画幅比例支持情况：
 
@@ -107,6 +106,41 @@ data URI 限制：
 - `mm_file:` 不受支持。
 
 公网 URL 的媒体内容由上游读取；网关不会在本地下载它来验证尺寸或时长。请确保 URL 在任务执行期间保持可访问。
+
+### `callback_url` 回调
+
+`callback_url` 可选。它必须是公网可访问的 HTTPS URL，最长 2048 个字符。建议在创建任务前先部署好回调接收器；本文的快速开始示例默认不传该字段，避免复制后向无法校验的示例地址提交。
+
+创建请求中带有 `callback_url` 时，网关会先向该地址发送 challenge：
+
+```http
+POST /your-callback-path HTTP/1.1
+Content-Type: application/json
+
+{"challenge":"gateway-generated-value"}
+```
+
+接收器必须在 3 秒内返回 2xx，并以 JSON 原样回显同一个 `challenge` 值：
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"challenge":"gateway-generated-value"}
+```
+
+只有 challenge 校验通过后，网关才会向 AutoDL 提交任务，并在后台轮询上游状态。本兼容层只在任务进入 `succeeded`、`failed` 或 `cancelled` 时发送终态回调；不会推送 `queued` 或 `running` 状态变化。终态回调的 JSON 请求体与查询接口当时返回的 `{"task": {...}}` 结构完全相同。
+
+challenge 请求受用户和 API Key 双重限流，并受全局并发保护。请求过于频繁或当前校验容量已满时，创建接口返回 `429 callback_rate_limit_exceeded`，同时通过 `Retry-After` 响应头给出建议重试秒数；失败的 challenge 尝试也会计入限流。
+
+终态回调包含：
+
+- `X-Webhook-Delivery-Id`：同一任务重试时保持不变，接收方应用它去重。
+- `X-Webhook-Timestamp`：本次发送的 Unix 时间戳（秒）。
+
+接收器返回任意 2xx 即表示已接收。重定向、非 2xx 响应、网络错误或超时都视为发送失败；包含首次发送在内最多尝试 5 次，后续四次重试分别延迟 30、60、120、240 秒。回调是“至少一次”投递：如果接收器已处理请求但确认响应丢失，可能收到重复请求。
+
+当前接口没有 `callback_secret` 字段，网关也不发送回调签名。应使用不可猜测的回调路径，核心状态变更还应通过带 Bearer Token 的查询接口复核。回调最终投递失败不会改变任务状态或计费；查询接口在任务创建后 7 天内始终可作为回退方案。
 
 ### 文生视频示例
 

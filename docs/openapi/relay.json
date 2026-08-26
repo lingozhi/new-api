@@ -454,7 +454,7 @@
       "post": {
         "summary": "创建 MiniMax-H3 视频任务",
         "deprecated": false,
-        "description": "使用 MiniMax V2 兼容请求创建异步视频任务。当前 AutoDL 通道只支持 MiniMax-H3 的受限子集：768P、4～15 秒、显式画幅比例，以及文生视频、参考图、参考图加参考音频。按请求中的 duration 秒数计费。",
+        "description": "使用 MiniMax V2 兼容请求创建异步视频任务。当前 AutoDL 通道只支持 MiniMax-H3 的受限子集：768P、4～15 秒、显式画幅比例，以及文生视频、参考图、参考图加参考音频。可选 callback_url 会在创建时通过 challenge 校验，并在网关后台轮询 AutoDL 后只推送终态结果。按请求中的 duration 秒数计费。",
         "operationId": "createMiniMaxH3Video",
         "tags": [
           "视频生成/MiniMax V2"
@@ -523,6 +523,59 @@
                     "ratio": "16:9"
                   }
                 }
+              }
+            }
+          }
+        },
+        "callbacks": {
+          "callbackHandshakeAndTerminalResult": {
+            "{$request.body#/callback_url}": {
+              "post": {
+                "summary": "校验回调地址或推送终态结果",
+                "description": "创建时先 POST challenge，接收器必须在 3 秒内以 2xx JSON 原样回显 challenge。challenge 受用户和 API Key 双重限流及全局并发保护，超限时创建接口返回 429 和 Retry-After。校验成功后，网关在后台轮询 AutoDL，并只在任务进入 succeeded、failed 或 cancelled 终态时推送与查询接口完全相同的请求体，不推送 queued 或 running 变化。终态投递为至少一次；重定向、非 2xx、网络错误和超时按 30/60/120/240 秒退避，最多尝试 5 次。不发送回调签名；投递失败不影响任务状态或计费，认证查询接口在 7 天内可作为回退。",
+                "parameters": [
+                  {
+                    "name": "X-Webhook-Delivery-Id",
+                    "in": "header",
+                    "required": false,
+                    "description": "仅终态投递携带。同一任务重试时保持稳定，用于去重。",
+                    "schema": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "name": "X-Webhook-Timestamp",
+                    "in": "header",
+                    "required": false,
+                    "description": "仅终态投递携带。发送时的 Unix 时间戳（秒）。",
+                    "schema": {
+                      "type": "string"
+                    }
+                  }
+                ],
+                "requestBody": {
+                  "required": true,
+                  "content": {
+                    "application/json": {
+                      "schema": {
+                        "oneOf": [
+                          {
+                            "$ref": "#/components/schemas/MiniMaxH3WebhookChallenge"
+                          },
+                          {
+                            "$ref": "#/components/schemas/MiniMaxH3VideoQueryResponse"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                "responses": {
+                  "2XX": {
+                    "description": "challenge 请求需在 3 秒内以 JSON 原样回显 challenge；终态投递返回任意 2xx 即确认成功。"
+                  }
+                },
+                "security": []
               }
             }
           }
@@ -2871,12 +2924,25 @@
           },
           "callback_url": {
             "type": "string",
-            "maxLength": 0,
-            "deprecated": true,
-            "description": "MiniMax V2 保留字段。当前 AutoDL 通道不支持回调；请省略该字段，非空值会被拒绝。"
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "可选的公网 HTTPS URL。创建时网关先 POST {\"challenge\":\"...\"}，接收器必须在 3 秒内以 2xx JSON 原样回显 challenge；challenge 超限时创建接口返回 429 和 Retry-After。通过后网关提交并后台轮询 AutoDL，只推送 succeeded、failed 或 cancelled 终态。终态请求体与查询响应相同。"
           }
         },
-        "description": "当前通道不支持 callback_url；请求 JSON 最大 64 MiB。"
+        "description": "请求 JSON 最大 64 MiB。callback_url 可选，最长 2048 个字符；它只接收终态回调，查询接口仍可在 7 天内使用。"
+      },
+      "MiniMaxH3WebhookChallenge": {
+        "type": "object",
+        "required": [
+          "challenge"
+        ],
+        "properties": {
+          "challenge": {
+            "type": "string",
+            "description": "网关生成的随机值。接收器必须在 3 秒内以 JSON 原样回显。"
+          }
+        },
+        "additionalProperties": false
       },
       "MiniMaxH3ContentItem": {
         "oneOf": [

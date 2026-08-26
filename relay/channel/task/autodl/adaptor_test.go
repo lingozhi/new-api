@@ -2,6 +2,8 @@ package autodl
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -140,6 +142,157 @@ func TestTaskAdaptorEnforcesOfficialRequestBodySizeLimit(t *testing.T) {
 
 	atLimitContext, atLimitInfo := newContext(maxRequestBodyBytes)
 	assert.Nil(t, (&TaskAdaptor{}).ValidateRequestAndSetAction(atLimitContext, atLimitInfo))
+}
+
+func TestTaskAdaptorValidatesAndStoresMiniMaxCallbackWithoutForwardingIt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("CRYPTO_SECRET", "callback-test-secret")
+	t.Setenv("ASYNC_IMAGE_ENCRYPTED_WRITES_ENABLED", "true")
+	previousUpdateTask := constant.UpdateTask
+	constant.UpdateTask = true
+	t.Cleanup(func() { constant.UpdateTask = previousUpdateTask })
+
+	previousVerifier := verifyJSONWebhookChallenge
+	verificationCalls := 0
+	verifyJSONWebhookChallenge = func(_ context.Context, callbackURL string, userID int, tokenID int) error {
+		verificationCalls++
+		assert.Equal(t, "https://callbacks.example.com/minimax?token=secret", callbackURL)
+		assert.Equal(t, 17, userID)
+		assert.Equal(t, 29, tokenID)
+		return nil
+	}
+	t.Cleanup(func() { verifyJSONWebhookChallenge = previousVerifier })
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("id", 17)
+	common.SetContextKey(c, constant.ContextKeyTokenId, 29)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v2/video_generation", strings.NewReader(`{
+		"model":"MiniMax-H3",
+		"content":[{"type":"text","text":"A paper boat"}],
+		"resolution":"768P",
+		"duration":6,
+		"ratio":"16:9",
+		"callback_url":"  https://callbacks.example.com/minimax?token=secret  "
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	adaptor := &TaskAdaptor{}
+
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	assert.Equal(t, 1, verificationCalls, "channel retries must reuse the successful challenge")
+	require.NotNil(t, adaptor.request.CallbackURL)
+	assert.Equal(t, "https://callbacks.example.com/minimax?token=secret", *adaptor.request.CallbackURL)
+	taskRequest, err := relaycommon.GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "https://callbacks.example.com/minimax?token=secret", taskRequest.WebhookURL)
+
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	data, err := io.ReadAll(body)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "callback")
+	assert.NotContains(t, string(data), "token=secret")
+}
+
+func TestTaskAdaptorRejectsMiniMaxCallbackWhenSecureWorkerIsUnavailable(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("CRYPTO_SECRET", "")
+	t.Setenv("ASYNC_IMAGE_ENCRYPTED_WRITES_ENABLED", "true")
+	previousUpdateTask := constant.UpdateTask
+	constant.UpdateTask = true
+	t.Cleanup(func() { constant.UpdateTask = previousUpdateTask })
+
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v2/video_generation", strings.NewReader(`{
+		"model":"MiniMax-H3",
+		"content":[{"type":"text","text":"A paper boat"}],
+		"resolution":"768P",
+		"duration":6,
+		"ratio":"16:9",
+		"callback_url":"https://callbacks.example.com/minimax"
+	}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}})
+	require.NotNil(t, taskErr)
+	assert.Equal(t, http.StatusServiceUnavailable, taskErr.StatusCode)
+	assert.Equal(t, "callback_unavailable", taskErr.Code)
+}
+
+func TestTaskAdaptorRejectsInvalidMiniMaxCallbackBeforeSubmission(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("CRYPTO_SECRET", "callback-test-secret")
+	t.Setenv("ASYNC_IMAGE_ENCRYPTED_WRITES_ENABLED", "true")
+	previousUpdateTask := constant.UpdateTask
+	constant.UpdateTask = true
+	t.Cleanup(func() { constant.UpdateTask = previousUpdateTask })
+
+	previousVerifier := verifyJSONWebhookChallenge
+	t.Cleanup(func() { verifyJSONWebhookChallenge = previousVerifier })
+
+	t.Run("URL exceeds the documented limit", func(t *testing.T) {
+		verificationCalls := 0
+		verifyJSONWebhookChallenge = func(context.Context, string, int, int) error {
+			verificationCalls++
+			return nil
+		}
+		request := newMiniMaxRequest(6, "16:9", textContent("A paper boat"))
+		request.CallbackURL = pointer("https://callbacks.example.com/" + strings.Repeat("a", maxCallbackURLCharacters))
+		body, err := common.Marshal(request)
+		require.NoError(t, err)
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v2/video_generation", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}})
+		require.NotNil(t, taskErr)
+		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+		assert.Contains(t, taskErr.Message, "2048 characters")
+		assert.Zero(t, verificationCalls)
+	})
+
+	t.Run("challenge is not echoed", func(t *testing.T) {
+		verifyJSONWebhookChallenge = func(context.Context, string, int, int) error {
+			return errors.New("challenge mismatch")
+		}
+		request := newMiniMaxRequest(6, "16:9", textContent("A paper boat"))
+		request.CallbackURL = pointer("https://callbacks.example.com/minimax")
+		body, err := common.Marshal(request)
+		require.NoError(t, err)
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v2/video_generation", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}})
+		require.NotNil(t, taskErr)
+		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+		assert.Contains(t, taskErr.Message, "challenge mismatch")
+	})
+
+	t.Run("challenge admission is rate limited", func(t *testing.T) {
+		verifyJSONWebhookChallenge = func(context.Context, string, int, int) error {
+			return &service.WebhookChallengeAdmissionError{RetryAfterSeconds: 7}
+		}
+		request := newMiniMaxRequest(6, "16:9", textContent("A paper boat"))
+		request.CallbackURL = pointer("https://callbacks.example.com/minimax")
+		body, err := common.Marshal(request)
+		require.NoError(t, err)
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPost, "/v2/video_generation", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}})
+		require.NotNil(t, taskErr)
+		assert.Equal(t, http.StatusTooManyRequests, taskErr.StatusCode)
+		assert.Equal(t, "callback_rate_limit_exceeded", taskErr.Code)
+		assert.Equal(t, "7", recorder.Header().Get("Retry-After"))
+	})
 }
 
 func TestBuildWorkflowRequestRejectsFirstAndLastFramesWithoutAdaptiveRatioSupport(t *testing.T) {
@@ -282,15 +435,6 @@ func TestBuildWorkflowRequestRejectsUnsupportedMiniMaxCapabilities(t *testing.T)
 			name:      "reference audio without image",
 			request:   newMiniMaxRequest(6, "16:9", textContent("Follow the voice"), audioContent("https://cdn.example.com/voice.wav")),
 			wantError: "requires at least one reference_image",
-		},
-		{
-			name: "callback URL",
-			request: func() *dto.MiniMaxVideoGenerationV2Request {
-				request := newMiniMaxRequest(6, "16:9", textContent("A city skyline"))
-				request.CallbackURL = pointer("https://example.com/callback")
-				return request
-			}(),
-			wantError: "callback_url is not supported",
 		},
 		{
 			name: "AIGC watermark",

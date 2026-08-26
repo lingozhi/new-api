@@ -323,6 +323,12 @@ func TestCompleteSubmissionCheckpointMakesTaskPollableAtomically(t *testing.T) {
 		},
 	}
 	insertTask(t, task)
+	webhook := &TaskWebhook{
+		TaskID: task.TaskID,
+		URL:    "https://example.com/minimax-callback",
+		Status: TaskWebhookStatusPrepared,
+	}
+	require.NoError(t, DB.Create(webhook).Error)
 	assert.Empty(t, GetAllUnFinishSyncTasks(10))
 
 	completed, err := task.CompleteSubmissionCheckpoint(
@@ -341,6 +347,8 @@ func TestCompleteSubmissionCheckpointMakesTaskPollableAtomically(t *testing.T) {
 	assert.Equal(t, 654, stored.Quota)
 	assert.JSONEq(t, `{"code":"Success","data":{"status":"QUEUED"}}`, string(stored.Data))
 	require.Len(t, GetAllUnFinishSyncTasks(10), 1)
+	require.NoError(t, DB.First(webhook, webhook.ID).Error)
+	assert.Equal(t, TaskWebhookStatusPending, webhook.Status)
 
 	completed, err = task.CompleteSubmissionCheckpoint(
 		"upstream-task-id",
