@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
@@ -525,7 +526,14 @@ func (a *TaskAdaptor) ValidateTaskSuccess(ctx context.Context, task *model.Task,
 	if result == nil || strings.TrimSpace(result.Url) == "" {
 		return &taskPollError{message: "generation task succeeded without an audio result"}
 	}
+	startedAt := time.Now()
 	storage, err := service.FetchValidatedWAV(ctx, result.Url, service.MaxGeneratedWAVBytes)
+	logger.LogInfo(ctx, fmt.Sprintf(
+		"AutoDL audio result validation timing: task_id=%s fetch_validate_ms=%d error=%t",
+		task.TaskID,
+		time.Since(startedAt).Milliseconds(),
+		err != nil,
+	))
 	if err != nil {
 		return err
 	}

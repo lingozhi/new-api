@@ -299,7 +299,9 @@ func writeAutoDLAudioResult(c *gin.Context, task *model.Task) {
 	fetchCtx, cancel := context.WithTimeout(c.Request.Context(), autoDLAudioDownloadTimeout)
 	defer cancel()
 	resultURL := strings.TrimSpace(task.GetResultURL())
+	fetchStartedAt := time.Now()
 	audio, err := fetchAutoDLAudioResult(fetchCtx, resultURL, maxAutoDLAudioResultBytes)
+	fetchDuration := time.Since(fetchStartedAt)
 	if err != nil {
 		logger.LogWarn(c, fmt.Sprintf(
 			"AutoDL audio result fetch failed: task_id=%s channel_id=%d error=%s",
@@ -321,9 +323,17 @@ func writeAutoDLAudioResult(c *gin.Context, task *model.Task) {
 	c.Header("Cache-Control", "private, no-store")
 	c.Header("X-Content-Type-Options", "nosniff")
 	c.Status(http.StatusOK)
+	streamStartedAt := time.Now()
 	if _, err := io.Copy(c.Writer, audio); err != nil {
 		logger.LogWarn(c, fmt.Sprintf("AutoDL audio result stream failed: task_id=%s", task.TaskID))
 	}
+	logger.LogInfo(c, fmt.Sprintf(
+		"AutoDL audio response timing: task_id=%s fetch_validate_ms=%d stream_ms=%d bytes=%d",
+		task.TaskID,
+		fetchDuration.Milliseconds(),
+		time.Since(streamStartedAt).Milliseconds(),
+		audio.Size(),
+	))
 }
 
 func writeAutoDLAudioError(c *gin.Context, status int, errorType, code, message string) {

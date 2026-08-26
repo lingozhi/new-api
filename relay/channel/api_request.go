@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"regexp"
 	"strings"
@@ -530,6 +531,23 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 		client = &noRedirectClient
 	}
+	var autoDLTraceStart time.Time
+	var autoDLWroteRequestAt atomic.Int64
+	var autoDLFirstResponseAt atomic.Int64
+	var autoDLWroteRequestFailed atomic.Bool
+	if info.ChannelType == baseconstant.ChannelTypeAutoDL {
+		autoDLTraceStart = time.Now()
+		trace := &httptrace.ClientTrace{
+			WroteRequest: func(traceInfo httptrace.WroteRequestInfo) {
+				autoDLWroteRequestAt.Store(time.Now().UnixNano())
+				autoDLWroteRequestFailed.Store(traceInfo.Err != nil)
+			},
+			GotFirstResponseByte: func() {
+				autoDLFirstResponseAt.Store(time.Now().UnixNano())
+			},
+		}
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+	}
 
 	const (
 		capacityDeadlinePending int32 = iota
@@ -561,6 +579,29 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 
 	resp, err := client.Do(req)
+	if !autoDLTraceStart.IsZero() {
+		wroteRequestMillis := int64(-1)
+		firstResponseMillis := int64(-1)
+		responseWaitMillis := int64(-1)
+		if wroteAt := autoDLWroteRequestAt.Load(); wroteAt > 0 {
+			wroteRequestMillis = time.Unix(0, wroteAt).Sub(autoDLTraceStart).Milliseconds()
+		}
+		if firstResponseAt := autoDLFirstResponseAt.Load(); firstResponseAt > 0 {
+			firstResponseMillis = time.Unix(0, firstResponseAt).Sub(autoDLTraceStart).Milliseconds()
+			if wroteAt := autoDLWroteRequestAt.Load(); wroteAt > 0 {
+				responseWaitMillis = time.Duration(firstResponseAt - wroteAt).Milliseconds()
+			}
+		}
+		logger.LogInfo(c, fmt.Sprintf(
+			"AutoDL submit transport timing: wrote_request_ms=%d first_response_ms=%d response_wait_ms=%d client_do_ms=%d write_error=%t request_error=%t",
+			wroteRequestMillis,
+			firstResponseMillis,
+			responseWaitMillis,
+			time.Since(autoDLTraceStart).Milliseconds(),
+			autoDLWroteRequestFailed.Load(),
+			err != nil,
+		))
+	}
 	if capacityDeadlineTimer != nil {
 		if capacityDeadlineState.CompareAndSwap(capacityDeadlinePending, capacityDeadlineComplete) {
 			capacityDeadlineTimer.Stop()
