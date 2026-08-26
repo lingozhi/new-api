@@ -66,6 +66,13 @@ import {
   withGPTImage2DocumentedParameters,
 } from '../lib/image-api-docs'
 import {
+  buildMiniMaxVideoAiIntegrationGuide,
+  buildMiniMaxVideoParameters,
+  buildMiniMaxVideoSample,
+  MINIMAX_VIDEO_V2_ENDPOINT_TYPE,
+  supportsMiniMaxVideoV2Endpoint,
+} from '../lib/minimax-video-api-docs'
+import {
   buildRateLimits,
   buildSupportedParameters,
   formatRateLimit,
@@ -116,6 +123,15 @@ const IMAGE_RUNTIME_HINT_KEYS: Record<Lang, string> = {
 
 const AUDIO_SPEECH_CURL_RUNTIME_HINT_KEY =
   'cURL writes the submit body to speech.response; a 200 response is WAV, while a 202 response must be recovered from Location.'
+
+const MINIMAX_VIDEO_RUNTIME_HINT_KEYS: Record<Lang, string> = {
+  curl: 'cURL runtime: Bash, curl, and Python 3.',
+  bash: 'Bash runtime: Bash, curl, and Python 3.',
+  python: 'Python runtime: Python 3.9+ with requests 2.x.',
+  typescript:
+    'TypeScript runtime: Bun 1.0+, or Node.js 18+ in ESM mode with a TypeScript runner.',
+  javascript: 'JavaScript runtime: Bun 1.0+ or Node.js 18+ in ESM mode.',
+}
 
 type SampleContext = {
   baseUrl: string
@@ -475,6 +491,14 @@ function buildSample(
       endpointPath: ctx.endpointPath,
     })
   }
+  if (endpointType === MINIMAX_VIDEO_V2_ENDPOINT_TYPE) {
+    return buildMiniMaxVideoSample(lang, {
+      baseUrl: ctx.baseUrl,
+      apiKeyEnv: ctx.apiKeyEnv,
+      modelName: ctx.modelName,
+      endpointPath: ctx.endpointPath,
+    })
+  }
   return buildChatSample(lang, ctx)
 }
 
@@ -485,7 +509,9 @@ function buildSample(
 function CodeSamplesSection(props: {
   model: PricingModel
   publicModels: PricingModel[]
-  endpointMap: Record<string, { path?: string; method?: string }>
+  endpoints: Array<{ type: string; path: string; method: string }>
+  endpointType: string
+  onEndpointTypeChange: (endpointType: string) => void
 }) {
   const { t } = useTranslation()
   const { status } = useStatus()
@@ -503,36 +529,6 @@ function CodeSamplesSection(props: {
     return 'https://api.example.com'
   }, [status])
 
-  const endpoints = useMemo(() => {
-    if (props.model.api_profile) {
-      return [
-        {
-          type:
-            props.model.api_profile.kind === 'image'
-              ? 'image-generation'
-              : 'depth-media',
-          path: props.model.api_profile.endpoint,
-          method: 'POST',
-        },
-      ]
-    }
-
-    const types = props.model.supported_endpoint_types || []
-    return types
-      .map((type) => {
-        const info = props.endpointMap[type] || {}
-        let path = info.path || ''
-        if (path && path.includes('{model}')) {
-          path = replaceModelInPath(path, props.model.model_name || '')
-        }
-        return { type, path, method: info.method || 'POST' }
-      })
-      .filter((e) => Boolean(e.path))
-  }, [props.model, props.endpointMap])
-
-  const [endpointType, setEndpointType] = useState<string>(
-    endpoints[0]?.type ?? ''
-  )
   const [lang, setLang] = useState<Lang>('curl')
   const sampleLanguages =
     props.model.api_profile?.kind === 'image'
@@ -541,14 +537,18 @@ function CodeSamplesSection(props: {
   const activeLang = sampleLanguages.includes(lang) ? lang : 'curl'
 
   const activeEndpoint = useMemo(() => {
-    return endpoints.find((e) => e.type === endpointType) ?? endpoints[0]
-  }, [endpointType, endpoints])
+    return (
+      props.endpoints.find((e) => e.type === props.endpointType) ??
+      props.endpoints[0]
+    )
+  }, [props.endpointType, props.endpoints])
 
-  if (endpoints.length === 0 || !activeEndpoint) {
+  if (props.endpoints.length === 0 || !activeEndpoint) {
     return null
   }
 
   const isAudioSpeech = activeEndpoint.type === AUDIO_SPEECH_ENDPOINT_TYPE
+  const isMiniMaxVideo = activeEndpoint.type === MINIMAX_VIDEO_V2_ENDPOINT_TYPE
 
   const code = buildSample(activeLang, activeEndpoint.type, {
     baseUrl,
@@ -576,6 +576,13 @@ function CodeSamplesSection(props: {
     })
   } else if (isAudioSpeech) {
     aiIntegrationGuide = buildIndexTTSAudioSpeechAiIntegrationGuide({
+      baseUrl,
+      apiKeyEnv: 'NEW_API_KEY',
+      modelName: props.model.model_name || '',
+      endpointPath: activeEndpoint.path,
+    })
+  } else if (isMiniMaxVideo) {
+    aiIntegrationGuide = buildMiniMaxVideoAiIntegrationGuide({
       baseUrl,
       apiKeyEnv: 'NEW_API_KEY',
       modelName: props.model.model_name || '',
@@ -610,14 +617,16 @@ function CodeSamplesSection(props: {
         )}
       </div>
 
-      {props.model.api_profile && (
+      {(props.model.api_profile || isMiniMaxVideo) && (
         <div className='mb-3 flex flex-wrap gap-1.5'>
-          <Badge variant='secondary'>202 {t('Async task')}</Badge>
+          <Badge variant='secondary'>
+            {isMiniMaxVideo ? 200 : 202} {t('Async task')}
+          </Badge>
           <Badge variant='outline'>{t('Polling')}</Badge>
-          {props.model.api_profile.webhook && (
+          {props.model.api_profile?.webhook && (
             <Badge variant='outline'>Webhook</Badge>
           )}
-          {props.model.api_profile.result_delivery === 'oss_url' && (
+          {props.model.api_profile?.result_delivery === 'oss_url' && (
             <Badge variant='outline'>{t('OSS URL')}</Badge>
           )}
         </div>
@@ -631,15 +640,20 @@ function CodeSamplesSection(props: {
               : t('Unified media jobs')}
           </Badge>
         ) : (
-          endpoints.length > 1 && (
-            <Tabs value={endpointType} onValueChange={setEndpointType}>
+          props.endpoints.length > 1 && (
+            <Tabs
+              value={activeEndpoint.type}
+              onValueChange={props.onEndpointTypeChange}
+            >
               <TabsList className='bg-muted/40 h-8 p-0.5'>
-                {endpoints.map((ep) => {
+                {props.endpoints.map((ep) => {
                   let label = ep.type
                   if (ep.type === 'image-generation') {
                     label = t('Unified image generation')
                   } else if (ep.type === AUDIO_SPEECH_ENDPOINT_TYPE) {
                     label = t('Audio')
+                  } else if (ep.type === MINIMAX_VIDEO_V2_ENDPOINT_TYPE) {
+                    label = t('Video Generation V2')
                   }
                   return (
                     <TabsTrigger
@@ -675,6 +689,7 @@ function CodeSamplesSection(props: {
         <ImageSampleRuntimeHint lang={activeLang} />
       )}
       {isAudioSpeech && <AudioSpeechSampleRuntimeHint lang={activeLang} />}
+      {isMiniMaxVideo && <MiniMaxVideoSampleRuntimeHint lang={activeLang} />}
 
       <div className='mt-3'>
         <CodeBlock code={code} language={LANG_HIGHLIGHT[activeLang]}>
@@ -690,11 +705,72 @@ function CodeSamplesSection(props: {
       </p>
 
       {isAudioSpeech && <AudioSpeechContractNotice />}
+      {isMiniMaxVideo && <MiniMaxVideoContractNotice />}
 
       {props.model.api_profile && props.model.api_profile.webhook && (
         <WebhookContractNotice profileKind={props.model.api_profile.kind} />
       )}
     </section>
+  )
+}
+
+function MiniMaxVideoSampleRuntimeHint(props: { lang: Lang }) {
+  const { t } = useTranslation()
+
+  return (
+    <p className='text-muted-foreground mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed'>
+      <Terminal aria-hidden='true' className='mt-0.5 size-3 shrink-0' />
+      <span>{t(MINIMAX_VIDEO_RUNTIME_HINT_KEYS[props.lang])}</span>
+    </p>
+  )
+}
+
+function MiniMaxVideoContractNotice() {
+  const { t } = useTranslation()
+
+  return (
+    <aside className='border-border/60 mt-4 border-t pt-4'>
+      <h4 className='text-foreground mb-2 flex items-center gap-1.5 text-xs font-semibold'>
+        <ShieldCheck
+          aria-hidden='true'
+          className='text-muted-foreground/70 size-3.5'
+        />
+        {t('MiniMax-H3 Video Generation V2 contract')}
+      </h4>
+
+      <ul className='text-muted-foreground grid gap-x-6 gap-y-1.5 text-xs leading-relaxed sm:grid-cols-2'>
+        <li>
+          {t(
+            'This endpoint implements the MiniMax V2 request shape on the AutoDL workflow backend. Submit returns HTTP 200 with task_id; poll the authenticated query endpoint until the task is terminal.'
+          )}
+        </li>
+        <li>
+          {t(
+            'resolution must be 768P, duration must be an integer from 4 to 15, and ratio must be explicit. 16:9 and 9:16 are always available; 1:1 is unavailable with reference audio.'
+          )}
+        </li>
+        <li>
+          {t(
+            'content accepts up to 16 items and requires non-empty text. Use up to 9 reference_image items, or up to 3 reference_audio items together with at least one reference image.'
+          )}
+        </li>
+        <li>
+          {t(
+            '2K, adaptive ratio, first_frame, last_frame, reference_video, non-empty callback_url, and aigc_watermark=true are not supported by this AutoDL backend.'
+          )}
+        </li>
+        <li>
+          {t(
+            'Use a unique Idempotency-Key of at most 256 characters. Retry an uncertain submission with the same key and identical JSON, then query the returned task instead of creating a duplicate.'
+          )}
+        </li>
+        <li>
+          {t(
+            'Tasks are queryable for seven days. Store a successful task.content.url promptly, and use the current model-plaza price because billing is based on the requested duration in seconds.'
+          )}
+        </li>
+      </ul>
+    </aside>
   )
 }
 
@@ -828,7 +904,10 @@ function WebhookContractNotice(props: {
 // Supported parameters table
 // ---------------------------------------------------------------------------
 
-function SupportedParametersSection(props: { model: PricingModel }) {
+function SupportedParametersSection(props: {
+  model: PricingModel
+  endpointType: string
+}) {
   const { t } = useTranslation()
   const displayProfile = useMemo(() => {
     if (!props.model.api_profile) return undefined
@@ -838,7 +917,10 @@ function SupportedParametersSection(props: { model: PricingModel }) {
     )
   }, [props.model.api_profile, props.model.model_name])
   const params = useMemo(() => {
-    if (supportsAudioSpeechEndpoint(props.model)) {
+    if (props.endpointType === MINIMAX_VIDEO_V2_ENDPOINT_TYPE) {
+      return buildMiniMaxVideoParameters(props.model.model_name || 'MiniMax-H3')
+    }
+    if (props.endpointType === AUDIO_SPEECH_ENDPOINT_TYPE) {
       return buildIndexTTSAudioSpeechParameters(
         props.model.model_name || 'indextts2-v1'
       )
@@ -849,7 +931,7 @@ function SupportedParametersSection(props: { model: PricingModel }) {
       )
     }
     return buildSupportedParameters(props.model)
-  }, [displayProfile, props.model])
+  }, [displayProfile, props.endpointType, props.model])
 
   if (params.length === 0) return null
 
@@ -1168,18 +1250,56 @@ export function ModelDetailsApi(props: {
   const publicModels = props.publicModels?.length
     ? props.publicModels
     : [props.model]
+  const endpoints = useMemo(() => {
+    if (props.model.api_profile) {
+      return [
+        {
+          type:
+            props.model.api_profile.kind === 'image'
+              ? 'image-generation'
+              : 'depth-media',
+          path: props.model.api_profile.endpoint,
+          method: 'POST',
+        },
+      ]
+    }
+
+    const types = props.model.supported_endpoint_types || []
+    return types
+      .map((type) => {
+        const info = props.endpointMap[type] || {}
+        let path = info.path || ''
+        if (path && path.includes('{model}')) {
+          path = replaceModelInPath(path, props.model.model_name || '')
+        }
+        return { type, path, method: info.method || 'POST' }
+      })
+      .filter((endpoint) => Boolean(endpoint.path))
+  }, [props.endpointMap, props.model])
+  const [selectedEndpointType, setSelectedEndpointType] = useState('')
+  const activeEndpointType =
+    endpoints.find((endpoint) => endpoint.type === selectedEndpointType)
+      ?.type ??
+    endpoints[0]?.type ??
+    ''
 
   return (
     <div className='space-y-6'>
       <CodeSamplesSection
         model={props.model}
         publicModels={publicModels}
-        endpointMap={props.endpointMap}
+        endpoints={endpoints}
+        endpointType={activeEndpointType}
+        onEndpointTypeChange={setSelectedEndpointType}
       />
       <AuthSection />
-      <SupportedParametersSection model={props.model} />
+      <SupportedParametersSection
+        model={props.model}
+        endpointType={activeEndpointType}
+      />
       {!props.model.api_profile &&
-        !supportsAudioSpeechEndpoint(props.model) && (
+        !supportsAudioSpeechEndpoint(props.model) &&
+        !supportsMiniMaxVideoV2Endpoint(props.model) && (
           <RateLimitsSection model={props.model} />
         )}
     </div>

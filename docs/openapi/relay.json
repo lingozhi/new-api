@@ -31,6 +31,9 @@
       "name": "视频生成/Sora兼容格式"
     },
     {
+      "name": "视频生成/MiniMax V2"
+    },
+    {
       "name": "视频生成/Kling格式"
     },
     {
@@ -438,6 +441,219 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v2/video_generation": {
+      "post": {
+        "summary": "创建 MiniMax-H3 视频任务",
+        "deprecated": false,
+        "description": "使用 MiniMax V2 兼容请求创建异步视频任务。当前 AutoDL 通道只支持 MiniMax-H3 的受限子集：768P、4～15 秒、显式画幅比例，以及文生视频、参考图、参考图加参考音频。按请求中的 duration 秒数计费。",
+        "operationId": "createMiniMaxH3Video",
+        "tags": [
+          "视频生成/MiniMax V2"
+        ],
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "可选幂等键，最长 256 个字符。同一用户使用相同键和相同请求时返回原任务；相同键对应不同请求时返回 409。",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MiniMaxH3VideoGenerationRequest"
+              },
+              "examples": {
+                "textToVideo": {
+                  "summary": "文生视频",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "电影感航拍，一艘帆船穿过晨雾，镜头缓慢向前推进"
+                      }
+                    ],
+                    "resolution": "768P",
+                    "duration": 6,
+                    "ratio": "16:9"
+                  }
+                },
+                "referenceImageAndAudio": {
+                  "summary": "参考图加参考音频",
+                  "value": {
+                    "model": "MiniMax-H3",
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "人物自然说话，保持参考图中的外观和构图"
+                      },
+                      {
+                        "type": "image_url",
+                        "image_url": {
+                          "url": "https://example.com/portrait.png"
+                        },
+                        "role": "reference_image"
+                      },
+                      {
+                        "type": "audio_url",
+                        "audio_url": {
+                          "url": "https://example.com/voice.mp3"
+                        },
+                        "role": "reference_audio"
+                      }
+                    ],
+                    "resolution": "768P",
+                    "duration": 8,
+                    "ratio": "16:9"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "任务已受理。通过 task_id 查询状态。重放或提交状态不明确时可能带有 Location、Retry-After 或 Idempotency-Replayed 响应头。",
+            "headers": {
+              "Location": {
+                "description": "任务查询路径（出现时）",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Retry-After": {
+                "description": "建议等待的秒数（出现时）",
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "Idempotency-Replayed": {
+                "description": "为 true 时表示返回的是幂等重放任务",
+                "schema": {
+                  "type": "boolean"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MiniMaxH3VideoCreateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/MiniMaxH3BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/MiniMaxH3Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/MiniMaxH3Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/MiniMaxH3InsufficientBalance"
+          },
+          "409": {
+            "$ref": "#/components/responses/MiniMaxH3IdempotencyConflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/MiniMaxH3PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/MiniMaxH3Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/MiniMaxH3RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/MiniMaxH3ServerError"
+          },
+          "502": {
+            "$ref": "#/components/responses/MiniMaxH3BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/MiniMaxH3Unavailable"
+          },
+          "529": {
+            "$ref": "#/components/responses/MiniMaxH3Overloaded"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v2/query/video_generation/{task_id}": {
+      "get": {
+        "summary": "查询 MiniMax-H3 视频任务",
+        "deprecated": false,
+        "description": "查询当前用户最近 7 天内的任务。queued、running 为进行中；succeeded、failed、cancelled 为终态。成功时 content.url 包含 HTTPS 视频地址。",
+        "operationId": "getMiniMaxH3VideoTask",
+        "tags": [
+          "视频生成/MiniMax V2"
+        ],
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "description": "创建接口返回的任务 ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "任务状态",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MiniMaxH3VideoQueryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "任务不存在、已超过 7 天查询窗口或请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MiniMaxH3ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/MiniMaxH3Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/MiniMaxH3Unauthorized"
+          },
+          "429": {
+            "$ref": "#/components/responses/MiniMaxH3RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/MiniMaxH3ServerError"
           }
         },
         "security": [
@@ -2597,6 +2813,378 @@
   },
   "components": {
     "schemas": {
+      "MiniMaxH3VideoGenerationRequest": {
+        "type": "object",
+        "required": [
+          "model",
+          "content",
+          "resolution",
+          "duration",
+          "ratio"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "enum": [
+              "MiniMax-H3"
+            ],
+            "description": "固定为 MiniMax-H3。"
+          },
+          "content": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "description": "必须至少包含一条非空 text。最多 9 张 reference_image、3 条 reference_audio；reference_audio 必须与 reference_image 一起使用。当前不支持 first_frame、last_frame 和 reference_video。",
+            "items": {
+              "$ref": "#/components/schemas/MiniMaxH3ContentItem"
+            }
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "768P"
+            ],
+            "description": "当前 AutoDL 通道仅支持 768P，不支持 2K。"
+          },
+          "duration": {
+            "type": "integer",
+            "minimum": 4,
+            "maximum": 15,
+            "description": "生成时长，整数秒；费用按此请求秒数计算。"
+          },
+          "ratio": {
+            "type": "string",
+            "enum": [
+              "16:9",
+              "9:16",
+              "1:1"
+            ],
+            "description": "必须显式指定，不支持 adaptive。16:9 和 9:16 适用于全部当前工作流；1:1 仅适用于文生视频或纯参考图，不适用于参考图加音频。"
+          },
+          "aigc_watermark": {
+            "type": "boolean",
+            "enum": [
+              false
+            ],
+            "default": false,
+            "description": "当前通道不支持添加 AIGC 水印，只能省略或传 false。"
+          },
+          "callback_url": {
+            "type": "string",
+            "maxLength": 0,
+            "deprecated": true,
+            "description": "MiniMax V2 保留字段。当前 AutoDL 通道不支持回调；请省略该字段，非空值会被拒绝。"
+          }
+        },
+        "description": "当前通道不支持 callback_url；请求 JSON 最大 64 MiB。"
+      },
+      "MiniMaxH3ContentItem": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/MiniMaxH3TextContent"
+          },
+          {
+            "$ref": "#/components/schemas/MiniMaxH3ImageContent"
+          },
+          {
+            "$ref": "#/components/schemas/MiniMaxH3AudioContent"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "type",
+          "mapping": {
+            "text": "#/components/schemas/MiniMaxH3TextContent",
+            "image_url": "#/components/schemas/MiniMaxH3ImageContent",
+            "audio_url": "#/components/schemas/MiniMaxH3AudioContent"
+          }
+        }
+      },
+      "MiniMaxH3TextContent": {
+        "type": "object",
+        "required": [
+          "type",
+          "text"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 7000,
+            "description": "提示词。多条 text 会按换行拼接；参考图加音频工作流的合计提示词最多 10000 个 Unicode 字符。"
+          }
+        }
+      },
+      "MiniMaxH3ImageContent": {
+        "type": "object",
+        "required": [
+          "type",
+          "image_url",
+          "role"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "image_url"
+            ]
+          },
+          "image_url": {
+            "$ref": "#/components/schemas/MiniMaxH3MediaURL"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "reference_image"
+            ],
+            "description": "当前只支持 reference_image，不支持 first_frame 或 last_frame。"
+          }
+        }
+      },
+      "MiniMaxH3AudioContent": {
+        "type": "object",
+        "required": [
+          "type",
+          "audio_url",
+          "role"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "audio_url"
+            ]
+          },
+          "audio_url": {
+            "$ref": "#/components/schemas/MiniMaxH3MediaURL"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "reference_audio"
+            ]
+          }
+        }
+      },
+      "MiniMaxH3MediaURL": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "公网可访问的绝对 HTTPS URL，或受支持的严格 data URI。图片 data URI 支持 JPEG、PNG、WebP，单项解码后最大 30 MiB；音频支持 MP3、WAV，单项最大 15 MiB。全部 data URI 解码后总计不得超过 64 MiB。"
+          }
+        }
+      },
+      "MiniMaxH3VideoCreateResponse": {
+        "type": "object",
+        "required": [
+          "task_id"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "异步任务 ID。"
+          }
+        }
+      },
+      "MiniMaxH3VideoQueryResponse": {
+        "type": "object",
+        "required": [
+          "task"
+        ],
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/MiniMaxH3VideoTask"
+          }
+        }
+      },
+      "MiniMaxH3VideoTask": {
+        "type": "object",
+        "required": [
+          "id",
+          "model",
+          "status",
+          "created_at",
+          "updated_at",
+          "task_type",
+          "modality"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "example": "MiniMax-H3"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "error": {
+            "$ref": "#/components/schemas/MiniMaxH3TaskError"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix 时间戳（秒）。"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix 时间戳（秒）。"
+          },
+          "content": {
+            "$ref": "#/components/schemas/MiniMaxH3TaskOutput"
+          },
+          "resolution": {
+            "type": "string",
+            "example": "768P"
+          },
+          "duration": {
+            "type": "integer",
+            "minimum": 4,
+            "maximum": 15
+          },
+          "usage": {
+            "$ref": "#/components/schemas/MiniMaxH3TaskUsage"
+          },
+          "ratio": {
+            "type": "string",
+            "example": "16:9"
+          },
+          "task_type": {
+            "type": "string",
+            "enum": [
+              "generation"
+            ]
+          },
+          "modality": {
+            "type": "string",
+            "enum": [
+              "video"
+            ]
+          }
+        }
+      },
+      "MiniMaxH3TaskError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "example": "generation_failed"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "MiniMaxH3TaskOutput": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "任务成功后的 HTTPS 视频地址。"
+          }
+        }
+      },
+      "MiniMaxH3TaskUsage": {
+        "type": "object",
+        "required": [
+          "total_seconds",
+          "input_seconds",
+          "output_seconds",
+          "input_image_count"
+        ],
+        "properties": {
+          "total_seconds": {
+            "type": "integer"
+          },
+          "input_seconds": {
+            "type": "integer"
+          },
+          "output_seconds": {
+            "type": "integer"
+          },
+          "input_image_count": {
+            "type": "integer"
+          }
+        }
+      },
+      "MiniMaxH3ErrorResponse": {
+        "type": "object",
+        "required": [
+          "type",
+          "error",
+          "request_id"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "error"
+            ]
+          },
+          "error": {
+            "$ref": "#/components/schemas/MiniMaxH3ErrorDetail"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        }
+      },
+      "MiniMaxH3ErrorDetail": {
+        "type": "object",
+        "required": [
+          "type",
+          "message",
+          "http_code"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "bad_request_error",
+              "authorized_error",
+              "insufficient_balance_error",
+              "unprocessable_entity_error",
+              "rate_limit_error",
+              "server_error",
+              "overloaded_error"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "http_code": {
+            "type": "string",
+            "description": "字符串形式的 HTTP 状态码。",
+            "example": "400"
+          }
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "properties": {
@@ -5114,7 +5702,118 @@
         }
       }
     },
-    "responses": {},
+    "responses": {
+      "MiniMaxH3BadRequest": {
+        "description": "请求参数错误",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MiniMaxH3ErrorResponse"
+            }
+          }
+        }
+      },
+      "MiniMaxH3Unauthorized": {
+        "description": "认证失败或无权访问",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MiniMaxH3ErrorResponse"
+            }
+          }
+        }
+      },
+      "MiniMaxH3InsufficientBalance": {
+        "description": "余额不足",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MiniMaxH3ErrorResponse"
+            }
+          }
+        }
+      },
+      "MiniMaxH3IdempotencyConflict": {
+        "description": "同一 Idempotency-Key 被用于不同的请求",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MiniMaxH3ErrorResponse"
+            }
+          }
+        }
+      },
+      "MiniMaxH3PayloadTooLarge": {
+        "description": "请求体超过 64 MiB",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MiniMaxH3ErrorResponse"
+            }
+          }
+        }
+      },
+      "MiniMaxH3Unprocessable": {
+        "description": "AutoDL 明确拒绝任务提交",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MiniMaxH3ErrorResponse"
+            }
+          }
+        }
+      },
+      "MiniMaxH3RateLimited": {
+        "description": "请求过于频繁",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MiniMaxH3ErrorResponse"
+            }
+          }
+        }
+      },
+      "MiniMaxH3ServerError": {
+        "description": "服务内部错误",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MiniMaxH3ErrorResponse"
+            }
+          }
+        }
+      },
+      "MiniMaxH3BadGateway": {
+        "description": "上游服务响应异常",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MiniMaxH3ErrorResponse"
+            }
+          }
+        }
+      },
+      "MiniMaxH3Unavailable": {
+        "description": "服务暂时不可用",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MiniMaxH3ErrorResponse"
+            }
+          }
+        }
+      },
+      "MiniMaxH3Overloaded": {
+        "description": "服务过载",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/MiniMaxH3ErrorResponse"
+            }
+          }
+        }
+      }
+    },
     "securitySchemes": {
       "BearerAuth": {
         "type": "http",

@@ -25,6 +25,7 @@ var defaultEndpointInfoMap = map[constant.EndpointType]EndpointInfo{
 	constant.EndpointTypeJinaRerank:            {Path: "/v1/rerank", Method: "POST"},
 	constant.EndpointTypeImageGeneration:       {Path: ImageGenerationEndpoint, Method: "POST"},
 	constant.EndpointTypeEmbeddings:            {Path: "/v1/embeddings", Method: "POST"},
+	constant.EndpointTypeMiniMaxVideoV2:        {Path: constant.AutoDLVideoGenerationV2Path, Method: "POST"},
 	constant.EndpointTypeAudioSpeech:           {Path: constant.AutoDLAudioSpeechPath, Method: "POST"},
 }
 

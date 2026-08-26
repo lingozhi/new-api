@@ -22,7 +22,7 @@ import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 
 import { isDynamicPricingModel } from '../lib/dynamic-price'
 import { getImageResolutionStartingPrice } from '../lib/image-resolution-price'
-import { isTokenBasedModel } from '../lib/model-helpers'
+import { getFixedPriceUnit, isTokenBasedModel } from '../lib/model-helpers'
 import type { PricingModel } from '../types'
 
 interface ModelBillingModeBadgeProps {
@@ -38,6 +38,8 @@ export function ModelBillingModeBadge(props: ModelBillingModeBadgeProps) {
   if (isDynamicPricingModel(props.model)) {
     label = t('Dynamic Pricing')
     variant = 'warning'
+  } else if (getFixedPriceUnit(props.model) === 'seconds') {
+    label = t('Per Second')
   } else if (
     getImageResolutionStartingPrice(props.model) === null &&
     isTokenBasedModel(props.model)

@@ -11,7 +11,7 @@ import (
 
 func TestAutoDLEndpointTypesFollowWorkflowModel(t *testing.T) {
 	assert.Equal(t,
-		[]constant.EndpointType{constant.EndpointTypeOpenAIVideo},
+		[]constant.EndpointType{constant.EndpointTypeMiniMaxVideoV2},
 		GetEndpointTypesByChannelType(constant.ChannelTypeAutoDL, constant.AutoDLModelMiniMaxH3),
 	)
 	assert.Equal(t,
@@ -19,6 +19,17 @@ func TestAutoDLEndpointTypesFollowWorkflowModel(t *testing.T) {
 		GetEndpointTypesByChannelType(constant.ChannelTypeAutoDL, constant.AutoDLModelIndexTTS2),
 	)
 	assert.Empty(t, GetEndpointTypesByChannelType(constant.ChannelTypeAutoDL, "unsupported-workflow"))
+}
+
+func TestMiniMaxVideoV2EndpointHasOfficialDefaultRoute(t *testing.T) {
+	info, ok := GetDefaultEndpointInfo(constant.EndpointTypeMiniMaxVideoV2)
+	require.True(t, ok)
+	assert.Equal(t, EndpointInfo{Path: constant.AutoDLVideoGenerationV2Path, Method: http.MethodPost}, info)
+
+	assert.Equal(t,
+		[]constant.EndpointType{constant.EndpointTypeOpenAIVideo},
+		GetEndpointTypesByChannelType(constant.ChannelTypeSora, "sora-2"),
+	)
 }
 
 func TestAudioSpeechEndpointHasOfficialDefaultRoute(t *testing.T) {

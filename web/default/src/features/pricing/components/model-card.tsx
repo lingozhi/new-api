@@ -35,6 +35,7 @@ import {
   getDisplayGroupRatio,
   getFixedPriceUnit,
   isTokenBasedModel,
+  supportsPerformanceMetrics,
 } from '../lib/model-helpers'
 import {
   formatImageResolutionPrice,
@@ -289,7 +290,9 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
           )}
           <ModelBillingModeBadge model={props.model} />
         </div>
-        <ModelPerfBadge perf={props.perf} className='row-span-2 self-start' />
+        {supportsPerformanceMetrics(props.model) && (
+          <ModelPerfBadge perf={props.perf} className='row-span-2 self-start' />
+        )}
 
         <div className='flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 sm:gap-x-3 sm:gap-y-1'>
           {bottomTags.map((item) => (
