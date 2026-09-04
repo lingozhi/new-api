@@ -168,6 +168,11 @@ func RecordChannelHealthOutcome(channelID int, modelName, requestPath string, re
 		return
 	}
 	healthKey := channelHealthKey(channelID, modelName, requestPath)
+	// Image gateway fluctuations are handled by per-task retry/failover, not a
+	// shared circuit that would prevent other images from using the channel.
+	if (healthKey.Path == "/v1/images/generations" || healthKey.Path == "/v1/images/edits" || healthKey.Path == "/v1/jobs") && IsTransientImageUpstreamError(apiErr) {
+		return
+	}
 	statusCode, localError := channelHealthOutcomeStatus(apiErr, relayInfo)
 	latencyNotApplicable := healthKey.Path == "/v1/images/generations" || healthKey.Path == "/v1/images/edits" || healthKey.Path == "/v1/jobs"
 	outcome := model.ChannelOutcome{

@@ -300,12 +300,19 @@ func CooldownChannelForRetry(channelError types.ChannelError, err *types.NewAPIE
 	model.CooldownChannel(channelError.ChannelId, reason, duration)
 }
 
+// IsTransientImageUpstreamError identifies an actual temporary HTTP failure,
+// excluding account and capability errors that need operator intervention.
+func IsTransientImageUpstreamError(err *types.NewAPIError) bool {
+	return err != nil && err.UpstreamStatusCode >= http.StatusInternalServerError &&
+		err.UpstreamStatusCode <= 599 && !isPersistentAccountError(err) && !isCapabilityError(err)
+}
+
 // QuarantineAsyncImageChannel removes a definitively failing image channel
 // from routing before the durable task is switched. Authentication and access
-// failures are auto-disabled; transient capacity failures open a bounded
-// circuit so the channel can recover without operator intervention.
+// failures are auto-disabled. Temporary HTTP 5xx failures rotate only the
+// affected task and leave the channel available to subsequent requests.
 func ShouldQuarantineAsyncImageChannel(err *types.NewAPIError) bool {
-	if err == nil {
+	if err == nil || IsTransientImageUpstreamError(err) {
 		return false
 	}
 	statusCode := err.StatusCode

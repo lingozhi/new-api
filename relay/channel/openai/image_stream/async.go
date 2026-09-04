@@ -135,7 +135,8 @@ type asyncImageTaskPayload struct {
 	// ProviderCallStarted was written before the upstream request. A checkpoint
 	// with this bit but no stored response is ambiguous after restart and must
 	// never be resubmitted automatically.
-	ProviderCallStarted bool `json:"provider_call_started,omitempty"`
+	ProviderCallStarted  bool `json:"provider_call_started,omitempty"`
+	SameChannelRetryUsed bool `json:"same_channel_retry_used,omitempty"`
 	// Upstream is read only for tasks checkpointed by earlier versions. New
 	// tasks never persist image base64 in the task row.
 	Upstream *UpstreamResponse `json:"upstream,omitempty"`
@@ -2007,72 +2008,90 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 				return false, failAsyncImageTask(ctx, task, fmt.Errorf("prepare staged image inputs: %w", err))
 			}
 		}
-		genericAttemptStart = time.Now()
-		executionCtx, cancel := context.WithTimeout(ctx, asyncImageAdaptorTimeout(payload))
-		passThroughBody := payload.PreparedRequest.Body
-		if payload.PreparedRequest.DeferConversion {
-			passThroughBody = nil
+		var result *GenericImageExecutionResult
+		var apiErr *types.NewAPIError
+		var executionErr error
+		for {
+			genericAttemptStart = time.Now()
+			executionCtx, cancel := context.WithTimeout(ctx, asyncImageAdaptorTimeout(payload))
+			passThroughBody := payload.PreparedRequest.Body
+			if payload.PreparedRequest.DeferConversion {
+				passThroughBody = nil
+			}
+			result, apiErr = ExecuteGenericImageAdaptor(executionCtx, &GenericImageExecutionRequest{
+				RelayInfo:        genericInfo,
+				ImageRequest:     executionRequest,
+				PassThroughBody:  passThroughBody,
+				UpstreamResponse: genericUpstream,
+				BeforeResponseRead: func() error {
+					return outputLease.acquire(executionCtx)
+				},
+				AfterResponseCheckpoint: func(responseBytes int) {
+					if responseBytes <= maxAsyncImagePollingCheckpointBytes {
+						outputLease.release()
+					}
+				},
+				BeforeResultWrite: func() error {
+					return outputLease.acquire(executionCtx)
+				},
+				BeforeProviderCall: func() error {
+					started, startErr := beginAsyncImageProviderCall(task, &payload)
+					if startErr != nil {
+						return fmt.Errorf("begin provider image submission: %w", startErr)
+					}
+					if !started {
+						return errors.New("image task claim was lost before provider submission")
+					}
+					return nil
+				},
+				Checkpoint: func(providerResponse *GenericImageUpstreamResponse) error {
+					if providerResponse == nil || len(providerResponse.Body) == 0 {
+						return errors.New("provider image response is empty")
+					}
+					artifact, err := common.Marshal(providerResponse)
+					if err != nil {
+						return fmt.Errorf("encode provider image response: %w", err)
+					}
+					checkpointPayload := payload
+					checkpointPayload.ProviderStored = true
+					checkpointPayload.ProviderCallStarted = false
+					if checkpointPayload.ImageRoutingProtocol == dto.ImageRoutingProtocolKIEJobs && checkpointPayload.ProviderDeadlineAt == 0 {
+						checkpointPayload.ProviderDeadlineAt = time.Now().Add(asyncImageProviderOverallDeadline).Unix()
+					}
+					checkpointData, err := common.Marshal(checkpointPayload)
+					if err != nil {
+						return fmt.Errorf("encode provider image checkpoint: %w", err)
+					}
+					persisted, err := persistAsyncImageArtifact(executionCtx, task, checkpointData, artifact, "40%")
+					if err != nil {
+						return err
+					}
+					if !persisted {
+						return errors.New("image task claim was lost before provider response checkpoint")
+					}
+					payload.ProviderStored = true
+					payload.ProviderDeadlineAt = checkpointPayload.ProviderDeadlineAt
+					genericUpstream = providerResponse
+					return nil
+				},
+			})
+			executionErr = executionCtx.Err()
+			cancel()
+			logger.LogInfo(ctx, fmt.Sprintf("async image timing: task=%s phase=provider_execution elapsed_ms=%d", task.TaskID, time.Since(genericAttemptStart).Milliseconds()))
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			retried, retryErr := retryRejectedAsyncImageCall(task, &payload, apiErr, time.Since(genericAttemptStart))
+			if retryErr != nil {
+				return false, failCheckpointPendingAsyncImageTask(ctx, task, retryErr)
+			}
+			if !retried {
+				break
+			}
+			outputLease.release()
+			logger.LogWarn(ctx, fmt.Sprintf("async image same-channel retry: task=%s channel=%d upstream_status=%d elapsed_ms=%d", task.TaskID, task.ChannelId, apiErr.UpstreamStatusCode, time.Since(genericAttemptStart).Milliseconds()))
 		}
-		result, apiErr := ExecuteGenericImageAdaptor(executionCtx, &GenericImageExecutionRequest{
-			RelayInfo:        genericInfo,
-			ImageRequest:     executionRequest,
-			PassThroughBody:  passThroughBody,
-			UpstreamResponse: genericUpstream,
-			BeforeResponseRead: func() error {
-				return outputLease.acquire(executionCtx)
-			},
-			AfterResponseCheckpoint: func(responseBytes int) {
-				if responseBytes <= maxAsyncImagePollingCheckpointBytes {
-					outputLease.release()
-				}
-			},
-			BeforeResultWrite: func() error {
-				return outputLease.acquire(executionCtx)
-			},
-			BeforeProviderCall: func() error {
-				started, startErr := beginAsyncImageProviderCall(task, &payload)
-				if startErr != nil {
-					return fmt.Errorf("begin provider image submission: %w", startErr)
-				}
-				if !started {
-					return errors.New("image task claim was lost before provider submission")
-				}
-				return nil
-			},
-			Checkpoint: func(providerResponse *GenericImageUpstreamResponse) error {
-				if providerResponse == nil || len(providerResponse.Body) == 0 {
-					return errors.New("provider image response is empty")
-				}
-				artifact, err := common.Marshal(providerResponse)
-				if err != nil {
-					return fmt.Errorf("encode provider image response: %w", err)
-				}
-				checkpointPayload := payload
-				checkpointPayload.ProviderStored = true
-				checkpointPayload.ProviderCallStarted = false
-				if checkpointPayload.ImageRoutingProtocol == dto.ImageRoutingProtocolKIEJobs && checkpointPayload.ProviderDeadlineAt == 0 {
-					checkpointPayload.ProviderDeadlineAt = time.Now().Add(asyncImageProviderOverallDeadline).Unix()
-				}
-				checkpointData, err := common.Marshal(checkpointPayload)
-				if err != nil {
-					return fmt.Errorf("encode provider image checkpoint: %w", err)
-				}
-				persisted, err := persistAsyncImageArtifact(executionCtx, task, checkpointData, artifact, "40%")
-				if err != nil {
-					return err
-				}
-				if !persisted {
-					return errors.New("image task claim was lost before provider response checkpoint")
-				}
-				payload.ProviderStored = true
-				payload.ProviderDeadlineAt = checkpointPayload.ProviderDeadlineAt
-				genericUpstream = providerResponse
-				return nil
-			},
-		})
-		executionErr := executionCtx.Err()
-		cancel()
-		logger.LogInfo(ctx, fmt.Sprintf("async image timing: task=%s phase=provider_execution elapsed_ms=%d", task.TaskID, time.Since(genericAttemptStart).Milliseconds()))
+
 		if apiErr != nil {
 			if ctx.Err() != nil {
 				return false, ctx.Err()
@@ -2086,7 +2105,7 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 			if definitiveResponse && genericUpstream == nil && payload.ProviderCallStarted {
 				quarantine := service.ShouldQuarantineAsyncImageChannel(apiErr)
 				service.RecordChannelHealthOutcome(genericChannel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), genericInfo, genericAttemptStart, apiErr, !quarantine)
-				if quarantine {
+				if quarantine || service.IsTransientImageUpstreamError(apiErr) {
 					channelError := *types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan())
 					service.QuarantineAsyncImageChannel(channelError, apiErr)
 					switched, switchErr := switchRejectedAsyncImageChannel(ctx, task, &payload, apiErr.Error())
@@ -2152,7 +2171,9 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 				// must not mark an otherwise healthy provider channel as unavailable.
 				if !deferredConversionRetry {
 					service.RecordChannelHealthOutcome(genericChannel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), genericInfo, genericAttemptStart, apiErr, false)
-					service.CooldownChannelForUpstreamError(*types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan()), apiErr)
+					if !service.IsTransientImageUpstreamError(apiErr) {
+						service.CooldownChannelForUpstreamError(*types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan()), apiErr)
+					}
 				}
 				if !deferredConversionRetry {
 					return false, failOrSwitchAsyncImageChannel(ctx, task, &payload, apiErr)
@@ -2175,10 +2196,10 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 			channelError := *types.NewChannelError(genericChannel.Id, genericChannel.Type, genericChannel.Name, genericChannel.ChannelInfo.IsMultiKey, genericAPIKey, genericChannel.GetAutoBan())
 			if quarantine {
 				service.QuarantineAsyncImageChannel(channelError, apiErr)
-			} else {
+			} else if !service.IsTransientImageUpstreamError(apiErr) {
 				service.CooldownChannelForUpstreamError(channelError, apiErr)
 			}
-			if quarantine {
+			if quarantine || service.IsTransientImageUpstreamError(apiErr) {
 				return false, failOrSwitchAsyncImageChannel(ctx, task, &payload, apiErr)
 			}
 			return false, failAsyncImageTask(ctx, task, apiErr)
@@ -2972,6 +2993,38 @@ func beginAsyncImageProviderCall(task *model.Task, payload *asyncImageTaskPayloa
 	return true, nil
 }
 
+// retryRejectedAsyncImageCall gives a quickly rejected generation one immediate
+// second chance. The durable flag survives worker restarts; accepted work and
+// ambiguous transport/checkpoint failures must never be resubmitted here.
+func retryRejectedAsyncImageCall(task *model.Task, payload *asyncImageTaskPayload, apiErr *types.NewAPIError, elapsed time.Duration) (bool, error) {
+	if payload == nil || payload.SameChannelRetryUsed || !payload.ProviderCallStarted ||
+		payload.ProviderStored || payload.ArtifactStored || elapsed > 20*time.Second ||
+		!errors.Is(apiErr, ErrGenericImageDefinitiveResponse) ||
+		errors.Is(apiErr, ErrGenericImageCheckpoint) || !service.IsTransientImageUpstreamError(apiErr) {
+		return false, nil
+	}
+	reopenedPayload := *payload
+	reopenedPayload.ProviderCallStarted = false
+	reopenedPayload.SameChannelRetryUsed = true
+	checkpointData, err := encodeAsyncImageTaskPayload(reopenedPayload)
+	if err != nil {
+		return false, err
+	}
+	storedCheckpoint, err := model.EncryptImageTaskArtifactCheckpoint(checkpointData)
+	if err != nil {
+		return false, err
+	}
+	reopened, err := task.ReopenRejectedImageProviderCall(storedCheckpoint)
+	if err != nil || !reopened {
+		if err == nil {
+			err = errors.New("image task claim was lost before same-channel retry")
+		}
+		return false, err
+	}
+	*payload = reopenedPayload
+	return true, nil
+}
+
 // failOrSwitchAsyncImageChannel is for provider failures, not local storage or
 // billing failures. A timeout may leave upstream work running, but switching to
 // a different provider is preferred to failing the user's logical task.
@@ -3059,6 +3112,7 @@ func switchAsyncImageChannel(ctx context.Context, task *model.Task, payload *asy
 		}
 		nextPayload := *payload
 		nextPayload.ProviderCallStarted = false
+		nextPayload.SameChannelRetryUsed = false
 		nextPayload.ProviderStored = false
 		nextPayload.ArtifactStored = false
 		nextPayload.Upstream = nil

@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestShouldDisableChannelIgnoresCooldownBalanceError(t *testing.T) {
@@ -63,7 +64,7 @@ func TestShouldDisableChannelIgnoresPreCommitStreamCapacity(t *testing.T) {
 	assert.False(t, ShouldDisableChannel(err), "a transient pre-commit capacity signal must use stream-quality cooldowns, not permanent auto-disable")
 }
 
-func TestQuarantineAsyncImageChannelBlocksCoolingFallbackImmediately(t *testing.T) {
+func TestTransientImageFailureKeepsChannelAvailable(t *testing.T) {
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
 	common.MemoryCacheEnabled = true
 	model.ClearChannelCacheForTest()
@@ -83,10 +84,10 @@ func TestQuarantineAsyncImageChannelBlocksCoolingFallbackImmediately(t *testing.
 
 	QuarantineAsyncImageChannel(*types.NewChannelError(channel.Id, channel.Type, channel.Name, false, channel.Key, false), apiErr)
 
-	assert.True(t, model.IsChannelCoolingDown(channel.Id))
+	assert.False(t, model.IsChannelCoolingDown(channel.Id))
 	selected, err := model.GetRandomSatisfiedChannelWithOptions("default", "gpt-image-2", 0, model.ChannelSelectionOptions{AllowCoolingFallback: true})
-	assert.NoError(t, err)
-	assert.Nil(t, selected, "a failed image channel must not return as a cooling fallback")
+	require.NoError(t, err)
+	assert.Equal(t, channel, selected, "temporary HTTP failures must leave the channel available")
 }
 
 func TestShouldQuarantineAsyncImageChannelClassifiesProviderAndClientFailures(t *testing.T) {
@@ -104,7 +105,7 @@ func TestShouldQuarantineAsyncImageChannelClassifiesProviderAndClientFailures(t 
 		{name: "access failure", statusCode: http.StatusForbidden, errorCode: types.ErrorCodeAccessDenied, message: "provider denied access", want: true},
 		{name: "accepted task disappeared", statusCode: http.StatusNotFound, errorCode: types.ErrorCodeBadResponseStatusCode, message: "task not found", want: true},
 		{name: "rate limit", statusCode: http.StatusTooManyRequests, errorCode: types.ErrorCodeBadResponseStatusCode, message: "rate limited", want: true},
-		{name: "provider unavailable", statusCode: http.StatusServiceUnavailable, errorCode: types.ErrorCodeBadResponseStatusCode, message: "provider unavailable", want: true},
+		{name: "provider unavailable", statusCode: http.StatusServiceUnavailable, errorCode: types.ErrorCodeBadResponseStatusCode, message: "provider unavailable", want: false},
 		{name: "capability gap", statusCode: http.StatusBadRequest, errorCode: types.ErrorCodeBadResponseStatusCode, message: "image generation is not enabled for this group", want: true},
 	}
 	for _, test := range tests {

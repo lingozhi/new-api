@@ -673,3 +673,19 @@ func TestRecordChannelHealthOutcomeCountsChannelAttributableErrors(t *testing.T)
 		t.Fatal("expected repeated do-request-failed errors to open the channel circuit")
 	}
 }
+
+func TestTransientImageFailureDoesNotOpenHealthCircuit(t *testing.T) {
+	previous := common.AdaptiveChannelHealthEnabled
+	common.AdaptiveChannelHealthEnabled = true
+	t.Cleanup(func() { common.AdaptiveChannelHealthEnabled = previous })
+	apiErr := types.NewErrorWithStatusCode(errors.New("temporary upstream failure"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
+	apiErr.UpstreamStatusCode = http.StatusBadGateway
+	for _, path := range []string{"/v1/images/generations", "/v1/images/edits", "/v1/jobs"} {
+		t.Run(path, func(t *testing.T) {
+			for i := 0; i < 5; i++ {
+				RecordChannelHealthOutcome(99181, "gpt-image-2", path, nil, time.Now(), apiErr, false)
+			}
+			assert.True(t, IsChannelHealthAvailable(99181, "gpt-image-2", path))
+		})
+	}
+}

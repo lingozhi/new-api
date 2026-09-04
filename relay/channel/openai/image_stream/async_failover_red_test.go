@@ -682,3 +682,118 @@ func TestResponsesImageProviderFailuresSwitchChannel(t *testing.T) {
 		})
 	}
 }
+
+func TestAsyncImageQuickFailureRetriesOnceThenSwitchesWithoutCooling(t *testing.T) {
+	failed, backup, task := setupCheckpointedProviderFailoverTest(t, "quick-retry")
+	calls := 0
+	installAsyncImageFailoverExecutor(t, func(request *GenericImageExecutionRequest) (*GenericImageExecutionResult, *types.NewAPIError) {
+		calls++
+		assert.Equal(t, failed.Id, task.ChannelId)
+		assert.Equal(t, task.TaskID, request.RelayInfo.RequestId)
+		require.NoError(t, request.BeforeProviderCall())
+		if calls == 2 {
+			var stored model.Task
+			require.NoError(t, model.DB.First(&stored, task.ID).Error)
+			persisted := decodeStoredAsyncImagePayload(t, stored.CheckpointData)
+			assert.True(t, persisted.SameChannelRetryUsed)
+			assert.True(t, persisted.ProviderCallStarted)
+			assert.Equal(t, model.TaskStatus(model.TaskStatusCheckpointPending), stored.Status)
+		}
+		apiErr := types.NewErrorWithStatusCode(fmt.Errorf("%w: temporary gateway failure", ErrGenericImageDefinitiveResponse), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
+		apiErr.UpstreamStatusCode = http.StatusBadGateway
+		return nil, apiErr
+	})
+	completed, err := executeAsyncImageTask(context.Background(), task)
+	assert.Equal(t, 2, calls)
+	assertAsyncImageFailoverScheduled(t, failed, backup, task, completed, err)
+	assert.False(t, model.IsChannelCoolingDown(failed.Id))
+	assert.False(t, decodeStoredAsyncImagePayload(t, task.CheckpointData).SameChannelRetryUsed, "a new channel gets its own single retry")
+}
+
+func TestAsyncImageSameChannelRetryBoundaries(t *testing.T) {
+	tests := []struct {
+		name                      string
+		elapsed                   time.Duration
+		status                    int
+		used, accepted, ambiguous bool
+		want                      bool
+	}{
+		{name: "within twenty seconds", elapsed: 20 * time.Second, status: 502, want: true},
+		{name: "slow rejection rotates immediately", elapsed: 20*time.Second + time.Nanosecond, status: 502},
+		{name: "retry already persisted", elapsed: time.Second, status: 502, used: true},
+		{name: "accepted work", elapsed: time.Second, status: 502, accepted: true},
+		{name: "transport failure", elapsed: time.Second, status: 502, ambiguous: true},
+		{name: "rate limited", elapsed: time.Second, status: 429},
+		{name: "invalid request", elapsed: time.Second, status: 400},
+		{name: "invalid credentials", elapsed: time.Second, status: 401},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, task := setupCheckpointedProviderFailoverTest(t, "retry-boundary")
+			payload := decodeStoredAsyncImagePayload(t, task.CheckpointData)
+			started, err := beginAsyncImageProviderCall(task, &payload)
+			require.NoError(t, err)
+			require.True(t, started)
+			payload.SameChannelRetryUsed = tt.used
+			payload.ProviderStored = tt.accepted
+			cause := fmt.Errorf("%w: temporary failure", ErrGenericImageDefinitiveResponse)
+			if tt.ambiguous {
+				cause = errors.New("connection reset")
+			}
+			apiErr := types.NewErrorWithStatusCode(cause, types.ErrorCodeBadResponseStatusCode, tt.status)
+			apiErr.UpstreamStatusCode = tt.status
+			retried, err := retryRejectedAsyncImageCall(task, &payload, apiErr, tt.elapsed)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, retried)
+			if tt.want {
+				var stored model.Task
+				require.NoError(t, model.DB.First(&stored, task.ID).Error)
+				persisted := decodeStoredAsyncImagePayload(t, stored.CheckpointData)
+				assert.True(t, persisted.SameChannelRetryUsed)
+				assert.False(t, persisted.ProviderCallStarted)
+				assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), stored.Status)
+				assert.Zero(t, stored.ProviderAttempts)
+				assert.Equal(t, task.Quota, stored.Quota)
+			}
+		})
+	}
+}
+
+func TestAsyncImageQuickRetryCanDeliverWithoutSwitching(t *testing.T) {
+	failed, _, task := setupCheckpointedProviderFailoverTest(t, "retry-delivered")
+	previousTransport := http.DefaultClient.Transport
+	uploads := 0
+	http.DefaultClient.Transport = asyncImageRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		assert.Equal(t, http.MethodPut, request.Method)
+		uploads++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+	})
+	t.Cleanup(func() { http.DefaultClient.Transport = previousTransport })
+	calls := 0
+	encoded := base64.StdEncoding.EncodeToString(asyncOutputContractPNG(t, 1, 1))
+	installAsyncImageFailoverExecutor(t, func(request *GenericImageExecutionRequest) (*GenericImageExecutionResult, *types.NewAPIError) {
+		calls++
+		require.NoError(t, request.BeforeProviderCall())
+		if calls == 1 {
+			apiErr := types.NewErrorWithStatusCode(fmt.Errorf("%w: temporary gateway failure", ErrGenericImageDefinitiveResponse), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway)
+			apiErr.UpstreamStatusCode = http.StatusBadGateway
+			return nil, apiErr
+		}
+		response := &dto.ImageResponse{Data: []dto.ImageData{{B64Json: encoded}}}
+		body, err := common.Marshal(response)
+		require.NoError(t, err)
+		require.NoError(t, request.Checkpoint(&GenericImageUpstreamResponse{StatusCode: http.StatusOK, Body: body}))
+		return &GenericImageExecutionResult{Response: response}, nil
+	})
+	completed, err := executeAsyncImageTask(context.Background(), task)
+	require.NoError(t, err)
+	assert.True(t, completed)
+	assert.Equal(t, 2, calls)
+	assert.Equal(t, 1, uploads)
+	var stored model.Task
+	require.NoError(t, model.DB.First(&stored, task.ID).Error)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), stored.Status)
+	assert.Equal(t, failed.Id, stored.ChannelId)
+	assert.Zero(t, stored.ProviderAttempts)
+	assert.False(t, model.IsChannelCoolingDown(failed.Id))
+}
