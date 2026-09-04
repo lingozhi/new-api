@@ -1741,111 +1741,15 @@ func runAsyncImageWork(ctx context.Context) (result asyncImageRunResult, runErr 
 		concurrency = asyncImageMaxConcurrency
 	}
 
-	for {
-		if err := ctx.Err(); err != nil {
-			return result, err
-		}
-		tasks, err := model.FindPendingImageTasks(concurrency)
-		if err != nil {
-			return result, fmt.Errorf("find pending image tasks: %w", err)
-		}
-		if len(tasks) == 0 {
-			break
-		}
-
-		claimedTasks := make([]*model.Task, 0, len(tasks))
-		for _, task := range tasks {
-			if err := ctx.Err(); err != nil {
-				return result, err
-			}
-			claimed, err := model.ClaimImageTask(task, common.GetTimestamp())
-			if err != nil {
-				return result, fmt.Errorf("claim image task %s: %w", task.TaskID, err)
-			}
-			if !claimed {
-				continue
-			}
-			claimedTasks = append(claimedTasks, task)
-		}
-
-		var wg sync.WaitGroup
-		semaphore := make(chan struct{}, concurrency)
-		errorsCh := make(chan error, len(claimedTasks))
-		outcomes := make(chan bool, len(claimedTasks))
-		for _, task := range claimedTasks {
-			semaphore <- struct{}{}
-			wg.Add(1)
-			go func(imageTask *model.Task) {
-				defer wg.Done()
-				defer func() { <-semaphore }()
-				completed, err := executeAsyncImageTask(ctx, imageTask)
-				if err != nil {
-					if errors.Is(err, errAsyncImageRetryScheduled) {
-						return
-					}
-					if ctx.Err() != nil {
-						errorsCh <- err
-						return
-					}
-					message := common.MaskSensitiveInfo(err.Error())
-					if len(message) > 2000 {
-						message = message[:2000]
-					}
-					if imageTask.Status == model.TaskStatusFinalizing {
-						delay := asyncImageRetryDelay(imageTask.FinalizeAttempts)
-						if scheduleErr := model.MarkImageTaskFinalizationRetry(imageTask, time.Now().Add(delay).Unix(), message); scheduleErr != nil {
-							errorsCh <- fmt.Errorf("schedule image task finalization retry %s: %w", imageTask.TaskID, scheduleErr)
-						}
-						return
-					}
-					if imageTask.WorkerAttempts+1 >= asyncImageWorkerAttempts {
-						if failErr := failAsyncImageTask(ctx, imageTask, fmt.Errorf("image worker exhausted retries: %w", err)); failErr != nil {
-							if imageTask.Status == model.TaskStatusFinalizing {
-								delay := asyncImageRetryDelay(imageTask.FinalizeAttempts)
-								if scheduleErr := model.MarkImageTaskFinalizationRetry(imageTask, time.Now().Add(delay).Unix(), common.MaskSensitiveInfo(failErr.Error())); scheduleErr == nil {
-									return
-								}
-							}
-							errorsCh <- failErr
-							return
-						}
-						outcomes <- false
-						return
-					}
-					delay := asyncImageRetryDelay(imageTask.WorkerAttempts)
-					scheduled, scheduleErr := imageTask.MarkImageWorkerRetry(time.Now().Add(delay).Unix(), message)
-					if scheduleErr != nil {
-						errorsCh <- fmt.Errorf("schedule image worker retry for task %s: %w", imageTask.TaskID, scheduleErr)
-						return
-					}
-					if scheduled {
-						logger.LogWarn(ctx, fmt.Sprintf("image worker deferred after unexpected error: task=%s retry=%s err=%s", imageTask.TaskID, delay, message))
-					}
-					return
-				}
-				outcomes <- completed
-			}(task)
-		}
-		wg.Wait()
-		close(errorsCh)
-		close(outcomes)
-		for completed := range outcomes {
-			if completed {
-				result.Completed++
-			} else {
-				result.Failed++
-			}
-		}
+	queueResult, err := drainAsyncImageTaskQueue(ctx, concurrency, executeAsyncImageTask, func() {
 		select {
 		case webhookTrigger <- struct{}{}:
 		default:
 		}
-		for err := range errorsCh {
-			return result, err
-		}
-
-	}
-	return result, nil
+	})
+	result.Completed += queueResult.Completed
+	result.Failed += queueResult.Failed
+	return result, err
 }
 
 func recoverCheckpointPendingImageTasks(ctx context.Context) (int, error) {
@@ -1993,6 +1897,11 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	startedAt := time.Now()
+	queuedSeconds := max(int64(0), task.StartTime-task.SubmitTime)
+	defer func() {
+		logger.LogInfo(ctx, fmt.Sprintf("async image timing: task=%s channel=%d attempt=%d queue_ms=%d worker_ms=%d", task.TaskID, task.ChannelId, task.Attempt, queuedSeconds*1000, time.Since(startedAt).Milliseconds()))
+	}()
 	checkpoint := task.CheckpointData
 	var err error
 	if len(checkpoint) == 0 {
@@ -2163,6 +2072,7 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 		})
 		executionErr := executionCtx.Err()
 		cancel()
+		logger.LogInfo(ctx, fmt.Sprintf("async image timing: task=%s phase=provider_execution elapsed_ms=%d", task.TaskID, time.Since(genericAttemptStart).Milliseconds()))
 		if apiErr != nil {
 			if ctx.Err() != nil {
 				return false, ctx.Err()
@@ -2294,9 +2204,11 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 		if err := outputLease.acquire(ctx); err != nil {
 			return false, err
 		}
+		materializeStarted := time.Now()
 		downloadCtx, downloadCancel := context.WithTimeout(ctx, asyncImageUploadTimeout)
 		materialized, materializeErr := materializeGenericImageResponse(downloadCtx, genericArtifact.Response)
 		downloadCancel()
+		logger.LogInfo(ctx, fmt.Sprintf("async image timing: task=%s phase=materialize elapsed_ms=%d", task.TaskID, time.Since(materializeStarted).Milliseconds()))
 		if materializeErr != nil {
 			if ctx.Err() != nil {
 				return false, ctx.Err()
@@ -2521,6 +2433,7 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 	var resultImages []dto.ImageData
 	var usage *dto.Usage
 	var storageErr *imageStorageError
+	uploadStarted := time.Now()
 	uploadCtx, uploadCancel := context.WithTimeout(ctx, asyncImageUploadTimeout)
 uploadLoop:
 	for attempt := 0; attempt < 3; attempt++ {
@@ -2563,6 +2476,7 @@ uploadLoop:
 		}
 	}
 	uploadCancel()
+	logger.LogInfo(ctx, fmt.Sprintf("async image timing: task=%s phase=object_storage elapsed_ms=%d", task.TaskID, time.Since(uploadStarted).Milliseconds()))
 	if err != nil {
 		if ctx.Err() != nil {
 			return false, ctx.Err()
