@@ -3099,13 +3099,17 @@ func switchAsyncImageChannelForProtocol(ctx context.Context, task *model.Task, p
 	}
 	excluded[task.ChannelId] = struct{}{}
 	requestPath := asyncImageHealthPath(*payload)
+	selectionRequestPath := requestPath
+	if requiredProtocol == dto.ImageRoutingProtocolKIEJobs {
+		selectionRequestPath = "/v1/jobs"
+	}
 
 	for {
 		candidate, selectErr := model.GetRandomSatisfiedChannelWithOptions(task.Group, task.Properties.OriginModelName, 0, model.ChannelSelectionOptions{
 			ExcludedChannelIDs:   excluded,
 			ImageRequirement:     payload.ImageRequirement,
 			AllowCoolingFallback: false,
-			RequestPath:          requestPath,
+			RequestPath:          selectionRequestPath,
 			Path:                 service.ChannelHealthPath(requestPath),
 		})
 		if selectErr != nil {
@@ -3359,11 +3363,16 @@ func prepareAsyncImageFailoverRequest(candidate *model.Channel, originModel stri
 	channelSetting.SystemPromptOverride = false
 	channelOtherSettings := candidate.GetOtherSettings()
 	advancedRouteHash := ""
+	requestURLPath := common.ImageGenerationEndpoint
 	if candidate.Type == constant.ChannelTypeAdvancedCustom {
 		if channelOtherSettings.AdvancedCustom == nil {
 			return nil, errors.New("advanced custom image failover route is missing")
 		}
-		route, ok := channelOtherSettings.AdvancedCustom.MatchPathForModel(common.ImageGenerationEndpoint, originModel)
+		route, ok := channelOtherSettings.AdvancedCustom.MatchPathForModel(requestURLPath, originModel)
+		if !ok && payload.ImageRoutingProtocol == dto.ImageRoutingProtocolKIEJobs {
+			requestURLPath = "/v1/jobs"
+			route, ok = channelOtherSettings.AdvancedCustom.MatchPathForModel(requestURLPath, originModel)
+		}
 		if !ok {
 			return nil, errors.New("advanced custom image failover route could not be resolved")
 		}
@@ -3390,7 +3399,7 @@ func prepareAsyncImageFailoverRequest(candidate *model.Channel, originModel stri
 		OutputCount:                outputCount,
 		RelayMode:                  payload.RelayMode,
 		ContentType:                "application/json",
-		RequestURLPath:             common.ImageGenerationEndpoint,
+		RequestURLPath:             requestURLPath,
 		ChannelBaseURL:             "",
 		ExecutionDestinationHash:   destinationHash,
 		ExecutionDestinationStored: true,

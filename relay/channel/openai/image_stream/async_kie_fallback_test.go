@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/types"
@@ -20,7 +21,13 @@ func TestAsyncImageRejectedGenerationUsesKIEOnce(t *testing.T) {
 	routing := asyncImageFailoverTestRouting()
 	routing.Profiles[0].Protocol = dto.ImageRoutingProtocolKIEJobs
 	routing.Profiles[0].UpstreamPath = "/api/v1/jobs/createTask"
-	backup.SetOtherSettings(dto.ChannelOtherSettings{ImageRouting: routing})
+	backup.Type = constant.ChannelTypeAdvancedCustom
+	backup.SetOtherSettings(dto.ChannelOtherSettings{
+		ImageRouting: routing,
+		AdvancedCustom: &dto.AdvancedCustomConfig{Routes: []dto.AdvancedCustomRoute{{
+			IncomingPath: "/v1/jobs", UpstreamPath: "/api/v1/jobs/createTask", Converter: "none", Models: []string{"gpt-image-2"},
+		}}},
+	})
 	require.NoError(t, model.DB.Save(backup).Error)
 
 	other := *failed
@@ -31,6 +38,7 @@ func TestAsyncImageRejectedGenerationUsesKIEOnce(t *testing.T) {
 	model.SetChannelCacheForTest(map[int]*model.Channel{failed.Id: failed, backup.Id: backup, other.Id: &other}, map[string]map[string][]int{
 		"default": {"gpt-image-2": {other.Id, failed.Id, backup.Id}},
 	})
+	model.CacheUpdateChannel(backup)
 
 	task.Quota = 100
 	task.PrivateData.BillingSource = "wallet"
