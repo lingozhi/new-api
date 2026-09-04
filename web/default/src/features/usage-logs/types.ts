@@ -279,6 +279,7 @@ export interface MidjourneyLog {
 // ============================================================================
 
 export interface TaskLog {
+  input_log?: string
   id: number
   user_id: number
   username?: string

@@ -1415,6 +1415,7 @@ func buildTaskBillingContext(relayInfo *relaycommon.RelayInfo) *model.TaskBillin
 }
 
 func RelayTask(c *gin.Context) {
+	inputLog := common.TaskInputLog(c)
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
 		respondTaskError(c, &dto.TaskError{
@@ -1461,6 +1462,7 @@ func RelayTask(c *gin.Context) {
 		submissionCheckpoint = &relay.TaskSubmissionCheckpoint{}
 		submissionCheckpoint.Prepare = func(platform constant.TaskPlatform, expectedQuota int) *dto.TaskError {
 			task := model.InitTask(platform, relayInfo)
+			task.SetInputLog(inputLog)
 			task.Status = model.TaskStatusReserving
 			task.Action = relayInfo.Action
 			task.Quota = expectedQuota
@@ -1675,6 +1677,7 @@ func RelayTask(c *gin.Context) {
 			}
 		} else {
 			task := model.InitTask(result.Platform, relayInfo)
+			task.SetInputLog(inputLog)
 			task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 			task.PrivateData.BillingSource = relayInfo.BillingSource
 			task.PrivateData.SubscriptionId = relayInfo.SubscriptionId

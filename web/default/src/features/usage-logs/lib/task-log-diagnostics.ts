@@ -38,6 +38,7 @@ const REQUEST_PARAMETER_KEYS = [
 ] as const
 
 export interface TaskLogDiagnostics {
+  input: unknown
   request: Record<string, unknown>
   modelMapping: Record<string, string>
   resultUrl?: string
@@ -205,6 +206,7 @@ export function buildTaskLogDiagnostics(log: TaskLog): TaskLogDiagnostics {
   }
 
   return {
+    input: redactSensitiveValues(parseStructuredValue(log.input_log)),
     request,
     modelMapping,
     resultUrl: topLevelResultUrl ?? responseResultUrl,

@@ -223,3 +223,21 @@ describe('task log diagnostics', () => {
     assert.deepEqual(diagnostics.modelMapping, {})
   })
 })
+
+test('keeps submitted input separate from upstream response', () => {
+  const diagnostics = buildTaskLogDiagnostics({
+    ...failedDepthMediaTask,
+    input_log: JSON.stringify({
+      prompt: 'A calm forest',
+      generate_audio: false,
+      seed: 0,
+    }),
+    data: { status: 'done' },
+  })
+  assert.deepEqual(diagnostics.input, {
+    prompt: 'A calm forest',
+    generate_audio: false,
+    seed: 0,
+  })
+  assert.equal(buildTaskLogDiagnostics(failedDepthMediaTask).input, undefined)
+})

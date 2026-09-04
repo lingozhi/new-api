@@ -87,6 +87,7 @@ func tasksToDto(tasks []*model.Task, fillUser bool) []*dto.TaskDto {
 		} else {
 			result[i] = relay.TaskModel2Dto(task)
 		}
+		result[i].InputLog = task.InputLog()
 	}
 	return result
 }

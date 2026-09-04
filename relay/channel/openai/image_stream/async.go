@@ -378,6 +378,7 @@ func SubmitAsyncImage(c *gin.Context, info *relaycommon.RelayInfo, req *dto.Imag
 	}
 
 	task := model.InitTask(constant.TaskPlatformOpenAIImage, info)
+	task.SetInputLog(common.TaskInputLog(c))
 	// Async image workers reselect the submitted channel key by HMAC. The raw
 	// Gemini/Vertex key populated by the generic task initializer is not needed.
 	task.PrivateData.Key = ""

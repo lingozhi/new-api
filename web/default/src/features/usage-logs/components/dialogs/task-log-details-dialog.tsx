@@ -206,6 +206,15 @@ export function TaskLogDetailsDialog(props: TaskLogDetailsDialogProps) {
       ) : null}
 
       <section className='space-y-2'>
+        <h3 className='text-sm font-semibold'>{t('User input')}</h3>
+        <CopyableJson
+          value={diagnostics.input}
+          copyLabel={t('Copy input')}
+          emptyLabel={t('No input recorded for this task')}
+        />
+      </section>
+
+      <section className='space-y-2'>
         <h3 className='text-sm font-semibold'>{t('Request parameters')}</h3>
         {requestEntries.length === 0 && modelEntries.length === 0 ? (
           <p className='text-muted-foreground rounded-lg border p-3 text-sm'>
