@@ -140,3 +140,24 @@ func TestArgolinkSeedancePublicResultUsesGatewayContentURL(t *testing.T) {
 		"video":{"duration":4,"url":"/v1/videos/task_public/content"}
 	}`, string(encoded))
 }
+
+func TestArgolinkReferenceVideoBillingAndDeliveredDuration(t *testing.T) {
+	c, _, info := newArgolinkSeedanceContext(t, `{"model":"seedance-2.5","duration":10,"reference_videos":[{"url":"https://example.com/video.mp4"}]}`)
+	adaptor := &TaskAdaptor{}
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	ratios := adaptor.EstimateBilling(c, info)
+	assert.Equal(t, 1.6, ratios["video_input"])
+	task := &model.Task{Properties: model.Properties{OriginModelName: constant.ArgolinkSeedance25Model}}
+	task.PrivateData.BillingContext = &model.TaskBillingContext{ModelPrice: 0.17, GroupRatio: 1, OtherRatios: ratios}
+	result := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}
+	for _, duration := range []int{4, 12} {
+		data, err := common.Marshal(map[string]any{"video": map[string]any{"duration": duration}})
+		require.NoError(t, err)
+		task.Data = data
+		assert.Equal(t, common.QuotaFromFloat(0.17*common.QuotaPerUnit*float64(duration)*1.6), adaptor.AdjustBillingOnComplete(task, result))
+	}
+	task.Data = []byte(`{"video":{"duration":-1}}`)
+	assert.Zero(t, adaptor.AdjustBillingOnComplete(task, result))
+	task.Data = []byte(`{"video":{"duration":9223372036854775807}}`)
+	assert.Equal(t, common.QuotaFromFloat(0.17*common.QuotaPerUnit*float64(relaycommon.MaxTaskDurationSeconds)*1.6), adaptor.AdjustBillingOnComplete(task, result))
+}

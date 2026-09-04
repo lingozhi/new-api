@@ -141,7 +141,12 @@ func VideoProxy(c *gin.Context) {
 			}
 		case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
 			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
-			req.Header.Set("Authorization", "Bearer "+channel.Key)
+			key, keyErr := service.ResolveTaskPollingChannelKey(channel, task.PrivateData)
+			if keyErr != nil {
+				videoProxyError(c, http.StatusBadGateway, "server_error", "Unable to resolve task credentials")
+				return
+			}
+			req.Header.Set("Authorization", "Bearer "+key)
 		default:
 			// Video URL is stored in PrivateData.ResultURL (fallback to FailReason for old data)
 			videoURL = task.GetResultURL()

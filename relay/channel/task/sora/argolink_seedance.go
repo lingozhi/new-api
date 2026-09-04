@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
 
@@ -153,10 +154,14 @@ func estimateArgolinkSeedance25Billing(c *gin.Context) map[string]float64 {
 		duration = *request.Duration
 	}
 	price := argolinkSeedance25ResolutionPrices[request.Resolution]
-	return map[string]float64{
+	ratios := map[string]float64{
 		"seconds":    float64(duration),
 		"resolution": price / argolinkSeedance25BasePrice,
 	}
+	if len(request.ReferenceVideos) > 0 {
+		ratios["video_input"] = 1.6
+	}
+	return ratios
 }
 
 func convertArgolinkSeedance25Task(task *model.Task) ([]byte, error) {
@@ -200,4 +205,29 @@ func convertArgolinkSeedance25Task(task *model.Task) ([]byte, error) {
 		response.Status = "pending"
 	}
 	return common.Marshal(response)
+}
+
+// AdjustBillingOnComplete reconciles against delivered seconds using the saved price.
+func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, result *relaycommon.TaskInfo) int {
+	if task == nil || result == nil || result.Status != model.TaskStatusSuccess || !isArgolinkSeedance25Model(task.Properties.OriginModelName) {
+		return 0
+	}
+	billing := task.PrivateData.BillingContext
+	if billing == nil || billing.ModelPrice <= 0 || billing.GroupRatio <= 0 {
+		return 0
+	}
+	var response responseTask
+	if err := common.Unmarshal(task.Data, &response); err != nil || response.Video == nil || response.Video.Duration <= 0 {
+		return 0
+	}
+	seconds := min(response.Video.Duration, relaycommon.MaxTaskDurationSeconds)
+	price := &types.PriceData{}
+	for name, ratio := range billing.OtherRatios {
+		if name != "seconds" {
+			price.AddOtherRatio(name, ratio)
+		}
+	}
+	quota, clamp := common.QuotaFromFloatChecked(price.ApplyOtherRatiosToFloat(billing.ModelPrice * common.QuotaPerUnit * billing.GroupRatio * float64(seconds)))
+	task.PrivateData.FinalQuotaClamp = clamp
+	return quota
 }
