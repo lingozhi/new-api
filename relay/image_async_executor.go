@@ -275,7 +275,16 @@ func executeGenericImageAdaptor(ctx context.Context, input *image_stream.Generic
 						c.Request.Header.Set("Content-Type", "application/json")
 					}
 				} else {
-					jsonData, marshalErr := common.Marshal(convertedRequest)
+					var jsonData []byte
+					var marshalErr error
+					switch converted := convertedRequest.(type) {
+					case dto.ImageRequest:
+						jsonData, marshalErr = marshalGenericImageRequest(&converted)
+					case *dto.ImageRequest:
+						jsonData, marshalErr = marshalGenericImageRequest(converted)
+					default:
+						jsonData, marshalErr = common.Marshal(convertedRequest)
+					}
 					if marshalErr != nil {
 						return nil, types.NewError(marshalErr, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 					}

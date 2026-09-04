@@ -917,7 +917,7 @@ func TestGetRandomSatisfiedChannelUsesCoolingFallbackOnRetryWhenHealthyExhausted
 	}
 }
 
-func TestGetRandomSatisfiedChannelFiltersImageCapabilityBeforePriority(t *testing.T) {
+func TestGetRandomSatisfiedChannelUsesPriorityWithoutGeometryFiltering(t *testing.T) {
 	setImageResolutionPricesForChannelSelectionTest(t)
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
 	common.MemoryCacheEnabled = true
@@ -950,17 +950,19 @@ func TestGetRandomSatisfiedChannelFiltersImageCapabilityBeforePriority(t *testin
 	})
 	require.NoError(t, err)
 	require.NotNil(t, selected)
-	assert.Equal(t, 108, selected.Id)
+	assert.Equal(t, 65, selected.Id)
 
 	selected, err = GetRandomSatisfiedChannelWithOptions("default", "gpt-image-2", 1, ChannelSelectionOptions{
-		ExcludedChannelIDs: map[int]struct{}{108: {}},
+		ExcludedChannelIDs: map[int]struct{}{65: {}},
 		ImageRequirement:   requirement,
 	})
 	require.NoError(t, err)
-	assert.Nil(t, selected, "retry must not fall back to an incompatible channel")
+	require.NotNil(t, selected)
+	assert.Equal(t, 108, selected.Id)
+	assert.Equal(t, "4K", requirement.Resolution)
 }
 
-func TestGetRandomSatisfiedChannelRequiresExplicitVariantForConflictingDefaults(t *testing.T) {
+func TestGetRandomSatisfiedChannelAllowsProviderGeometryDefaults(t *testing.T) {
 	setImageResolutionPricesForChannelSelectionTest(t)
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
 	common.MemoryCacheEnabled = true
@@ -983,15 +985,15 @@ func TestGetRandomSatisfiedChannelRequiresExplicitVariantForConflictingDefaults(
 	selected, err := GetRandomSatisfiedChannelWithOptions("default", "custom-image", 0, ChannelSelectionOptions{
 		ImageRequirement: &dto.ImageSelectionRequirement{Operation: dto.ImageOperationGeneration},
 	})
-	require.ErrorContains(t, err, "must specify resolution")
-	assert.Nil(t, selected)
+	require.NoError(t, err)
+	require.NotNil(t, selected)
 
 	selected, err = GetRandomSatisfiedChannelWithOptions("default", "custom-image", 0, ChannelSelectionOptions{
 		ImageRequirement: &dto.ImageSelectionRequirement{Operation: dto.ImageOperationGeneration, Resolution: "4K"},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, selected)
-	assert.Equal(t, 108, selected.Id)
+	assert.Contains(t, []int{65, 108}, selected.Id)
 }
 
 func TestGetRandomSatisfiedChannelKeepsContractAutoFailoverDefaultsCompatible(t *testing.T) {
@@ -1198,7 +1200,8 @@ func TestGetRandomSatisfiedChannelDoesNotFallBackToLegacyAfterModelRoutingMigrat
 		},
 	})
 	require.NoError(t, err)
-	assert.Nil(t, selected, "an unconfigured legacy channel must not bypass the model's explicit routing contract")
+	require.NotNil(t, selected)
+	assert.Equal(t, 108, selected.Id, "use the verified route without imposing its geometry catalog")
 }
 
 func TestGetRandomSatisfiedChannelFailsClosedWhenExplicitRoutingIsInvalid(t *testing.T) {
@@ -1257,8 +1260,8 @@ func TestGetRandomSatisfiedChannelRejectsUnverifiedConfiguredChannel(t *testing.
 func TestImageSelectionRejectsInvalidRequirementEvenForLegacyChannel(t *testing.T) {
 	channel := &Channel{Id: 31}
 	require.False(t, ChannelSupportsImageSelection(channel, "gpt-image-2", &dto.ImageSelectionRequirement{
-		Operation:  dto.ImageOperationGeneration,
-		Resolution: "ultra",
+		Operation: dto.ImageOperationGeneration,
+		N:         dto.MaxImageN + 1,
 	}))
 
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
@@ -1279,8 +1282,8 @@ func TestImageSelectionRejectsInvalidRequirementEvenForLegacyChannel(t *testing.
 
 	selected, err := GetRandomSatisfiedChannelWithOptions("default", "gpt-image-2", 0, ChannelSelectionOptions{
 		ImageRequirement: &dto.ImageSelectionRequirement{
-			Operation:  dto.ImageOperationGeneration,
-			Resolution: "ultra",
+			Operation: dto.ImageOperationGeneration,
+			N:         dto.MaxImageN + 1,
 		},
 	})
 	require.Error(t, err)
@@ -1430,7 +1433,7 @@ func TestChannelSupportsImageSelectionUsesVerifiedProfileAndAllowedCombination(t
 		Size:        "2880x2880",
 		Quality:     "low",
 	}))
-	assert.False(t, ChannelSupportsImageSelection(channel, "gpt-image-2", &dto.ImageSelectionRequirement{
+	assert.True(t, ChannelSupportsImageSelection(channel, "gpt-image-2", &dto.ImageSelectionRequirement{
 		Operation:   dto.ImageOperationGeneration,
 		Resolution:  "4K",
 		AspectRatio: "1:1",
@@ -1445,7 +1448,7 @@ func TestChannelSupportsImageSelectionUsesVerifiedProfileAndAllowedCombination(t
 	assert.Equal(t, "/v1/images/generations", profile.UpstreamPath)
 }
 
-func TestGetChannelWithOptionsFiltersImageCapabilityWithoutMemoryCache(t *testing.T) {
+func TestGetChannelWithOptionsUsesPriorityWithoutGeometryFilteringWithoutMemoryCache(t *testing.T) {
 	setImageResolutionPricesForChannelSelectionTest(t)
 	setupChannelSelectionTestDB(t)
 
@@ -1473,7 +1476,7 @@ func TestGetChannelWithOptionsFiltersImageCapabilityWithoutMemoryCache(t *testin
 	})
 	require.NoError(t, err)
 	require.NotNil(t, selected)
-	assert.Equal(t, 108, selected.Id)
+	assert.Equal(t, 65, selected.Id)
 }
 
 func TestGetChannelWithOptionsHonorsImageRoutingAuthorityGroupsWithoutMemoryCache(t *testing.T) {
@@ -1791,7 +1794,12 @@ func TestProviderSelectedImageSizeUsesPriorityThenFreezesFallbackTier(t *testing
 				ImageRequirement: &frozen, ExcludedChannelIDs: map[int]struct{}{primary.Id: {}},
 			})
 			require.NoError(t, err)
-			assert.Nil(t, selected, "fallback must not silently change the frozen billing tier")
+			require.NotNil(t, selected)
+			assert.Equal(t, fallback.Id, selected.Id)
+			fallbackProfile, _ := ChannelImageRoutingProfile(selected, "gpt-image-2")
+			fallbackRequirement, err := fallbackProfile.ApplyDefaults(frozen)
+			require.NoError(t, err)
+			assert.Equal(t, frozen.Resolution, fallbackRequirement.Resolution, "rotation preserves the reserved billing tier")
 		})
 	}
 }

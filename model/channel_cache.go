@@ -618,9 +618,6 @@ func imageRoutingProfileHasResolutionPrice(model string, profile *dto.ImageRouti
 	if billing_setting.GetBillingMode(model) == billing_setting.BillingModeTieredExpr {
 		return false
 	}
-	if requirement.Resolution == "auto" {
-		return false
-	}
 	_, ok := ratio_setting.GetImageResolutionPrice(model, requirement.Resolution)
 	return ok
 }
@@ -634,21 +631,11 @@ func validateImageRoutingDefaultConsistency(requested dto.ImageSelectionRequirem
 		requested string
 		value     func(dto.ImageSelectionRequirement) string
 	}{
-		{name: "resolution", requested: requested.Resolution, value: func(requirement dto.ImageSelectionRequirement) string { return requirement.Resolution }},
-		{name: "aspect_ratio", requested: requested.AspectRatio, value: func(requirement dto.ImageSelectionRequirement) string { return requirement.AspectRatio }},
-		{name: "size", requested: requested.Size, value: func(requirement dto.ImageSelectionRequirement) string { return requirement.Size }},
 		{name: "quality", requested: requested.Quality, value: func(requirement dto.ImageSelectionRequirement) string { return requirement.Quality }},
 		{name: "output_format", requested: requested.OutputFormat, value: func(requirement dto.ImageSelectionRequirement) string { return requirement.OutputFormat }},
 	}
 	for _, field := range fields {
 		if field.requested != "" {
-			continue
-		}
-		// Explicit auto/ratio sizes delegate pixel dimensions to the provider.
-		// The selected profile freezes its billing tier before pre-consumption;
-		// fallback selection still uses that frozen requirement.
-		if (requested.Size == "auto" || strings.Contains(requested.Size, ":")) &&
-			(field.name == "resolution" || field.name == "aspect_ratio") {
 			continue
 		}
 		baseline := field.value(resolved[0])

@@ -519,8 +519,8 @@ func TestRequestAsyncImageUpstreamDoesNotReturnProviderErrorBody(t *testing.T) {
 	assert.NotContains(t, err.Error(), "json-secret")
 }
 
-func TestProviderSizeSurvivesImageRelayNormalization(t *testing.T) {
-	for _, size := range []string{"auto", "9:16", "21:9", "2160x2160", "3840x1646"} {
+func TestProviderSizeSurvivesResponsesConversion(t *testing.T) {
+	for _, size := range []string{"auto", "9:16", "21:9", "2160x2160", "3840x1646", " 1024×1537 "} {
 		t.Run(size, func(t *testing.T) {
 			request := &dto.ImageRequest{Model: "gpt-image-2", Size: size, Extra: map[string]json.RawMessage{
 				"resolution": json.RawMessage(`"4K"`),
@@ -528,8 +528,10 @@ func TestProviderSizeSurvivesImageRelayNormalization(t *testing.T) {
 			require.NoError(t, request.SetImageSelectionRequirement(dto.ImageSelectionRequirement{
 				Operation: dto.ImageOperationGeneration, Resolution: "4K", Size: size, N: 1,
 			}))
-			require.NoError(t, NormalizeUnifiedGPTImageDimensions(request, request.Model))
-			encoded, err := common.Marshal(request)
+			converted, err := buildGenerationsRequestWithError(request, request.Model)
+			require.NoError(t, err)
+			require.Len(t, converted.Tools, 1)
+			encoded, err := common.Marshal(converted.Tools[0])
 			require.NoError(t, err)
 			var upstream map[string]interface{}
 			require.NoError(t, common.Unmarshal(encoded, &upstream))

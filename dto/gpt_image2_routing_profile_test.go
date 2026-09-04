@@ -50,7 +50,7 @@ func TestGPTImage2ProductionProfileValidatesAndRoutesTheCompleteMatrix(t *testin
 			Size:        combination.Size,
 		}), "%s %s %s", combination.Resolution, combination.AspectRatio, combination.Size)
 	}
-	assert.False(t, config.Supports("gpt-image-2", dto.ImageSelectionRequirement{
+	assert.True(t, config.Supports("gpt-image-2", dto.ImageSelectionRequirement{
 		Operation:   dto.ImageOperationGeneration,
 		Resolution:  "2K",
 		AspectRatio: "auto",
@@ -102,14 +102,14 @@ func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaul
 	assert.Equal(t, "1K", explicitAuto.Resolution)
 	assert.Equal(t, "auto", explicitAuto.AspectRatio)
 	assert.Equal(t, "auto", explicitAuto.Size)
-	assert.False(t, config.Supports("gpt-image-2", dto.ImageSelectionRequirement{
+	assert.True(t, config.Supports("gpt-image-2", dto.ImageSelectionRequirement{
 		Operation:   dto.ImageOperationGeneration,
 		Resolution:  "2K",
 		AspectRatio: "auto",
 		Size:        "auto",
 		N:           1,
 	}))
-	assert.False(t, config.Supports("gpt-image-2", dto.ImageSelectionRequirement{
+	assert.True(t, config.Supports("gpt-image-2", dto.ImageSelectionRequirement{
 		Operation:   dto.ImageOperationGeneration,
 		Resolution:  "4K",
 		AspectRatio: "3:2",
@@ -262,7 +262,7 @@ func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaul
 			err := config.Validate()
 			require.Error(t, err)
 			assert.ErrorContains(t, err, "default image tuple")
-			assert.False(t, config.Supports("gpt-image-2", testCase.requirement))
+
 		})
 	}
 
@@ -331,7 +331,7 @@ func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaul
 			err := config.Validate()
 			require.Error(t, err)
 			assert.ErrorContains(t, err, "default image tuple")
-			assert.False(t, config.Supports("gpt-image-2", testCase.requirement))
+
 		})
 	}
 }

@@ -506,21 +506,6 @@ func TestGenericImageExecutorUsesJSONForEditOperationOnGenerationsProtocol(t *te
 	require.Len(t, result.Response.Data, 1)
 }
 
-func TestSanitizeImageRoutingAliasesRemovesGatewayDimensions(t *testing.T) {
-	request := dto.ImageRequest{Extra: map[string]json.RawMessage{
-		"resolution":      json.RawMessage(`"4K"`),
-		"aspect_ratio":    json.RawMessage(`"1:1"`),
-		"negative_prompt": json.RawMessage(`"fog"`),
-	}}
-
-	sanitized := sanitizeImageRoutingAliases(request, dto.ImageRoutingProtocolImagesGenerations)
-
-	assert.NotContains(t, sanitized.Extra, "resolution")
-	assert.NotContains(t, sanitized.Extra, "aspect_ratio")
-	assert.JSONEq(t, `"fog"`, string(sanitized.Extra["negative_prompt"]))
-	assert.Contains(t, request.Extra, "resolution")
-}
-
 func TestGenericImageExecutorRebuildsEditMaskAndRepeatedFields(t *testing.T) {
 	imageBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x01}
 	maskBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 0x02}
@@ -853,4 +838,57 @@ func TestGenericImageExecutorRehydratesAdvancedCustomRoute(t *testing.T) {
 	require.NotNil(t, result)
 	require.Len(t, result.Response.Data, 1)
 	assert.Equal(t, "https://images.example/result.png", result.Response.Data[0].Url)
+}
+
+func TestImageGeometryPassesThroughToUpstream(t *testing.T) {
+	for _, tc := range []struct {
+		name, size string
+		extra      map[string]json.RawMessage
+	}{
+		{name: "provider-specific", size: " 1024×1537 ", extra: map[string]json.RawMessage{"resolution": json.RawMessage(`"Ultra-HD"`), "aspect_ratio": json.RawMessage(`"9:21"`)}},
+		{name: "conflicting-ratio", size: "9:16", extra: map[string]json.RawMessage{"resolution": json.RawMessage(`"auto"`), "aspect_ratio": json.RawMessage(`"16:9"`)}},
+		{name: "omitted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var received map[string]json.RawMessage
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.NoError(t, common.DecodeJson(r.Body, &received))
+				w.Header().Set("Content-Type", "application/json")
+				_, err := io.WriteString(w, `{"data":[{"url":"https://images.example/image.png"}]}`)
+				require.NoError(t, err)
+			}))
+			t.Cleanup(server.Close)
+			request := &dto.ImageRequest{Model: "gpt-image-2", Prompt: "a teacup", Size: tc.size, Extra: tc.extra}
+			requirement, err := dto.ResolveImageSelectionRequirement(request, request.Model, dto.ImageOperationGeneration)
+			require.NoError(t, err)
+			profile := &dto.ImageRoutingProfile{DefaultSize: "3840x2160", DefaultResolution: "4K", DefaultAspectRatio: "16:9", VerificationStatus: dto.ImageRoutingVerificationProductionVerified}
+			frozen, err := profile.ApplyDefaults(requirement)
+			require.NoError(t, err)
+			require.NoError(t, request.SetImageSelectionRequirement(frozen))
+			require.NoError(t, materializeImageSelectionRequirement(request, frozen, profile))
+			require.NoError(t, image_stream.ValidateAsyncImageSubmission(request.Model, request.Model, request))
+			info := &relaycommon.RelayInfo{
+				RelayMode: relayconstant.RelayModeImagesGenerations, RelayFormat: types.RelayFormatOpenAIImage,
+				RequestURLPath: "/v1/images/generations", RequestHeaders: map[string]string{"Content-Type": "application/json"},
+				ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeOpenAI, ApiType: constant.APITypeOpenAI, ChannelBaseUrl: server.URL, ApiKey: "test-key", UpstreamModelName: "gpt-image-2"},
+			}
+			result, apiErr := image_stream.ExecuteGenericImageAdaptor(context.Background(), &image_stream.GenericImageExecutionRequest{RelayInfo: info, ImageRequest: request})
+			require.Nil(t, apiErr)
+			require.NotNil(t, result)
+			if tc.size == "" {
+				assert.NotContains(t, received, "size")
+			} else {
+				var size string
+				require.NoError(t, common.Unmarshal(received["size"], &size))
+				assert.Equal(t, tc.size, size)
+			}
+			for _, field := range []string{"resolution", "aspect_ratio"} {
+				if raw, ok := tc.extra[field]; ok {
+					assert.JSONEq(t, string(raw), string(received[field]))
+				} else {
+					assert.NotContains(t, received, field)
+				}
+			}
+		})
+	}
 }

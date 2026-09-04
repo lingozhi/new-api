@@ -407,7 +407,7 @@ func TestImageEditAliasesSubmitMultipartAsDurableAsyncTasks(t *testing.T) {
 	}
 }
 
-func TestImageHelperUsesMappedGPT2DimensionsForAdaptorBatch(t *testing.T) {
+func TestImageHelperPreservesGeometryForMappedGPT2AdaptorBatch(t *testing.T) {
 	setupImageHelperAsyncTestDB(t)
 	two := uint(2)
 	request := &dto.ImageRequest{
@@ -465,9 +465,9 @@ func TestImageHelperUsesMappedGPT2DimensionsForAdaptorBatch(t *testing.T) {
 	require.NoError(t, common.Unmarshal(checkpoint.PreparedRequest.Body, &providerBody))
 	assert.Equal(t, "gpt-image-2", providerBody["model"])
 	assert.Equal(t, float64(2), providerBody["n"])
-	assert.Equal(t, "2048x1152", providerBody["size"])
-	assert.NotContains(t, providerBody, "aspect_ratio")
-	assert.NotContains(t, providerBody, "resolution")
+	assert.Empty(t, providerBody["size"])
+	assert.Equal(t, "16:9", providerBody["aspect_ratio"])
+	assert.Equal(t, "2K", providerBody["resolution"])
 }
 
 func TestImageHelperUsesMappedProviderFamilyInsteadOfPublicGPTFamily(t *testing.T) {
@@ -1162,7 +1162,7 @@ func TestPrepareAsyncImageAdaptorRequestPreservesUnifiedOpenAIExtra(t *testing.T
 	assert.Equal(t, "rain", body["negative_prompt"])
 }
 
-func TestMaterializeImageSelectionRequirementFreezesCanonicalAndTypedValues(t *testing.T) {
+func TestMaterializeImageSelectionRequirementPreservesGeometryAndFreezesTypedValues(t *testing.T) {
 	request := &dto.ImageRequest{
 		Model:        "verified-image-model",
 		Prompt:       "a red kite",
@@ -1197,11 +1197,11 @@ func TestMaterializeImageSelectionRequirementFreezesCanonicalAndTypedValues(t *t
 	}
 
 	require.NoError(t, materializeImageSelectionRequirement(request, requirement, profile))
-	assert.Equal(t, "3840x2160", request.Size)
+	assert.Equal(t, "3840X2160", request.Size)
 	assert.Equal(t, "low", request.Quality)
 	require.NotNil(t, request.N)
 	assert.Equal(t, uint(1), *request.N)
-	assert.JSONEq(t, `"4K"`, string(request.Extra["resolution"]))
+	assert.JSONEq(t, `"4k"`, string(request.Extra["resolution"]))
 	assert.JSONEq(t, `"16:9"`, string(request.Extra["aspect_ratio"]))
 	assert.JSONEq(t, `"jpeg"`, string(request.OutputFormat))
 	assert.NotContains(t, request.Extra, "generation_config")

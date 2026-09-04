@@ -197,7 +197,7 @@ func TestRelayAsyncImageUsesVerifiedDefaultResolutionForReservationAndSettlement
 	require.NotNil(t, billingInput)
 	var billingSnapshot map[string]any
 	require.NoError(t, common.Unmarshal(billingInput.Body, &billingSnapshot))
-	assert.Equal(t, "4K", billingSnapshot["resolution"])
+	assert.NotContains(t, billingSnapshot, "resolution", "channel billing metadata must not inject omitted provider parameters")
 	assert.Equal(t, float64(2), billingSnapshot["n"])
 
 	reservation, err := model.GetImageBillingReservation(task.TaskID)

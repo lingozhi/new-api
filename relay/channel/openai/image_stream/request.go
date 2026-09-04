@@ -88,7 +88,7 @@ func gptImageSizeFromUnifiedOptions(req *dto.ImageRequest, model string) (string
 	frozenRequirement, hasFrozenRequirement := req.ImageSelectionRequirement()
 	if req.Size != "" {
 		// Explicit pixel sizes belong to the provider, not the catalog.
-		return strings.TrimSpace(req.Size), nil
+		return req.Size, nil
 	}
 
 	rawAspect, hasAspect := req.Extra["aspect_ratio"]
@@ -159,25 +159,6 @@ func gptImageSizeFromUnifiedOptions(req *dto.ImageRequest, model string) (string
 		return "", fmt.Errorf("aspect_ratio %q is only supported with resolution 1K by model %s", aspectRatio, model)
 	}
 	return "", fmt.Errorf("aspect_ratio %q is not supported with resolution %s by model %s", aspectRatio, resolution, model)
-}
-
-// NormalizeUnifiedGPTImageDimensions converts the public aspect_ratio and
-// resolution controls into the size field understood by both OpenAI image
-// executors. It also removes the gateway-only aliases before provider relay.
-func NormalizeUnifiedGPTImageDimensions(req *dto.ImageRequest, model string) error {
-	if req == nil {
-		return errors.New("image request is required")
-	}
-	size, err := gptImageSizeFromUnifiedOptions(req, model)
-	if err != nil {
-		return err
-	}
-	if size != "" {
-		req.Size = size
-	}
-	delete(req.Extra, "aspect_ratio")
-	delete(req.Extra, "resolution")
-	return nil
 }
 
 // buildEditsRequest converts /v1/images/edits multipart input into a
@@ -274,6 +255,13 @@ func validateAsyncOpenAIImageRequest(req *dto.ImageRequest, model string, enforc
 		if maxOutputs > 0 && *req.N > uint(maxOutputs) {
 			return fmt.Errorf("n must be between 1 and %d for model %s", maxOutputs, model)
 		}
+	}
+	if !enforceOutputCount {
+		// Adaptor requests forward geometry directly; only the Responses
+		// converter needs to interpret unified dimension aliases here.
+		shapeRequest := *req
+		shapeRequest.Size = "auto"
+		req = &shapeRequest
 	}
 	_, err := buildGenerationsRequestWithError(req, model)
 	return err

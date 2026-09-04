@@ -28,8 +28,9 @@ func TestRetryParamPreservesImageRequirementAcrossSelections(t *testing.T) {
 	})
 
 	priority := int64(10)
+	primaryPriority := int64(20)
 	weight := uint(100)
-	oneK := &model.Channel{Id: 65, Status: common.ChannelStatusEnabled, Weight: &weight, Priority: &priority}
+	oneK := &model.Channel{Id: 65, Status: common.ChannelStatusEnabled, Weight: &weight, Priority: &primaryPriority}
 	fourK := &model.Channel{Id: 108, Status: common.ChannelStatusEnabled, Weight: &weight, Priority: &priority}
 	oneK.SetOtherSettings(dto.ChannelOtherSettings{ImageRouting: imageRoutingForServiceTest([]string{"1K"}, []string{"1024x1024"})})
 	fourK.SetOtherSettings(dto.ChannelOtherSettings{ImageRouting: imageRoutingForServiceTest([]string{"4K"}, []string{"2880x2880"})})
@@ -57,13 +58,16 @@ func TestRetryParamPreservesImageRequirementAcrossSelections(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, "default", group)
-	assert.Equal(t, 108, selected.Id)
+	assert.Equal(t, 65, selected.Id)
 
-	param.ExcludedChannelIDs = map[int]struct{}{108: {}}
+	param.ExcludedChannelIDs = map[int]struct{}{65: {}}
 	param.IncreaseRetry()
 	selected, _, err = CacheGetRandomSatisfiedChannel(param)
 	require.NoError(t, err)
-	assert.Nil(t, selected, "retry must keep the original image requirement")
+	require.NotNil(t, selected)
+	assert.Equal(t, 108, selected.Id)
+	assert.Equal(t, "4K", param.ImageRequirement.Resolution)
+	assert.Equal(t, "2880x2880", param.ImageRequirement.Size)
 }
 
 func TestAutoGroupImageSelectionDoesNotStartOnLegacyGroupAfterExplicitMigration(t *testing.T) {

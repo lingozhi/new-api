@@ -322,11 +322,11 @@ func buildImagesResponseWithStorage(ctx context.Context, agg *UpstreamResponse, 
 		// item.OutputFormat would mislabel.
 		raw, err := base64.StdEncoding.DecodeString(item.Result)
 		if err != nil {
-			return nil, fmt.Errorf("decode image base64: %w", err)
+			return nil, fmt.Errorf("%w: decode image base64: %v", ErrUndecodableImage, err)
 		}
 		ext, ok := strictGenericImageFormat(raw)
 		if !ok {
-			return nil, errors.New("upstream image has unsupported magic bytes")
+			return nil, fmt.Errorf("%w: upstream image has unsupported magic bytes", ErrUndecodableImage)
 		}
 		actualFormat := ext
 		if ext == "jpg" {

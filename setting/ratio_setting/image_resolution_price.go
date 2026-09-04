@@ -117,16 +117,30 @@ func UpdateImageResolutionPriceByJSONString(jsonStr string) error {
 }
 
 func GetImageResolutionPrice(modelName, resolution string) (float64, bool) {
-	normalizedResolution, err := NormalizeImageResolution(resolution)
-	if err != nil {
-		return 0, false
-	}
 	prices, ok := imageResolutionPriceMap.Get(FormatMatchingModelName(strings.TrimSpace(modelName)))
-	if !ok {
+	if !ok || len(prices) == 0 {
 		return 0, false
 	}
-	price, ok := prices[normalizedResolution]
-	return price, ok
+	if normalizedResolution, err := NormalizeImageResolution(resolution); err == nil {
+		if price, ok := prices[normalizedResolution]; ok {
+			return price, true
+		}
+	}
+	if len(prices) < 2 {
+		return 0, false
+	}
+	// A uniform configured image price also covers provider-specific geometry.
+	// Distinct tier prices still require an explicit matching billing tier.
+	var uniformPrice float64
+	first := true
+	for _, price := range prices {
+		if !first && price != uniformPrice {
+			return 0, false
+		}
+		uniformPrice = price
+		first = false
+	}
+	return uniformPrice, true
 }
 
 func GetImageResolutionPrices(modelName string) map[string]float64 {

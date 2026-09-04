@@ -508,7 +508,7 @@ func TestSubmitAsyncImageUsesPreparedProviderOutputCountForContract(t *testing.T
 	assert.Equal(t, uint(3), asyncImageExpectedOutputContract(payload).count)
 }
 
-func TestAsyncImageExpectedOutputContractPreservesGPTImage2ExplicitDimensions(t *testing.T) {
+func TestAsyncImageOutputAccountingIgnoresGPTImage2Dimensions(t *testing.T) {
 	contract := asyncImageExpectedOutputContract(asyncImageTaskPayload{
 		ImageRoutingProtocol: dto.ImageRoutingProtocolImagesGenerations,
 		ImageRequirement: &dto.ImageSelectionRequirement{
@@ -522,9 +522,6 @@ func TestAsyncImageExpectedOutputContractPreservesGPTImage2ExplicitDimensions(t 
 		Request: &dto.ImageRequest{Model: "gpt-image-2"},
 	})
 
-	assert.Equal(t, "864x1536", contract.size)
-	assert.Equal(t, "9:16", contract.aspectRatio)
-	assert.Equal(t, "png", contract.format)
 	assert.Equal(t, uint(1), contract.count)
 }
 
@@ -3296,7 +3293,7 @@ func TestSanitizeAsyncBillingRequestBodyRejectsMalformedJSON(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestAsyncImageRatioSizeUsesAspectExpectation(t *testing.T) {
+func TestAsyncImageRatioSizeDoesNotInspectReturnedAspect(t *testing.T) {
 	contract := asyncImageExpectedOutputContract(asyncImageTaskPayload{
 		ImageRoutingProtocol: dto.ImageRoutingProtocolImagesGenerations,
 		ImageRequirement: &dto.ImageSelectionRequirement{
@@ -3304,7 +3301,5 @@ func TestAsyncImageRatioSizeUsesAspectExpectation(t *testing.T) {
 		},
 	})
 	image := dto.ImageData{B64Json: base64.StdEncoding.EncodeToString(asyncOutputContractPNG(t, 9, 16))}
-	require.NoError(t, ValidateImageDataListContract([]dto.ImageData{image}, contract.size, contract.aspectRatio, contract.format, contract.count))
-	assert.Empty(t, contract.size)
-	assert.Equal(t, "9:16", contract.aspectRatio)
+	require.NoError(t, validateAsyncImageOutput(context.Background(), []dto.ImageData{image}, contract))
 }

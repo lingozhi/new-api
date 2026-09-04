@@ -352,25 +352,14 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			return nil, errors.New("model is required")
 		}
 
-		if strings.Contains(imageRequest.Size, "×") {
-			return nil, errors.New("size an unexpected error occurred in the parameter, please use 'x' instead of the multiplication sign '×'")
-		}
-
 		if imageRequest.N != nil && (*imageRequest.N == 0 || *imageRequest.N > dto.MaxImageN) {
 			return nil, fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
 		}
 
-		// Preserve provider-specific sizes; the model catalog only supplies defaults.
-		if imageRequest.Model == "dall-e-2" || imageRequest.Model == "dall-e" {
-			if imageRequest.Size == "" {
-				imageRequest.Size = "1024x1024"
-			}
-		} else if imageRequest.Model == "dall-e-3" {
+		// Preserve caller geometry; only legacy quality defaults are filled here.
+		if imageRequest.Model == "dall-e-3" {
 			if imageRequest.Quality == "" {
 				imageRequest.Quality = "standard"
-			}
-			if imageRequest.Size == "" {
-				imageRequest.Size = "1024x1024"
 			}
 		} else if imageRequest.Model == "gpt-image-1" {
 			if imageRequest.Quality == "" {

@@ -42,20 +42,20 @@ func TestProviderImageSizesRetainRoutingAndBillingTier(t *testing.T) {
 			assert.Equal(t, test.aspect, selected.AspectRatio)
 			assert.Equal(t, test.resolution, request.GetTokenCountMeta().ImageResolution)
 			selected.Resolution = "8K"
-			assert.False(t, config.Supports(profile.Model, selected), "a different billing tier must not use this channel")
+			assert.True(t, config.Supports(profile.Model, selected), "geometry does not restrict provider selection")
 			selection.Size = "999x999"
-			assert.False(t, config.Supports(profile.Model, selection), "sizes still require a matching provider profile")
+			assert.True(t, config.Supports(profile.Model, selection), "provider-specific sizes pass through")
 		})
 	}
 }
 
-func TestImageRatioSizeValidation(t *testing.T) {
+func TestImageGeometryIsDelegatedToProvider(t *testing.T) {
 	for _, size := range []string{"0:16", "9:0", "-9:16", "9:16:1", "9.5:16"} {
 		_, err := (ImageSelectionRequirement{Operation: ImageOperationGeneration, Size: size}).Normalize()
-		assert.Error(t, err, size)
+		assert.NoError(t, err, size)
 	}
 	_, err := (ImageSelectionRequirement{Operation: ImageOperationGeneration, Size: "9:16", N: MaxImageN + 1}).Normalize()
 	require.ErrorContains(t, err, "n must be")
 	_, err = (ImageSelectionRequirement{Operation: ImageOperationGeneration, Size: "9:16", AspectRatio: "16:9"}).Normalize()
-	require.ErrorContains(t, err, "conflicts with aspect_ratio")
+	require.NoError(t, err)
 }

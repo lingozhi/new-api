@@ -105,3 +105,20 @@ func TestRemoveImageResolutionPriceModelsJSONString(t *testing.T) {
 	assert.False(t, changed)
 	assert.JSONEq(t, `{"keep-me":{"4K":1.2}}`, next)
 }
+
+func TestUniformImagePriceAllowsProviderSpecificResolution(t *testing.T) {
+	saved := ImageResolutionPrice2JSONString()
+	t.Cleanup(func() { require.NoError(t, UpdateImageResolutionPriceByJSONString(saved)) })
+	require.NoError(t, UpdateImageResolutionPriceByJSONString(`{"gpt-image-2":{"1K":0.25,"2K":0.25,"4K":0.25}}`))
+	for _, resolution := range []string{"8K", "auto", "Ultra-HD"} {
+		price, ok := GetImageResolutionPrice("gpt-image-2", resolution)
+		require.True(t, ok)
+		assert.Equal(t, 0.25, price)
+	}
+	require.NoError(t, UpdateImageResolutionPriceByJSONString(`{"gpt-image-2":{"1K":0.25,"4K":1.2}}`))
+	_, ok := GetImageResolutionPrice("gpt-image-2", "Ultra-HD")
+	assert.False(t, ok, "different configured prices must not silently invent a charge for an unknown tier")
+	price, ok := GetImageResolutionPrice("gpt-image-2", "4K")
+	require.True(t, ok)
+	assert.Equal(t, 1.2, price)
+}

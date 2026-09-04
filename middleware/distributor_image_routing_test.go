@@ -11,13 +11,12 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	appI18n "github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestDistributeRejectsUnsupportedVerifiedImageVariantAsInvalidRequest(t *testing.T) {
+func TestDistributeForwardsGeometryOutsideVerifiedCatalog(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	require.NoError(t, appI18n.Init())
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
@@ -73,14 +72,9 @@ func TestDistributeRejectsUnsupportedVerifiedImageVariantAsInvalidRequest(t *tes
 
 	Distribute()(ctx)
 
-	assert.Equal(t, http.StatusBadRequest, recorder.Code)
-	var response struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
-	assert.Equal(t, string(types.ErrorCodeInvalidRequest), response.Error.Code)
-	_, selected := common.GetContextKey(ctx, constant.ContextKeyChannelId)
-	assert.False(t, selected)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.False(t, ctx.IsAborted())
+	selected, ok := common.GetContextKey(ctx, constant.ContextKeyChannelId)
+	require.True(t, ok)
+	assert.Equal(t, channel.Id, selected)
 }

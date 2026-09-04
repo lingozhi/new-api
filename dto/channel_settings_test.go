@@ -477,7 +477,7 @@ func TestImageRoutingConfigValidatesAndMatchesVerifiedModelProfile(t *testing.T)
 		Size:        "3840X2160",
 		Quality:     "LOW",
 	}))
-	assert.False(t, config.Supports("gpt-image-2", ImageSelectionRequirement{
+	assert.True(t, config.Supports("gpt-image-2", ImageSelectionRequirement{
 		Operation:   ImageOperationGeneration,
 		Resolution:  "1K",
 		AspectRatio: "16:9",
@@ -634,10 +634,10 @@ func TestImageRoutingConfigWildcardProfileAndVerificationGate(t *testing.T) {
 	assert.True(t, config.Supports("vendor-image-model", ImageSelectionRequirement{
 		Operation: ImageOperationGeneration,
 	}))
-	assert.False(t, config.Supports("vendor-image-model", ImageSelectionRequirement{
+	assert.True(t, config.Supports("vendor-image-model", ImageSelectionRequirement{
 		Operation:  ImageOperationGeneration,
 		Resolution: "4K",
-	}), "an omitted capability list must not act as a wildcard for an explicit request value")
+	}), "geometry is forwarded even when it is absent from the channel catalog")
 	assert.False(t, config.Supports("vendor-image-model", ImageSelectionRequirement{
 		Operation:    ImageOperationGeneration,
 		OutputFormat: "webp",
@@ -661,7 +661,7 @@ func TestImageRoutingConfigPreservesOperationSpecificCombinations(t *testing.T) 
 	assert.True(t, config.Supports("gpt-image-2", ImageSelectionRequirement{
 		Operation: ImageOperationGeneration, Resolution: "1K", AspectRatio: "1:1", Size: "1024x1024",
 	}))
-	assert.False(t, config.Supports("gpt-image-2", ImageSelectionRequirement{
+	assert.True(t, config.Supports("gpt-image-2", ImageSelectionRequirement{
 		Operation: ImageOperationGeneration, Resolution: "4K", AspectRatio: "1:1", Size: "2880x2880",
 	}))
 	assert.True(t, config.Supports("gpt-image-2", ImageSelectionRequirement{
@@ -732,8 +732,7 @@ func TestImageSelectionRequirementNormalizeAndValidate(t *testing.T) {
 	}, normalized)
 
 	_, err = (ImageSelectionRequirement{Operation: ImageOperationGeneration, Size: "2880-by-2880"}).Normalize()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "size")
+	require.NoError(t, err)
 
 	_, err = (ImageSelectionRequirement{
 		Operation:           ImageOperationEdit,

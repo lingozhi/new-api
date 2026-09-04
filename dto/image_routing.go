@@ -163,22 +163,10 @@ func (requirement ImageSelectionRequirement) Normalize() (ImageSelectionRequirem
 	if !isImageOperationAllowed(normalized.Operation) {
 		return ImageSelectionRequirement{}, fmt.Errorf("operation must be generation or edit")
 	}
-	if normalized.Resolution != "" && normalized.Resolution != "auto" && !imageResolutionPattern.MatchString(normalized.Resolution) {
-		return ImageSelectionRequirement{}, fmt.Errorf("resolution %q is invalid", requirement.Resolution)
-	}
-	if normalized.AspectRatio != "" && normalized.AspectRatio != "auto" && !imageAspectRatioPattern.MatchString(normalized.AspectRatio) {
-		return ImageSelectionRequirement{}, fmt.Errorf("aspect_ratio %q is invalid", requirement.AspectRatio)
-	}
-	if !validImageSize(normalized.Size) {
-		return ImageSelectionRequirement{}, fmt.Errorf("size %q is invalid", requirement.Size)
-	}
-	if imageAspectRatioPattern.MatchString(normalized.Size) {
-		if err := validateImageRoutingCombinationGeometry(normalized.Size, normalized.AspectRatio); err != nil {
-			return ImageSelectionRequirement{}, err
-		}
-		if normalized.AspectRatio == "" || normalized.AspectRatio == "auto" {
-			normalized.AspectRatio = normalized.Size
-		}
+	// Geometry belongs to the upstream provider. Retain it for pricing and
+	// protocol conversion without enforcing a gateway size or tier catalog.
+	if imageAspectRatioPattern.MatchString(normalized.Size) && (normalized.AspectRatio == "" || normalized.AspectRatio == "auto") {
+		normalized.AspectRatio = normalized.Size
 	}
 	if normalized.Quality != "" && !imageQualityPattern.MatchString(normalized.Quality) {
 		return ImageSelectionRequirement{}, fmt.Errorf("quality %q is invalid", requirement.Quality)
@@ -276,9 +264,6 @@ func (config *ImageRoutingConfig) Supports(model string, requirement ImageSelect
 		return false
 	}
 	if !containsImageOperation(profile.Operations, normalized.Operation) ||
-		!matchesOptionalImageValue(profile.Resolutions, normalized.Resolution) ||
-		!matchesOptionalImageValue(profile.AspectRatios, normalized.AspectRatio) ||
-		!matchesOptionalImageValue(profile.Sizes, normalized.Size) ||
 		!matchesOptionalImageValue(profile.Qualities, normalized.Quality) ||
 		!matchesOptionalImageValue(profile.OutputFormats, normalized.OutputFormat) {
 		return false
@@ -325,6 +310,11 @@ func (config *ImageRoutingConfig) Supports(model string, requirement ImageSelect
 	if profile.AllowedCombinations == nil {
 		return true
 	}
+	// Geometry declarations describe provider defaults, not routing barriers.
+	normalized.Resolution = ""
+	normalized.AspectRatio = ""
+	normalized.Size = ""
+
 	for _, combination := range profile.AllowedCombinations {
 		if profile.allowedCombinationMatches(combination, normalized) {
 			return true
@@ -333,9 +323,8 @@ func (config *ImageRoutingConfig) Supports(model string, requirement ImageSelect
 	return false
 }
 
-// ApplyDefaults freezes provider defaults into the canonical request so
-// selection, billing, durable execution, and output validation share one
-// explicit contract.
+// ApplyDefaults freezes channel defaults into private routing and billing
+// metadata. Geometry defaults must not be copied into the provider request.
 func (profile *ImageRoutingProfile) ApplyDefaults(requirement ImageSelectionRequirement) (ImageSelectionRequirement, error) {
 	normalized, err := requirement.Normalize()
 	if err != nil {

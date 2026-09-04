@@ -2502,6 +2502,9 @@ uploadLoop:
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
+		if errors.Is(err, ErrUndecodableImage) {
+			return false, failOrSwitchAsyncImageChannel(ctx, task, &payload, err)
+		}
 		var sourceErr *genericImageSourceError
 		if errors.As(err, &sourceErr) {
 			var sourceStorageErr *imageStorageError
@@ -3277,28 +3280,8 @@ func applyAsyncImageFailoverRequirement(payload *asyncImageTaskPayload, requirem
 	if extra == nil {
 		extra = make(map[string]json.RawMessage)
 	}
-	setExtraString := func(name, value string) error {
-		if value == "" {
-			return nil
-		}
-		encoded, marshalErr := common.Marshal(value)
-		if marshalErr != nil {
-			return marshalErr
-		}
-		extra[name] = json.RawMessage(encoded)
-		return nil
-	}
-	if err := setExtraString("resolution", normalized.Resolution); err != nil {
-		return err
-	}
-	if err := setExtraString("aspect_ratio", normalized.AspectRatio); err != nil {
-		return err
-	}
 	for name, value := range normalized.OptionalValues {
 		extra[name] = append(json.RawMessage(nil), value...)
-	}
-	if normalized.Size != "" {
-		request.Size = normalized.Size
 	}
 	if normalized.Quality != "" {
 		request.Quality = normalized.Quality
@@ -3502,25 +3485,27 @@ func asyncImageHealthPath(payload asyncImageTaskPayload) string {
 	return common.ImageGenerationEndpoint
 }
 
+var (
+	ErrUndecodableImage   = errors.New("undecodable image")
+	ErrImageCountMismatch = errors.New("image count mismatch")
+)
+
 type asyncImageOutputContract struct {
-	size        string
-	aspectRatio string
-	format      string
-	count       uint
+	count uint
 }
 
 func (contract asyncImageOutputContract) requiresValidation() bool {
-	return contract.size != "" || contract.aspectRatio != "" || contract.format != "" || contract.count > 0
+	return contract.count > 0
 }
 
-// validateAsyncImageOutput retains image integrity and accounting checks while
-// treating provider geometry and encoding choices as diagnostic information.
-func validateAsyncImageOutput(ctx context.Context, images []dto.ImageData, contract asyncImageOutputContract) error {
-	if err := ValidateImageDataListContract(images, "", "", "", contract.count); err != nil {
-		return err
+// validateAsyncImageOutput checks accounting without decoding images or
+// inspecting provider-selected dimensions, aspect ratios, or encodings.
+func validateAsyncImageOutput(_ context.Context, images []dto.ImageData, contract asyncImageOutputContract) error {
+	if len(images) == 0 {
+		return fmt.Errorf("%w: image data list is empty", ErrUndecodableImage)
 	}
-	if err := ValidateImageDataListContract(images, contract.size, contract.aspectRatio, contract.format, 0); err != nil {
-		logger.LogWarn(ctx, "provider image differs from requested output; returning image: "+err.Error())
+	if contract.count > 0 && uint(len(images)) != contract.count {
+		return fmt.Errorf("%w: expected %d, got %d", ErrImageCountMismatch, contract.count, len(images))
 	}
 	return nil
 }
@@ -3529,29 +3514,11 @@ func asyncImageExpectedOutputContract(payload asyncImageTaskPayload) asyncImageO
 	if payload.ImageRoutingProtocol == "" || payload.ImageRequirement == nil {
 		return asyncImageOutputContract{}
 	}
-	size := strings.ToLower(strings.TrimSpace(payload.ImageRequirement.Size))
-	if size == "auto" {
-		size = ""
-	}
-	aspectRatio := strings.ToLower(strings.TrimSpace(payload.ImageRequirement.AspectRatio))
-	if aspectRatio == "auto" {
-		aspectRatio = ""
-	}
-	if strings.Contains(size, ":") {
-		if aspectRatio == "" {
-			aspectRatio = size
-		}
-		size = ""
-	}
-	outputFormat := strings.ToLower(strings.TrimSpace(payload.ImageRequirement.OutputFormat))
-	if outputFormat == "jpg" {
-		outputFormat = "jpeg"
-	}
 	count := payload.ImageRequirement.N
 	if count == 0 {
 		count = 1
 	}
-	return asyncImageOutputContract{size: size, aspectRatio: aspectRatio, format: outputFormat, count: count}
+	return asyncImageOutputContract{count: count}
 }
 
 func failAsyncImageTask(ctx context.Context, task *model.Task, cause error) error {

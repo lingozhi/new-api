@@ -144,11 +144,6 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		if err := materializeImageSelectionRequirement(request, selectionRequirement, routingProfile); err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
-		if gptCapabilityModel != "" && (!configuredImageRoute || info.ImageRoutingProtocol == dto.ImageRoutingProtocolResponsesSSE) {
-			if err := image_stream.NormalizeUnifiedGPTImageDimensions(request, gptCapabilityModel); err != nil {
-				return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
-			}
-		}
 		hasInputSources, err := image_stream.HasAsyncImageInputSources(c, request)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -364,20 +359,15 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	return nil
 }
 
-// materializeImageSelectionRequirement copies channel-resolved defaults into
-// the provider-facing request. The canonical requirement is private gateway
-// state, so adaptors that only inspect DTO fields would otherwise silently use
-// their own defaults (for example Gemini falling back from 4K to 1K).
+// materializeImageSelectionRequirement applies non-geometry channel defaults
+// while preserving the caller's size, resolution, and aspect ratio verbatim.
 func materializeImageSelectionRequirement(request *dto.ImageRequest, requirement dto.ImageSelectionRequirement, profile *dto.ImageRoutingProfile) error {
 	if request == nil {
 		return errors.New("image request is required")
 	}
 	explicitVerifiedRoute := profile != nil && profile.VerificationStatus == dto.ImageRoutingVerificationProductionVerified
-	if explicitVerifiedRoute && requirement.Size != "" {
-		request.Size = requirement.Size
-	} else if request.Size == "" && requirement.Size != "" {
-		request.Size = requirement.Size
-	}
+	// Keep caller geometry verbatim, including omitted fields. Channel defaults
+	// remain private pricing metadata and must not overwrite the wire request.
 	if explicitVerifiedRoute && requirement.Quality != "" {
 		request.Quality = requirement.Quality
 	} else if request.Quality == "" && requirement.Quality != "" {
@@ -388,27 +378,6 @@ func materializeImageSelectionRequirement(request *dto.ImageRequest, requirement
 	}
 	if request.Extra == nil {
 		request.Extra = make(map[string]json.RawMessage)
-	}
-	setExtraString := func(field, value string, overwrite bool) error {
-		if value == "" {
-			return nil
-		}
-		raw, exists := request.Extra[field]
-		if !overwrite && exists && common.GetJsonType(bytes.TrimSpace(raw)) != "null" && len(bytes.TrimSpace(raw)) > 0 {
-			return nil
-		}
-		encoded, err := common.Marshal(value)
-		if err != nil {
-			return fmt.Errorf("encode image %s: %w", field, err)
-		}
-		request.Extra[field] = encoded
-		return nil
-	}
-	if err := setExtraString("resolution", requirement.Resolution, explicitVerifiedRoute); err != nil {
-		return err
-	}
-	if err := setExtraString("aspect_ratio", requirement.AspectRatio, explicitVerifiedRoute); err != nil {
-		return err
 	}
 	if explicitVerifiedRoute || len(bytes.TrimSpace(request.OutputFormat)) == 0 || common.GetJsonType(bytes.TrimSpace(request.OutputFormat)) == "null" {
 		if requirement.OutputFormat != "" {
@@ -623,7 +592,6 @@ func prepareAsyncImageAdaptorRequest(c *gin.Context, info *relaycommon.RelayInfo
 		// Edit file bytes are staged only after the durable quota reservation.
 		// Keep submission side-effect free: the worker will reconstruct multipart
 		// and run provider-specific conversion from the signed private inputs.
-		providerRequest = sanitizeImageRoutingAliases(providerRequest, info.ImageRoutingProtocol)
 		pricingBody, err = marshalGenericImageRequest(&providerRequest)
 		if err != nil {
 			return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
@@ -697,11 +665,9 @@ func prepareAsyncImageAdaptorRequest(c *gin.Context, info *relaycommon.RelayInfo
 			var marshalErr error
 			switch converted := convertedRequest.(type) {
 			case dto.ImageRequest:
-				sanitized := sanitizeImageRoutingAliases(converted, info.ImageRoutingProtocol)
-				convertedBody, marshalErr = marshalGenericImageRequest(&sanitized)
+				convertedBody, marshalErr = marshalGenericImageRequest(&converted)
 			case *dto.ImageRequest:
-				sanitized := sanitizeImageRoutingAliases(*converted, info.ImageRoutingProtocol)
-				convertedBody, marshalErr = marshalGenericImageRequest(&sanitized)
+				convertedBody, marshalErr = marshalGenericImageRequest(converted)
 			default:
 				convertedBody, marshalErr = common.Marshal(convertedRequest)
 			}
@@ -827,27 +793,6 @@ func prepareAsyncImageAdaptorRequest(c *gin.Context, info *relaycommon.RelayInfo
 		ImageRoutingProtocol:       info.ImageRoutingProtocol,
 		ImageRoutingUpstreamPath:   info.ImageRoutingUpstreamPath,
 	}, nil
-}
-
-func sanitizeImageRoutingAliases(request dto.ImageRequest, protocol dto.ImageRoutingProtocol) dto.ImageRequest {
-	if protocol != dto.ImageRoutingProtocolImagesGenerations && protocol != dto.ImageRoutingProtocolImagesEdits {
-		return request
-	}
-	if request.Extra == nil {
-		return request
-	}
-	originalExtra := request.Extra
-	request.Extra = make(map[string]json.RawMessage, len(originalExtra))
-	for key, value := range originalExtra {
-		if key == "resolution" || key == "aspect_ratio" {
-			continue
-		}
-		request.Extra[key] = append(json.RawMessage(nil), value...)
-	}
-	if len(request.Extra) == 0 {
-		request.Extra = nil
-	}
-	return request
 }
 
 func imageRoutingUsesMultipartEdit(protocol dto.ImageRoutingProtocol) bool {
