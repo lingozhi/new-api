@@ -137,6 +137,7 @@ type asyncImageTaskPayload struct {
 	// never be resubmitted automatically.
 	ProviderCallStarted  bool `json:"provider_call_started,omitempty"`
 	SameChannelRetryUsed bool `json:"same_channel_retry_used,omitempty"`
+	KIEFallback          bool `json:"kie_fallback,omitempty"`
 	// Upstream is read only for tasks checkpointed by earlier versions. New
 	// tasks never persist image base64 in the task row.
 	Upstream *UpstreamResponse `json:"upstream,omitempty"`
@@ -2102,6 +2103,19 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 				return false, failAmbiguousAsyncImageTask(ctx, task, apiErr)
 			}
 			definitiveResponse := errors.Is(apiErr, ErrGenericImageDefinitiveResponse)
+			if definitiveResponse && genericUpstream == nil && payload.ProviderCallStarted &&
+				!payload.KIEFallback && task.Properties.OriginModelName == "gpt-image-2" &&
+				payload.ImageRoutingProtocol != dto.ImageRoutingProtocolKIEJobs &&
+				apiErr.UpstreamStatusCode == http.StatusUnavailableForLegalReasons &&
+				isAsyncImageContentRejection(apiErr) {
+				switched, switchErr := switchAsyncImageChannelForProtocol(ctx, task, &payload, apiErr.Error(), dto.ImageRoutingProtocolKIEJobs)
+				if switchErr != nil {
+					return false, failCheckpointPendingAsyncImageTask(ctx, task, switchErr)
+				}
+				if switched {
+					return false, errAsyncImageRetryScheduled
+				}
+			}
 			if definitiveResponse && genericUpstream == nil && payload.ProviderCallStarted {
 				quarantine := service.ShouldQuarantineAsyncImageChannel(apiErr)
 				service.RecordChannelHealthOutcome(genericChannel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), genericInfo, genericAttemptStart, apiErr, !quarantine)
@@ -2157,6 +2171,9 @@ func executeAsyncImageTask(ctx context.Context, task *model.Task) (bool, error) 
 				return false, errAsyncImageRetryScheduled
 			}
 			retryProvider := payload.ProviderStored && (executionErr != nil || errors.Is(apiErr, types.ErrProviderTaskPollingRetryable))
+			if payload.KIEFallback && isAsyncImageContentRejection(apiErr) {
+				return false, failAsyncImageTask(ctx, task, apiErr)
+			}
 			if retryProvider {
 				service.RecordChannelHealthOutcome(genericChannel.Id, task.Properties.OriginModelName, asyncImageHealthPath(payload), genericInfo, genericAttemptStart, apiErr, false)
 				return false, failOrSwitchAsyncImageChannel(ctx, task, &payload, apiErr)
@@ -3053,7 +3070,21 @@ func switchRejectedAsyncImageChannel(ctx context.Context, task *model.Task, payl
 }
 
 func switchAsyncImageChannel(ctx context.Context, task *model.Task, payload *asyncImageTaskPayload, lastError string) (bool, error) {
-	if task == nil || payload == nil || payload.Request == nil || task.ProviderAttempts+1 >= asyncImageProviderAttempts {
+	return switchAsyncImageChannelForProtocol(ctx, task, payload, lastError, "")
+}
+
+func isAsyncImageContentRejection(apiErr *types.NewAPIError) bool {
+	if apiErr == nil {
+		return false
+	}
+	message := strings.ToLower(apiErr.Error())
+	return strings.Contains(message, "image_unsafe") ||
+		strings.Contains(message, "content_policy_error") ||
+		strings.Contains(message, "generated images appear to be unsafe")
+}
+
+func switchAsyncImageChannelForProtocol(ctx context.Context, task *model.Task, payload *asyncImageTaskPayload, lastError string, requiredProtocol dto.ImageRoutingProtocol) (bool, error) {
+	if task == nil || payload == nil || payload.KIEFallback || payload.Request == nil || task.ProviderAttempts+1 >= asyncImageProviderAttempts {
 		return false, nil
 	}
 	failedChannel, err := model.CacheGetChannel(task.ChannelId)
@@ -3093,6 +3124,12 @@ func switchAsyncImageChannel(ctx context.Context, task *model.Task, payload *asy
 			return false, nil
 		}
 		excluded[candidate.Id] = struct{}{}
+		if requiredProtocol != "" {
+			protocol, _, _, ok := asyncImageFailoverTarget(candidate, task, payload)
+			if !ok || protocol != requiredProtocol {
+				continue
+			}
+		}
 		if !compatibleAsyncImageFailoverChannel(failedChannel, candidate, task, payload) {
 			continue
 		}
@@ -3114,6 +3151,9 @@ func switchAsyncImageChannel(ctx context.Context, task *model.Task, payload *asy
 			return false, fingerprintErr
 		}
 		nextPayload := *payload
+		if requiredProtocol == dto.ImageRoutingProtocolKIEJobs {
+			nextPayload.KIEFallback = true
+		}
 		nextPayload.ProviderCallStarted = false
 		nextPayload.SameChannelRetryUsed = false
 		nextPayload.ProviderStored = false
