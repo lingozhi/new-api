@@ -32,6 +32,7 @@ var TaskPricePatches []string
 var TaskPricePerSecondModels = []string{
 	ArgolinkSeedance25Model,
 	ArgolinkSeedance20Model,
+	ArgolinkSeedance20FastModel,
 	"MiniMax-H3",
 	"depth-anything-v2-small-video",
 	"subtitle-remove",

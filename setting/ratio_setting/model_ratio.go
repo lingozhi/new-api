@@ -299,8 +299,9 @@ var defaultModelPrice = map[string]float64{
 	"sora-2-pro":                     0.5,
 	// Argolink Seedance 2.5 uses the 720p per-second price as its base.
 	// The task adaptor applies duration and resolution multipliers.
-	"seedance-2.5": 0.17,
-	"seedance-2.0": 0.11,
+	"seedance-2.5":      0.17,
+	"seedance-2.0":      0.11,
+	"seedance-2.0-fast": 0.091,
 	// AutoDL's standard 768P list price is ¥0.06/second. Promotional prices
 	// are time-dependent, so keep the conservative list price as the default;
 	// operators can override ModelPrice without changing the relay contract.

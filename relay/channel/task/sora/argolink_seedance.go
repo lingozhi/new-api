@@ -65,7 +65,7 @@ type argolinkPublicResponse struct {
 }
 
 func isArgolinkSeedanceModel(modelName string) bool {
-	return strings.EqualFold(strings.TrimSpace(modelName), constant.ArgolinkSeedance25Model) || strings.EqualFold(strings.TrimSpace(modelName), constant.ArgolinkSeedance20Model)
+	return strings.EqualFold(strings.TrimSpace(modelName), constant.ArgolinkSeedance25Model) || strings.EqualFold(strings.TrimSpace(modelName), constant.ArgolinkSeedance20Model) || strings.EqualFold(strings.TrimSpace(modelName), constant.ArgolinkSeedance20FastModel)
 }
 
 func isArgolinkSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) bool {
@@ -82,7 +82,7 @@ func validateArgolinkSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo
 	}
 	if !isArgolinkSeedanceModel(request.Model) {
 		return service.TaskErrorWrapperLocal(
-			fmt.Errorf("model must be seedance-2.0 or seedance-2.5"),
+			fmt.Errorf("model must be seedance-2.0, seedance-2.0-fast, or seedance-2.5"),
 			"invalid_model",
 			http.StatusBadRequest,
 		)
@@ -98,7 +98,7 @@ func validateArgolinkSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo
 		duration = *request.Duration
 	}
 	maxDuration := 30
-	if strings.EqualFold(strings.TrimSpace(request.Model), constant.ArgolinkSeedance20Model) {
+	if !strings.EqualFold(strings.TrimSpace(request.Model), constant.ArgolinkSeedance25Model) {
 		maxDuration = 15
 	}
 	if duration < 4 || duration > maxDuration {
@@ -115,8 +115,8 @@ func validateArgolinkSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo
 	if _, ok := argolinkSeedance25ResolutionPrices[resolution]; !ok {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("resolution must be 480p, 720p, or 1080p"), "invalid_resolution", http.StatusBadRequest)
 	}
-	if maxDuration == 15 && !hasMedia && resolution == "1080p" {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("seedance-2.0 text-to-video supports 480p or 720p"), "invalid_resolution", http.StatusBadRequest)
+	if maxDuration == 15 && (!hasMedia || strings.EqualFold(strings.TrimSpace(request.Model), constant.ArgolinkSeedance20FastModel)) && resolution == "1080p" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("this model and input mode support 480p or 720p"), "invalid_resolution", http.StatusBadRequest)
 	}
 	request.Resolution = resolution
 	c.Set(argolinkSeedance25ContextKey, request)
@@ -162,7 +162,7 @@ func estimateArgolinkSeedanceBilling(c *gin.Context) map[string]float64 {
 	}
 	price := argolinkSeedance25ResolutionPrices[request.Resolution]
 	basePrice, videoInputRatio := argolinkSeedance25BasePrice, 1.6
-	if strings.EqualFold(strings.TrimSpace(request.Model), constant.ArgolinkSeedance20Model) {
+	if !strings.EqualFold(strings.TrimSpace(request.Model), constant.ArgolinkSeedance25Model) {
 		basePrice, videoInputRatio = 0.11, 2
 		switch request.Resolution {
 		case "480p":
@@ -171,6 +171,14 @@ func estimateArgolinkSeedanceBilling(c *gin.Context) map[string]float64 {
 			price = 0.11
 		case "1080p":
 			price = 0.28
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(request.Model), constant.ArgolinkSeedance20FastModel) {
+		basePrice = 0.091
+		if request.Resolution == "480p" {
+			price = 0.04
+		} else {
+			price = 0.091
 		}
 	}
 	ratios := map[string]float64{

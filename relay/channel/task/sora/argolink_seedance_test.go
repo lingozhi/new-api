@@ -198,3 +198,38 @@ func TestSeedance20ModelContracts(t *testing.T) {
 		assert.Contains(t, string(public), `"model":"seedance-2.0"`)
 	}
 }
+
+func TestSeedanceFastContracts(t *testing.T) {
+	for _, tc := range []struct {
+		body              string
+		code              string
+		resolution, video float64
+	}{
+		{`{"model":"seedance-2.0-fast","prompt":"forest","duration":15,"resolution":"480p"}`, "", 0.04 / 0.091, 0},
+		{`{"model":"seedance-2.0-fast","reference_videos":[{"url":"https://example.com/v.mp4"}]}`, "", 1, 2},
+		{`{"model":"seedance-2.0-fast","prompt":"forest","duration":16}`, "invalid_duration", 0, 0},
+		{`{"model":"seedance-2.0-fast","start_image":{"url":"https://example.com/i.png"},"resolution":"1080p"}`, "invalid_resolution", 0, 0},
+	} {
+		c, _, info := newArgolinkSeedanceContext(t, tc.body)
+		info.OriginModelName, info.UpstreamModelName = constant.ArgolinkSeedance20FastModel, constant.ArgolinkSeedance20FastModel
+		a := &TaskAdaptor{}
+		a.Init(info)
+		err := a.ValidateRequestAndSetAction(c, info)
+		if tc.code != "" {
+			require.NotNil(t, err)
+			assert.Equal(t, tc.code, err.Code)
+			continue
+		}
+		require.Nil(t, err)
+		ratios := a.EstimateBilling(c, info)
+		assert.InDelta(t, tc.resolution, ratios["resolution"], 1e-12)
+		assert.Equal(t, tc.video, ratios["video_input"])
+		task := &model.Task{Properties: model.Properties{OriginModelName: constant.ArgolinkSeedance20FastModel}, Data: []byte(`{"video":{"duration":4}}`)}
+		task.PrivateData.BillingContext = &model.TaskBillingContext{ModelPrice: 0.091, GroupRatio: 1, OtherRatios: ratios}
+		multiplier := 1.0
+		if tc.video > 0 {
+			multiplier = tc.video
+		}
+		assert.Equal(t, common.QuotaFromFloat(0.091*common.QuotaPerUnit*4*tc.resolution*multiplier), a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}))
+	}
+}

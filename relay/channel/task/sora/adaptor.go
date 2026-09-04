@@ -318,7 +318,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
-	return append(append([]string(nil), ModelList...), constant.ArgolinkSeedance25Model, constant.ArgolinkSeedance20Model)
+	return append(append([]string(nil), ModelList...), constant.ArgolinkSeedance25Model, constant.ArgolinkSeedance20Model, constant.ArgolinkSeedance20FastModel)
 }
 
 func (a *TaskAdaptor) GetChannelName() string {

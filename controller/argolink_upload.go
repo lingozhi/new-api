@@ -22,7 +22,7 @@ func ArgolinkMediaUpload(c *gin.Context) {
 		videoProxyError(c, http.StatusBadRequest, "invalid_request_error", "Invalid upload request")
 		return
 	}
-	if payload["model"] != constant.ArgolinkSeedance25Model && payload["model"] != constant.ArgolinkSeedance20Model {
+	if payload["model"] != constant.ArgolinkSeedance25Model && payload["model"] != constant.ArgolinkSeedance20Model && payload["model"] != constant.ArgolinkSeedance20FastModel {
 		videoProxyError(c, http.StatusBadRequest, "invalid_request_error", "Unsupported upload model")
 		return
 	}
