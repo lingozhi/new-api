@@ -25,7 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAsyncImageWorkersEnforcePersistedOutputContract(t *testing.T) {
+func TestAsyncImageWorkersReturnProviderGeometryAndEnforceAccounting(t *testing.T) {
 	tests := []struct {
 		name          string
 		executor      string
@@ -39,7 +39,7 @@ func TestAsyncImageWorkersEnforcePersistedOutputContract(t *testing.T) {
 			executor:      AsyncImageExecutorAdaptor,
 			expectedCount: 1,
 			outputSizes:   [][2]int{{1, 1}},
-			wantFailure:   "image dimension mismatch",
+			wantSuccess:   true,
 		},
 		{
 			name:          "adaptor count mismatch",
@@ -60,7 +60,7 @@ func TestAsyncImageWorkersEnforcePersistedOutputContract(t *testing.T) {
 			executor:      AsyncImageExecutorResponses,
 			expectedCount: 1,
 			outputSizes:   [][2]int{{1, 1}},
-			wantFailure:   "image dimension mismatch",
+			wantSuccess:   true,
 		},
 		{
 			name:          "Responses matching output",
@@ -74,6 +74,8 @@ func TestAsyncImageWorkersEnforcePersistedOutputContract(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			setupAsyncImageSubmitTestDB(t)
+			model.ClearChannelCooldownsForTest()
+			t.Cleanup(model.ClearChannelCooldownsForTest)
 			require.NoError(t, model.DB.AutoMigrate(&model.Channel{}, &model.ImageTaskArtifactChunk{}, &model.Log{}))
 
 			previousMemoryCacheEnabled := common.MemoryCacheEnabled
@@ -250,6 +252,8 @@ func TestAsyncImageWorkersEnforcePersistedOutputContract(t *testing.T) {
 			assert.True(t, completed)
 			assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), stored.Status)
 			assert.Empty(t, stored.FailReason)
+			_, _, cooling := model.GetChannelCooldown(channel.Id)
+			assert.False(t, cooling)
 			assert.Equal(t, "completed", response.Status)
 			require.NotNil(t, response.Result)
 			assert.Nil(t, response.Error)

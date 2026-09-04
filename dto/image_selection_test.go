@@ -88,7 +88,7 @@ func TestResolveImageSelectionRequirementInfersVariantFromLegacySize(t *testing.
 	assert.Equal(t, "2880x2880", requirement.Size)
 }
 
-func TestResolveImageSelectionRequirementRejectsConflictingAliases(t *testing.T) {
+func TestResolveImageSelectionRequirementPreservesExplicitProviderGeometry(t *testing.T) {
 	request := &ImageRequest{
 		Model: "gpt-image-2",
 		Size:  "1024x1024",
@@ -97,8 +97,10 @@ func TestResolveImageSelectionRequirementRejectsConflictingAliases(t *testing.T)
 		},
 	}
 
-	_, err := ResolveImageSelectionRequirementWithModelDefaults(request, request.Model, ImageOperationGeneration)
-	require.ErrorContains(t, err, "conflicts with resolution")
+	requirement, err := ResolveImageSelectionRequirementWithModelDefaults(request, request.Model, ImageOperationGeneration)
+	require.NoError(t, err)
+	assert.Equal(t, "1024x1024", requirement.Size)
+	assert.Equal(t, "4K", requirement.Resolution)
 }
 
 func TestResolveImageSelectionRequirementUsesOneKBillingDefault(t *testing.T) {
@@ -171,4 +173,15 @@ func TestResolveImageSelectionRequirementRejectsCollidingProviderParameterAliase
 
 	_, err := ResolveImageSelectionRequirement(request, request.Model, ImageOperationGeneration)
 	require.ErrorContains(t, err, "aliases collide")
+}
+
+func TestResolveImageSelectionRequirementPreservesProviderTwoKSizeAfterSelection(t *testing.T) {
+	request := &ImageRequest{Model: "gpt-image-2", Size: "2560x1440", Extra: map[string]json.RawMessage{
+		"resolution": json.RawMessage(`"2K"`), "aspect_ratio": json.RawMessage(`"16:9"`),
+	}}
+	requirement, err := ResolveImageSelectionRequirementWithModelDefaults(request, request.Model, ImageOperationGeneration)
+	require.NoError(t, err)
+	assert.Equal(t, "2560x1440", requirement.Size)
+	assert.Equal(t, "2K", requirement.Resolution)
+	assert.Equal(t, "16:9", requirement.AspectRatio)
 }

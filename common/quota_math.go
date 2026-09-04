@@ -13,10 +13,12 @@ import (
 // range instead of wrapping around and turning a charge into a credit.
 const (
 	// MaxLegacyQuota bounds the one-way compatibility window for balances
-	// written above the current int32 ceiling by older deployments.
+	// written above the current int32 ceiling by older deployments. Redis Lua
+	// uses doubles, so compatibility stops at the largest exact integer.
+	// Individual charges and new credits remain bounded by MaxQuota.
 	MaxQuota       = math.MaxInt32
 	MinQuota       = math.MinInt32
-	MaxLegacyQuota = math.MaxUint32
+	MaxLegacyQuota = 1<<53 - 1
 )
 
 // QuotaClampKind identifies why a quota conversion had to be saturated.

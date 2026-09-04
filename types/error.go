@@ -515,6 +515,23 @@ func WithClaudeError(claudeError ClaudeError, statusCode int, ops ...NewAPIError
 	return e
 }
 
+// IsLocalRelayError identifies failures that cannot be repaired by switching or
+// disabling an upstream channel. A recorded upstream HTTP response takes precedence.
+func IsLocalRelayError(err *NewAPIError) bool {
+	if err == nil || err.UpstreamStatusCode != 0 {
+		return false
+	}
+	switch err.GetErrorCode() {
+	case ErrorCodeInsufficientUserQuota, ErrorCodePreConsumeTokenQuotaFailed,
+		ErrorCodeQueryDataError, ErrorCodeUpdateDataError, ErrorCodeModelPriceError,
+		ErrorCodeCountTokenFailed, ErrorCodeJsonMarshalFailed, ErrorCodeGenRelayInfoFailed,
+		ErrorCodeReadRequestBodyFailed, ErrorCodeBadRequestBody, ErrorCodeInvalidRequest:
+		return true
+	default:
+		return false
+	}
+}
+
 func IsChannelError(err *NewAPIError) bool {
 	if err == nil {
 		return false

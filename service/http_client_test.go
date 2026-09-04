@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func withRelayTimeoutConfig(t *testing.T) {
@@ -162,5 +164,30 @@ func TestRelayHTTP2KeepaliveDisabled(t *testing.T) {
 	}
 	if tr.TLSNextProto["h2"] != nil {
 		t.Fatal("expected h2 not registered when keepalive disabled")
+	}
+}
+
+func TestImageClientsWaitForRequestDeadlineAndPreserveTextTimeouts(t *testing.T) {
+	withRelayTimeoutConfig(t)
+	InitHttpClient()
+	ResetProxyClientCache()
+	t.Cleanup(ResetProxyClientCache)
+	for _, proxyURL := range []string{"", "http://127.0.0.1:3128", "socks5://127.0.0.1:1080"} {
+		t.Run(proxyURL, func(t *testing.T) {
+			imageClient, err := GetImageHttpClientWithProxy(proxyURL)
+			require.NoError(t, err)
+			assert.Zero(t, transportOf(t, imageClient).ResponseHeaderTimeout)
+			assert.NotNil(t, transportOf(t, imageClient).DialContext)
+			assert.Positive(t, transportOf(t, imageClient).TLSHandshakeTimeout)
+			reused, err := GetImageHttpClientWithProxy(proxyURL)
+			require.NoError(t, err)
+			assert.Same(t, imageClient, reused)
+			for _, streaming := range []bool{false, true} {
+				textClient, err := GetRelayHttpClientWithProxy(proxyURL, streaming)
+				require.NoError(t, err)
+				assert.NotSame(t, imageClient, textClient)
+				assert.Equal(t, relayResponseHeaderTimeout(streaming), transportOf(t, textClient).ResponseHeaderTimeout)
+			}
+		})
 	}
 }

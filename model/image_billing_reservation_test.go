@@ -539,7 +539,7 @@ func setImageReservationLegacyBalances(t *testing.T, user *User, token *Token, b
 func TestImageBillingReservationRefundsBoundedLegacyBalancesBeforeActivation(t *testing.T) {
 	redisServer := useImageTaskTestRedis(t)
 	user, token, task := seedPreparedImageBillingReservation(t, "bounded-legacy-refund", 100)
-	legacyBalance := common.MaxQuota + 100_000
+	legacyBalance := 4_993_213_689
 	setImageReservationLegacyBalances(t, user, token, legacyBalance)
 	populateImageReservationTestCache(t, redisServer, user, token)
 

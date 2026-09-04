@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -623,4 +624,17 @@ func TestProcessHeaderOverride_PassHeadersTemplateSetsRuntimeHeaders(t *testing.
 	require.Equal(t, "Codex CLI", upstreamReq.Header.Get("Originator"))
 	require.Equal(t, "sess-123", upstreamReq.Header.Get("Session_id"))
 	require.Empty(t, upstreamReq.Header.Get("X-Codex-Beta-Features"))
+}
+
+func TestImageRequestReportsGatewayDeadlineWithoutProviderSecrets(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Unix(1, 0))
+	defer cancel()
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil).WithContext(ctx)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://example.com/v1/images/generations?key=provider-secret", nil)
+	require.NoError(t, err)
+	_, err = DoRequest(c, req, &relaycommon.RelayInfo{RelayFormat: types.RelayFormatOpenAIImage, ChannelMeta: &relaycommon.ChannelMeta{}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "gateway request timeout")
+	assert.NotContains(t, err.Error(), "provider-secret")
 }

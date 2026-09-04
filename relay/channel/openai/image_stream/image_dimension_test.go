@@ -2,6 +2,7 @@ package image_stream
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"image"
 	"image/color"
@@ -225,4 +226,20 @@ func oneByOneWebP(t *testing.T) []byte {
 	data, err := base64.StdEncoding.DecodeString("UklGRlAAAABXRUJQVlA4WAoAAAAQAAAAAAAAAAAAQUxQSAIAAAAALlZQOCAoAAAAcAEAnQEqAQABAAIANCWgAnQBQAAA/umt//wQX9Dn9bePDVlqIXIAAA==")
 	require.NoError(t, err)
 	return data
+}
+
+func TestAsyncImageOutputAcceptsProviderGeometryAndFormat(t *testing.T) {
+	images := []dto.ImageData{{B64Json: base64.StdEncoding.EncodeToString(encodedPNG(t, 4, 3))}}
+	for _, contract := range []asyncImageOutputContract{
+		{size: "2560x1440", count: 1},
+		{aspectRatio: "16:9", count: 1},
+		{format: "jpeg", count: 1},
+		{size: "provider-native", count: 1},
+	} {
+		assert.NoError(t, validateAsyncImageOutput(context.Background(), images, contract))
+	}
+	// A mismatch in an earlier valid image must not hide a corrupt later image.
+	images = append(images, dto.ImageData{B64Json: base64.StdEncoding.EncodeToString([]byte("broken"))})
+	assert.ErrorIs(t, validateAsyncImageOutput(context.Background(), images, asyncImageOutputContract{size: "2560x1440", count: 2}), ErrUndecodableImage)
+	assert.ErrorIs(t, validateAsyncImageOutput(context.Background(), images[:1], asyncImageOutputContract{count: 2}), ErrImageCountMismatch)
 }

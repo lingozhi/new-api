@@ -360,18 +360,12 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			return nil, fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
 		}
 
-		// Not "256x256", "512x512", or "1024x1024"
+		// Preserve provider-specific sizes; the model catalog only supplies defaults.
 		if imageRequest.Model == "dall-e-2" || imageRequest.Model == "dall-e" {
-			if imageRequest.Size != "" && imageRequest.Size != "256x256" && imageRequest.Size != "512x512" && imageRequest.Size != "1024x1024" {
-				return nil, errors.New("size must be one of 256x256, 512x512, or 1024x1024 for dall-e-2 or dall-e")
-			}
 			if imageRequest.Size == "" {
 				imageRequest.Size = "1024x1024"
 			}
 		} else if imageRequest.Model == "dall-e-3" {
-			if imageRequest.Size != "" && imageRequest.Size != "1024x1024" && imageRequest.Size != "1024x1792" && imageRequest.Size != "1792x1024" {
-				return nil, errors.New("size must be one of 1024x1024, 1024x1792 or 1792x1024 for dall-e-3")
-			}
 			if imageRequest.Quality == "" {
 				imageRequest.Quality = "standard"
 			}

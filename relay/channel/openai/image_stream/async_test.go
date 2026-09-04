@@ -1345,7 +1345,7 @@ func TestAsyncImageAdaptorCheckpointFailureNeverCallsProviderTwice(t *testing.T)
 	var stored model.Task
 	require.NoError(t, model.DB.First(&stored, task.ID).Error)
 	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), stored.Status)
-	assert.Contains(t, stored.FailReason, "ambiguous")
+	assert.Contains(t, stored.FailReason, "provider image outcome is unknown")
 
 	// Neither stale-claim recovery nor another worker pass may reopen provider
 	// submission after the failed post-response checkpoint.
@@ -1438,7 +1438,7 @@ func TestAsyncImageResponsesCheckpointFailureNeverCallsProviderTwice(t *testing.
 	var stored model.Task
 	require.NoError(t, model.DB.First(&stored, task.ID).Error)
 	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), stored.Status)
-	assert.Contains(t, stored.FailReason, "ambiguous")
+	assert.Contains(t, stored.FailReason, "provider image outcome is unknown")
 
 	// A later recovery pass cannot reopen the terminal task or contact upstream.
 	persistAsyncImageTaskArtifact = previousPersist
@@ -2087,7 +2087,7 @@ func TestValidateAsyncImageSubmissionBoundsAndSanitizesExtensionFields(t *testin
 	})
 }
 
-func TestValidateAsyncImageSubmissionUsesMappedGPTModelConstraints(t *testing.T) {
+func TestValidateAsyncImageSubmissionPreservesSizeAcrossModelMapping(t *testing.T) {
 	request := &dto.ImageRequest{
 		Model:  "gpt-image-2",
 		Prompt: "draw",
@@ -2096,9 +2096,8 @@ func TestValidateAsyncImageSubmissionUsesMappedGPTModelConstraints(t *testing.T)
 	require.NoError(t, ValidateAsyncImageSubmission("gpt-image-1", "gpt-image-2", request))
 
 	request.Model = "gpt-image-1"
-	err := ValidateAsyncImageSubmission("gpt-image-2", "gpt-image-1", request)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not supported")
+	require.NoError(t, ValidateAsyncImageSubmission("gpt-image-2", "gpt-image-1", request))
+	assert.Equal(t, "1440x1440", request.Size)
 }
 
 func TestValidateAsyncImageSubmissionBoundsGeminiThreeReferenceImages(t *testing.T) {

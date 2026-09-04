@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"sync"
 	"time"
 
@@ -114,7 +113,7 @@ func defaultRelayDialContext() func(context.Context, string, string) (net.Conn, 
 // newRelayTransport builds a relay transport with connect, TLS-handshake, idle
 // and response-header timeouts. proxyFunc / dialContext may be nil.
 func newRelayTransport(
-	streaming bool,
+	headerTimeout time.Duration,
 	proxyFunc func(*http.Request) (*url.URL, error),
 	dialContext func(context.Context, string, string) (net.Conn, error),
 ) *http.Transport {
@@ -128,7 +127,7 @@ func newRelayTransport(
 		IdleConnTimeout:       time.Duration(common.RelayIdleConnTimeout) * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		TLSHandshakeTimeout:   time.Duration(common.RelayTLSHandshakeTimeout) * time.Second,
-		ResponseHeaderTimeout: relayResponseHeaderTimeout(streaming),
+		ResponseHeaderTimeout: headerTimeout,
 		Proxy:                 proxyFunc,
 		DialContext:           dialContext,
 	}
@@ -179,8 +178,8 @@ func newRelayClient(transport *http.Transport) *http.Client {
 }
 
 func InitHttpClient() {
-	httpClient = newRelayClient(newRelayTransport(false, http.ProxyFromEnvironment, nil))
-	httpClientStream = newRelayClient(newRelayTransport(true, http.ProxyFromEnvironment, nil))
+	httpClient = newRelayClient(newRelayTransport(relayResponseHeaderTimeout(false), http.ProxyFromEnvironment, nil))
+	httpClientStream = newRelayClient(newRelayTransport(relayResponseHeaderTimeout(true), http.ProxyFromEnvironment, nil))
 	ssrfProtectedHTTPClient = newProtectedFetchHTTPClient()
 	ssrfProtectedDirectHTTPClient = newDirectProtectedFetchHTTPClient()
 	strictDirectMediaHTTPClient = newStrictDirectProtectedFetchHTTPClient()
@@ -286,10 +285,18 @@ func newProxyHttpClient(proxyURL string, streaming bool) (*http.Client, error) {
 		return GetRelayHttpClient(streaming), nil
 	}
 
-	// Cache per (proxy, stream mode): streaming clients use a shorter
-	// response-header timeout, so they must not share a transport with
-	// non-streaming clients.
-	cacheKey := proxyURL + "|stream=" + strconv.FormatBool(streaming)
+	return newProxyHTTPClientWithHeaderTimeout(proxyURL, relayResponseHeaderTimeout(streaming))
+}
+
+// GetImageHttpClientWithProxy lets image generation wait for its request context
+// or configured overall timeout. Providers often buffer the whole image before
+// sending headers, including when the response body uses SSE.
+func GetImageHttpClientWithProxy(proxyURL string) (*http.Client, error) {
+	return newProxyHTTPClientWithHeaderTimeout(proxyURL, 0)
+}
+
+func newProxyHTTPClientWithHeaderTimeout(proxyURL string, headerTimeout time.Duration) (*http.Client, error) {
+	cacheKey := proxyURL + "|header_timeout=" + headerTimeout.String()
 
 	proxyClientLock.Lock()
 	if client, ok := proxyClients[cacheKey]; ok {
@@ -305,8 +312,15 @@ func newProxyHttpClient(proxyURL string, streaming bool) (*http.Client, error) {
 
 	var client *http.Client
 	switch parsedURL.Scheme {
-	case "http", "https":
-		transport := newRelayTransport(streaming, http.ProxyURL(parsedURL), nil)
+	case "", "http", "https":
+		proxyFunc := http.ProxyFromEnvironment
+		if proxyURL != "" {
+			if parsedURL.Scheme == "" {
+				return nil, fmt.Errorf("proxy URL requires a scheme")
+			}
+			proxyFunc = http.ProxyURL(parsedURL)
+		}
+		transport := newRelayTransport(headerTimeout, proxyFunc, nil)
 		client = newRelayClient(transport)
 
 	case "socks5", "socks5h":
@@ -342,7 +356,7 @@ func newProxyHttpClient(proxyURL string, streaming bool) (*http.Client, error) {
 			}
 			return dialer.Dial(network, addr)
 		}
-		transport := newRelayTransport(streaming, nil, dialContext)
+		transport := newRelayTransport(headerTimeout, nil, dialContext)
 		client = newRelayClient(transport)
 
 	default:
@@ -350,7 +364,12 @@ func newProxyHttpClient(proxyURL string, streaming bool) (*http.Client, error) {
 	}
 
 	proxyClientLock.Lock()
-	proxyClients[cacheKey] = client
+	if existing, ok := proxyClients[cacheKey]; ok {
+		client.CloseIdleConnections()
+		client = existing
+	} else {
+		proxyClients[cacheKey] = client
+	}
 	proxyClientLock.Unlock()
 	return client, nil
 }

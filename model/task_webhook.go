@@ -331,7 +331,7 @@ func (task *Task) ReopenRejectedImageProviderCall(checkpointData []byte) (bool, 
 // channel. It must never be used for transport or response-read failures,
 // whose upstream acceptance state is ambiguous.
 func (task *Task) SwitchRejectedImageProviderChannel(channelID int, privateData TaskPrivateData, checkpointData []byte, lastError string) (bool, error) {
-	return task.switchRejectedImageProviderChannel(channelID, "", privateData, checkpointData, lastError)
+	return task.switchImageProviderChannel(channelID, "", privateData, checkpointData, lastError, TaskStatusCheckpointPending)
 }
 
 // SwitchRejectedImageProviderChannelWithModel is the mapped-model-aware form
@@ -341,10 +341,23 @@ func (task *Task) SwitchRejectedImageProviderChannelWithModel(channelID int, ups
 	if upstreamModelName == "" {
 		return false, errors.New("switched image provider model is required")
 	}
-	return task.switchRejectedImageProviderChannel(channelID, upstreamModelName, privateData, checkpointData, lastError)
+	return task.switchImageProviderChannel(channelID, upstreamModelName, privateData, checkpointData, lastError, TaskStatusCheckpointPending)
 }
 
-func (task *Task) switchRejectedImageProviderChannel(channelID int, upstreamModelName string, privateData TaskPrivateData, checkpointData []byte, lastError string) (bool, error) {
+// SwitchFailedImageProviderChannelWithModel moves a failed live attempt to a
+// different provider, including timeouts and failed accepted provider tasks.
+// The original reservation survives; status, attempt and channel fence stale workers.
+func (task *Task) SwitchFailedImageProviderChannelWithModel(channelID int, upstreamModelName string, privateData TaskPrivateData, checkpointData []byte, lastError string) (bool, error) {
+	if task == nil || upstreamModelName == "" {
+		return false, errors.New("image task and switched provider model are required")
+	}
+	if task.Status != TaskStatusInProgress && task.Status != TaskStatusCheckpointPending {
+		return false, nil
+	}
+	return task.switchImageProviderChannel(channelID, upstreamModelName, privateData, checkpointData, lastError, task.Status)
+}
+
+func (task *Task) switchImageProviderChannel(channelID int, upstreamModelName string, privateData TaskPrivateData, checkpointData []byte, lastError string, expectedStatus TaskStatus) (bool, error) {
 	if task == nil || task.ID == 0 || task.TaskID == "" {
 		return false, errors.New("persisted image task is required")
 	}
@@ -368,6 +381,12 @@ func (task *Task) switchRejectedImageProviderChannel(channelID int, upstreamMode
 		"checkpoint_data":        checkpointData,
 		"status":                 TaskStatusNotStart,
 		"progress":               "10%",
+		"download_attempts":      0,
+		"download_next_retry_at": 0,
+		"download_error":         "",
+		"upload_attempts":        0,
+		"upload_next_retry_at":   0,
+		"upload_error":           "",
 		"start_time":             0,
 		"provider_attempts":      gorm.Expr("provider_attempts + ?", 1),
 		"provider_next_retry_at": now,
@@ -386,7 +405,7 @@ func (task *Task) switchRejectedImageProviderChannel(channelID int, upstreamMode
 			task.ID,
 			task.TaskID,
 			constant.TaskPlatformOpenAIImage,
-			TaskStatusCheckpointPending,
+			expectedStatus,
 			task.Attempt,
 			task.ChannelId,
 		).
@@ -406,6 +425,12 @@ func (task *Task) switchRejectedImageProviderChannel(channelID int, upstreamMode
 	task.Status = TaskStatusNotStart
 	task.Progress = "10%"
 	task.StartTime = 0
+	task.DownloadAttempts = 0
+	task.DownloadNextRetryAt = 0
+	task.DownloadError = ""
+	task.UploadAttempts = 0
+	task.UploadNextRetryAt = 0
+	task.UploadError = ""
 	task.ProviderAttempts++
 	task.ProviderNextRetryAt = now
 	task.ProviderError = lastError

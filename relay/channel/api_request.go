@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
@@ -503,13 +504,13 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	recordAttemptUpstreamHost(req, info)
 	var client *http.Client
 	var err error
-	if info.ChannelSetting.Proxy != "" {
-		client, err = service.GetRelayHttpClientWithProxy(info.ChannelSetting.Proxy, info.IsStream)
-		if err != nil {
-			return nil, fmt.Errorf("new proxy http client failed: %w", err)
-		}
+	if info.RelayFormat == types.RelayFormatOpenAIImage {
+		client, err = service.GetImageHttpClientWithProxy(info.ChannelSetting.Proxy)
 	} else {
-		client = service.GetRelayHttpClient(info.IsStream)
+		client, err = service.GetRelayHttpClientWithProxy(info.ChannelSetting.Proxy, info.IsStream)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
 	if info.ChannelType == baseconstant.ChannelTypeAutoDL {
 		noRedirectClient := *client
@@ -625,7 +626,17 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 			return nil, types.NewError(clientErr, types.ErrorCodeDoRequestFailed)
 		}
 		logger.LogError(c, "do request failed: "+err.Error())
-		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
+		message := "upstream error: do request failed"
+		if info.RelayFormat == types.RelayFormatOpenAIImage {
+			var networkError net.Error
+			switch {
+			case errors.Is(err, context.DeadlineExceeded), errors.As(err, &networkError) && networkError.Timeout():
+				message = "image request exceeded the gateway request timeout while waiting for the provider"
+			case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+				message = "upstream image connection closed before a response was received"
+			}
+		}
+		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg(message))
 	}
 	if resp == nil {
 		if capacityDeadlineCancel != nil {

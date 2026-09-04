@@ -228,7 +228,7 @@ func TestValidateAsyncOpenAIImageRequestRejectsUnsupportedQuality(t *testing.T) 
 	assert.Contains(t, err.Error(), `quality "ultra" is not supported`)
 }
 
-func TestGPTImageSizeFromUnifiedOptionsValidatesExplicitSizes(t *testing.T) {
+func TestGPTImageSizeFromUnifiedOptionsPreservesExplicitSizes(t *testing.T) {
 	verifiedGPTImage2Sizes := []string{
 		"1024x1024", "1536x864", "864x1536", "1024x1360", "1360x1024",
 		"1536x1024", "1024x1536", "1280x1024", "1024x1280", "1536x768",
@@ -247,17 +247,17 @@ func TestGPTImageSizeFromUnifiedOptionsValidatesExplicitSizes(t *testing.T) {
 		})
 	}
 
-	_, err := gptImageSizeFromUnifiedOptions(&dto.ImageRequest{Size: "2000x1600"}, "gpt-image-2")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "published by the model capability profile")
+	providerSize, err := gptImageSizeFromUnifiedOptions(&dto.ImageRequest{Size: "2560x1440"}, "gpt-image-2")
+	require.NoError(t, err)
+	assert.Equal(t, "2560x1440", providerSize)
 
 	size, err := gptImageSizeFromUnifiedOptions(&dto.ImageRequest{Size: "1536x1024"}, "gpt-image-1")
 	require.NoError(t, err)
 	assert.Equal(t, "1536x1024", size)
 
-	_, err = gptImageSizeFromUnifiedOptions(&dto.ImageRequest{Size: "1440x1440"}, "gpt-image-1")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not supported")
+	size, err = gptImageSizeFromUnifiedOptions(&dto.ImageRequest{Size: "1440x1440"}, "gpt-image-1")
+	require.NoError(t, err)
+	assert.Equal(t, "1440x1440", size)
 }
 
 func TestGPTImageSizeFromUnifiedOptionsRestrictsLegacyModels(t *testing.T) {

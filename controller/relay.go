@@ -1014,7 +1014,7 @@ func scheduleUpstreamCapacityFallback(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
-	if openaiErr == nil {
+	if openaiErr == nil || types.IsLocalRelayError(openaiErr) {
 		return false
 	}
 	// Checked before IsChannelError below, which returns true unconditionally and
@@ -1152,7 +1152,7 @@ func shouldCooldownSlowChannel(info *relaycommon.RelayInfo, attemptStart time.Ti
 // but omits the remaining-retry-count gate, so a channel is still recognized as
 // "caused a retry" even on the final attempt. Used to decide cooldown.
 func isRetryableChannelError(c *gin.Context, openaiErr *types.NewAPIError) bool {
-	if openaiErr == nil {
+	if openaiErr == nil || types.IsLocalRelayError(openaiErr) {
 		return false
 	}
 	if service.IsUpstreamRateLimitError(openaiErr) {
@@ -1216,40 +1216,47 @@ func isModelCapabilityError(err *types.NewAPIError) bool {
 }
 
 func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError) {
-	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
-	// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
-	// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
-	if service.IsUpstreamRateLimitError(err) {
-		service.CooldownChannelForUpstreamRateLimit(channelError, err)
-	} else if isModelCapabilityError(err) {
-		// The upstream reported it cannot serve THIS model (model_not_found),
-		// which is a fact about (channel, model), not about the channel. The
-		// adaptive health circuit already recorded it at that granularity
-		// (RecordChannelHealthOutcome ran before this, and ErrorCodeModelNotFound
-		// is channel-attributable), so it will steer this one model away on its
-		// own. A channel-wide cooldown here would also sideline every other model
-		// the channel serves fine — exactly what cooled a healthy claude-sonnet-5
-		// on #25 because gpt-5.4-mini 404'd. Skip it.
-		logger.LogInfo(c, fmt.Sprintf("channel #%d does not serve model %q; isolating that pair via the health circuit instead of cooling the whole channel", channelError.ChannelId, common.GetContextKeyString(c, constant.ContextKeyOriginalModel)))
-	} else if service.IsImmediateStreamCapacityAPIError(err) {
-		logger.LogInfo(c, fmt.Sprintf("channel #%d emitted pre-commit stream capacity; stream-quality policy owns cooldown scope", channelError.ChannelId))
-	} else if service.IsUpstreamRelayServiceTransientError(err) {
-		service.CooldownChannelForRetry(channelError, err)
-	} else if service.ShouldCooldownChannel(err) {
-		service.CooldownChannel(channelError, err)
-	} else if isRetryableChannelError(c, err) {
-		// Any error that would send the request to retry another channel means
-		// this channel misbehaved; cool it for the full duration so it stops
-		// being re-picked. This subsumes upstream 5xx / capability 4xx.
-		service.CooldownChannelForRetry(channelError, err)
-	} else if shouldCooldownForUpstreamError(err) {
-		service.CooldownChannelForUpstreamError(channelError, err)
+	if err == nil {
+		return
 	}
+	if types.IsLocalRelayError(err) {
+		logger.LogError(c, "local relay error: "+common.LocalLogPreview(err.Error()))
+	} else {
+		logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.Error())))
+		// 不要使用context获取渠道信息，异步处理时可能会出现渠道信息不一致的情况
+		// do not use context to get channel info, there may be inconsistent channel info when processing asynchronously
+		if service.IsUpstreamRateLimitError(err) {
+			service.CooldownChannelForUpstreamRateLimit(channelError, err)
+		} else if isModelCapabilityError(err) {
+			// The upstream reported it cannot serve THIS model (model_not_found),
+			// which is a fact about (channel, model), not about the channel. The
+			// adaptive health circuit already recorded it at that granularity
+			// (RecordChannelHealthOutcome ran before this, and ErrorCodeModelNotFound
+			// is channel-attributable), so it will steer this one model away on its
+			// own. A channel-wide cooldown here would also sideline every other model
+			// the channel serves fine — exactly what cooled a healthy claude-sonnet-5
+			// on #25 because gpt-5.4-mini 404'd. Skip it.
+			logger.LogInfo(c, fmt.Sprintf("channel #%d does not serve model %q; isolating that pair via the health circuit instead of cooling the whole channel", channelError.ChannelId, common.GetContextKeyString(c, constant.ContextKeyOriginalModel)))
+		} else if service.IsImmediateStreamCapacityAPIError(err) {
+			logger.LogInfo(c, fmt.Sprintf("channel #%d emitted pre-commit stream capacity; stream-quality policy owns cooldown scope", channelError.ChannelId))
+		} else if service.IsUpstreamRelayServiceTransientError(err) {
+			service.CooldownChannelForRetry(channelError, err)
+		} else if service.ShouldCooldownChannel(err) {
+			service.CooldownChannel(channelError, err)
+		} else if isRetryableChannelError(c, err) {
+			// Any error that would send the request to retry another channel means
+			// this channel misbehaved; cool it for the full duration so it stops
+			// being re-picked. This subsumes upstream 5xx / capability 4xx.
+			service.CooldownChannelForRetry(channelError, err)
+		} else if shouldCooldownForUpstreamError(err) {
+			service.CooldownChannelForUpstreamError(channelError, err)
+		}
 
-	if service.ShouldDisableChannel(err) && channelError.AutoBan {
-		gopool.Go(func() {
-			service.DisableChannel(channelError, err.ErrorWithStatusCode())
-		})
+		if service.ShouldDisableChannel(err) && channelError.AutoBan {
+			gopool.Go(func() {
+				service.DisableChannel(channelError, err.ErrorWithStatusCode())
+			})
+		}
 	}
 
 	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {

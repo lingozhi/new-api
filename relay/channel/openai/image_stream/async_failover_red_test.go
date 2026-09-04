@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,8 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAsyncImageTerminalProviderFailureDoesNotResubmitAcceptedTask(t *testing.T) {
-	failed, _, task := setupCheckpointedProviderFailoverTest(t, "terminal-provider-failure")
+func TestAsyncImageTerminalProviderFailureSwitchesChannel(t *testing.T) {
+	failed, backup, task := setupCheckpointedProviderFailoverTest(t, "terminal-provider-failure")
 
 	genericImageExecutorRegistry.Lock()
 	previousExecutor := genericImageExecutorRegistry.executor
@@ -50,17 +52,11 @@ func TestAsyncImageTerminalProviderFailureDoesNotResubmitAcceptedTask(t *testing
 
 	completed, executeErr := executeAsyncImageTask(context.Background(), task)
 
-	assert.False(t, completed)
-	assert.NoError(t, executeErr, "an accepted provider failure is terminal for the logical request")
-	var stored model.Task
-	require.NoError(t, model.DB.First(&stored, task.ID).Error)
-	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), stored.Status)
-	assert.Equal(t, failed.Id, stored.ChannelId)
-	assert.Zero(t, stored.ProviderAttempts)
+	assertAsyncImageFailoverScheduled(t, failed, backup, task, completed, executeErr)
 }
 
-func TestAsyncImageCheckpointedProviderNotFoundDoesNotResubmitAcceptedTask(t *testing.T) {
-	failed, _, task := setupCheckpointedProviderFailoverTest(t, "provider-task-not-found")
+func TestAsyncImageCheckpointedProviderNotFoundSwitchesChannel(t *testing.T) {
+	failed, backup, task := setupCheckpointedProviderFailoverTest(t, "provider-task-not-found")
 
 	installAsyncImageFailoverExecutor(t, func(request *GenericImageExecutionRequest) (*GenericImageExecutionResult, *types.NewAPIError) {
 		require.NoError(t, request.BeforeProviderCall())
@@ -78,17 +74,11 @@ func TestAsyncImageCheckpointedProviderNotFoundDoesNotResubmitAcceptedTask(t *te
 
 	completed, executeErr := executeAsyncImageTask(context.Background(), task)
 
-	assert.False(t, completed)
-	assert.NoError(t, executeErr)
-	var stored model.Task
-	require.NoError(t, model.DB.First(&stored, task.ID).Error)
-	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), stored.Status)
-	assert.Equal(t, failed.Id, stored.ChannelId)
-	assert.Zero(t, stored.ProviderAttempts)
+	assertAsyncImageFailoverScheduled(t, failed, backup, task, completed, executeErr)
 }
 
-func TestAsyncImageEmptyAcceptedProviderResultDoesNotResubmit(t *testing.T) {
-	failed, _, task := setupCheckpointedProviderFailoverTest(t, "empty-provider-result")
+func TestAsyncImageEmptyAcceptedProviderResultSwitchesChannel(t *testing.T) {
+	failed, backup, task := setupCheckpointedProviderFailoverTest(t, "empty-provider-result")
 
 	installAsyncImageFailoverExecutor(t, func(request *GenericImageExecutionRequest) (*GenericImageExecutionResult, *types.NewAPIError) {
 		require.NoError(t, request.BeforeProviderCall())
@@ -101,20 +91,19 @@ func TestAsyncImageEmptyAcceptedProviderResultDoesNotResubmit(t *testing.T) {
 
 	completed, executeErr := executeAsyncImageTask(context.Background(), task)
 
-	assertAcceptedAsyncImageFailureDoesNotResubmit(t, failed, task, completed, executeErr)
+	assertAsyncImageFailoverScheduled(t, failed, backup, task, completed, executeErr)
 }
 
-func TestAsyncImageAcceptedOutputContractFailureDoesNotResubmit(t *testing.T) {
-	failed, _, task := setupCheckpointedProviderFailoverTest(t, "output-contract")
+func TestAsyncImageAcceptedCountMismatchSwitchesChannel(t *testing.T) {
+	failed, backup, task := setupCheckpointedProviderFailoverTest(t, "output-contract")
 	payload := decodeStoredAsyncImagePayload(t, task.CheckpointData)
-	payload.ImageRequirement.Size = "2x1"
-	payload.Request.Size = "2x1"
+	payload.ImageRequirement.N = 1
 	task.SetCheckpointData(payload)
 
 	encoded := base64.StdEncoding.EncodeToString(asyncOutputContractPNG(t, 1, 1))
 	installAsyncImageFailoverExecutor(t, func(request *GenericImageExecutionRequest) (*GenericImageExecutionResult, *types.NewAPIError) {
 		require.NoError(t, request.BeforeProviderCall())
-		response := &dto.ImageResponse{Data: []dto.ImageData{{B64Json: encoded}}}
+		response := &dto.ImageResponse{Data: []dto.ImageData{{B64Json: encoded}, {B64Json: encoded}}}
 		body, err := common.Marshal(response)
 		require.NoError(t, err)
 		require.NoError(t, request.Checkpoint(&GenericImageUpstreamResponse{StatusCode: http.StatusAccepted, Body: body}))
@@ -123,11 +112,11 @@ func TestAsyncImageAcceptedOutputContractFailureDoesNotResubmit(t *testing.T) {
 
 	completed, executeErr := executeAsyncImageTask(context.Background(), task)
 
-	assertAcceptedAsyncImageFailureDoesNotResubmit(t, failed, task, completed, executeErr)
+	assertAsyncImageFailoverScheduled(t, failed, backup, task, completed, executeErr)
 }
 
-func TestAsyncImageAcceptedPermanentMaterializationFailureDoesNotResubmit(t *testing.T) {
-	failed, _, task := setupCheckpointedProviderFailoverTest(t, "permanent-materialization")
+func TestAsyncImageAcceptedPermanentMaterializationFailureSwitchesChannel(t *testing.T) {
+	failed, backup, task := setupCheckpointedProviderFailoverTest(t, "permanent-materialization")
 	fetchSetting := system_setting.GetFetchSetting()
 	previousFetchSetting := *fetchSetting
 	fetchSetting.EnableSSRFProtection = false
@@ -157,7 +146,7 @@ func TestAsyncImageAcceptedPermanentMaterializationFailureDoesNotResubmit(t *tes
 
 	completed, executeErr := executeAsyncImageTask(context.Background(), task)
 
-	assertAcceptedAsyncImageFailureDoesNotResubmit(t, failed, task, completed, executeErr)
+	assertAsyncImageFailoverScheduled(t, failed, backup, task, completed, executeErr)
 }
 
 func TestAsyncImageDefinitiveClientErrorsDoNotSwitchOrCoolChannel(t *testing.T) {
@@ -284,8 +273,8 @@ func TestAsyncImageKIEPendingPollKeepsDeadlineWithoutConsumingFailureBudget(t *t
 	}
 }
 
-func TestAsyncImageKIEProviderDeadlineStopsPollingWithoutResubmission(t *testing.T) {
-	failed, _, task := setupCheckpointedProviderFailoverTest(t, "kie-expired-deadline")
+func TestAsyncImageKIEProviderDeadlineSwitchesChannel(t *testing.T) {
+	failed, backup, task := setupCheckpointedProviderFailoverTest(t, "kie-expired-deadline")
 	payload := decodeStoredAsyncImagePayload(t, task.CheckpointData)
 	payload.ImageRoutingProtocol = dto.ImageRoutingProtocolKIEJobs
 	payload.ImageRoutingUpstreamPath = "/api/v1/jobs/createTask"
@@ -316,14 +305,10 @@ func TestAsyncImageKIEProviderDeadlineStopsPollingWithoutResubmission(t *testing
 
 	completed, executeErr := executeAsyncImageTask(context.Background(), task)
 
-	assert.False(t, completed)
-	assert.NoError(t, executeErr)
+	assertAsyncImageFailoverScheduled(t, failed, backup, task, completed, executeErr)
 	assert.Zero(t, pollCalls.Load())
-	var stored model.Task
-	require.NoError(t, model.DB.First(&stored, task.ID).Error)
-	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), stored.Status)
-	assert.Equal(t, failed.Id, stored.ChannelId)
-	assert.Zero(t, stored.ProviderAttempts)
+	reset := decodeStoredAsyncImagePayload(t, task.CheckpointData)
+	assert.Zero(t, reset.ProviderDeadlineAt)
 }
 
 func TestAsyncImageFailoverCheckpointStoresOnlyDestinationFingerprints(t *testing.T) {
@@ -440,17 +425,6 @@ func assertAsyncImageFailoverScheduled(t *testing.T, failed, backup *model.Chann
 	assert.NotEqual(t, failed.Id, stored.ChannelId)
 }
 
-func assertAcceptedAsyncImageFailureDoesNotResubmit(t *testing.T, failed *model.Channel, task *model.Task, completed bool, executeErr error) {
-	t.Helper()
-	assert.False(t, completed)
-	assert.NoError(t, executeErr)
-	var stored model.Task
-	require.NoError(t, model.DB.First(&stored, task.ID).Error)
-	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), stored.Status)
-	assert.Equal(t, failed.Id, stored.ChannelId)
-	assert.Zero(t, stored.ProviderAttempts)
-}
-
 func setupCheckpointedProviderFailoverTest(t *testing.T, suffix string) (*model.Channel, *model.Channel, *model.Task) {
 	t.Helper()
 	setupAsyncImageSubmitTestDB(t)
@@ -556,5 +530,155 @@ func asyncImageFailoverTestRouting() *dto.ImageRoutingConfig {
 			},
 			VerificationStatus: dto.ImageRoutingVerificationProductionVerified,
 		}},
+	}
+}
+
+func TestAsyncImageTransportFailureSwitchesChannelAndPreservesCause(t *testing.T) {
+	channel, backup, task := setupCheckpointedProviderFailoverTest(t, "transport-timeout-cause")
+	calls := 0
+	installAsyncImageFailoverExecutor(t, func(request *GenericImageExecutionRequest) (*GenericImageExecutionResult, *types.NewAPIError) {
+		require.NoError(t, request.BeforeProviderCall())
+		calls++
+		return nil, types.NewErrorWithStatusCode(errors.New("image request exceeded the gateway request timeout"), types.ErrorCodeDoRequestFailed, http.StatusGatewayTimeout)
+	})
+	completed, err := executeAsyncImageTask(context.Background(), task)
+	assertAsyncImageFailoverScheduled(t, channel, backup, task, completed, err)
+	var stored model.Task
+	require.NoError(t, model.DB.First(&stored, task.ID).Error)
+	assert.Contains(t, stored.ProviderError, "gateway request timeout")
+	assert.NotContains(t, stored.ProviderError, "interrupted checkpoint")
+	assert.Equal(t, 1, calls)
+}
+
+func TestAsyncImageFailoverNeverReturnsToAlreadyFailedChannel(t *testing.T) {
+	failed, backup, task := setupCheckpointedProviderFailoverTest(t, "failed-channel-exclusion")
+	// Legacy payloads may omit their initial channel from attempted_channel_ids.
+	payload := decodeStoredAsyncImagePayload(t, task.CheckpointData)
+	payload.AttemptedChannelIDs = nil
+	task.SetCheckpointData(payload)
+	calls := []int{}
+	installAsyncImageFailoverExecutor(t, func(request *GenericImageExecutionRequest) (*GenericImageExecutionResult, *types.NewAPIError) {
+		require.NoError(t, request.BeforeProviderCall())
+		calls = append(calls, request.RelayInfo.ChannelId)
+		return nil, types.NewErrorWithStatusCode(errors.New("provider image timed out"), types.ErrorCodeDoRequestFailed, http.StatusGatewayTimeout)
+	})
+	completed, err := executeAsyncImageTask(context.Background(), task)
+	assertAsyncImageFailoverScheduled(t, failed, backup, task, completed, err)
+	rotated := decodeStoredAsyncImagePayload(t, task.CheckpointData)
+	assert.Equal(t, []int{failed.Id, backup.Id}, rotated.AttemptedChannelIDs)
+	assert.False(t, rotated.ProviderStored)
+	assert.False(t, rotated.ProviderCallStarted)
+	claimed, err := model.ClaimImageTask(task, common.GetTimestamp())
+	require.NoError(t, err)
+	require.True(t, claimed)
+	completed, err = executeAsyncImageTask(context.Background(), task)
+	assert.False(t, completed)
+	require.NoError(t, err)
+	assert.Equal(t, []int{failed.Id, backup.Id}, calls)
+	var stored model.Task
+	require.NoError(t, model.DB.First(&stored, task.ID).Error)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), stored.Status)
+	assert.Equal(t, backup.Id, stored.ChannelId)
+	assert.Contains(t, stored.FailReason, "provider image timed out")
+}
+
+func TestAsyncImageFailoverSettlesOrRefundsOnce(t *testing.T) {
+	for _, succeeds := range []bool{true, false} {
+		t.Run(fmt.Sprint(succeeds), func(t *testing.T) {
+			failed, backup, task := setupCheckpointedProviderFailoverTest(t, "settlement-"+fmt.Sprint(succeeds))
+			task.Quota = 100
+			task.PrivateData.BillingSource = "wallet"
+			require.NoError(t, model.DB.Save(task).Error)
+			require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", task.UserId).Update("quota", 900).Error)
+			require.NoError(t, model.DB.Create(&model.ImageBillingReservation{
+				TaskID: task.TaskID, UserID: task.UserId, ExpectedQuota: 100,
+				FundingSource: "wallet", WalletReserved: 100, Status: model.ImageBillingReservationActive,
+			}).Error)
+			previousClient := http.DefaultClient
+			http.DefaultClient = &http.Client{Transport: asyncImageRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+				assert.Equal(t, http.MethodPut, request.Method)
+				assert.Equal(t, "test-account.r2.cloudflarestorage.com", request.URL.Host)
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("")), Request: request}, nil
+			})}
+			t.Cleanup(func() { http.DefaultClient = previousClient })
+			encoded := base64.StdEncoding.EncodeToString(asyncOutputContractPNG(t, 1, 1))
+			calls := []int{}
+			installAsyncImageFailoverExecutor(t, func(request *GenericImageExecutionRequest) (*GenericImageExecutionResult, *types.NewAPIError) {
+				assert.Nil(t, request.UpstreamResponse, "a new channel cannot receive the previous provider's checkpoint")
+				require.NoError(t, request.BeforeProviderCall())
+				calls = append(calls, request.RelayInfo.ChannelId)
+				response := &dto.ImageResponse{Data: []dto.ImageData{{B64Json: encoded}}}
+				body, err := common.Marshal(response)
+				require.NoError(t, err)
+				require.NoError(t, request.Checkpoint(&GenericImageUpstreamResponse{StatusCode: http.StatusOK, Body: body}))
+				if request.RelayInfo.ChannelId == failed.Id || !succeeds {
+					return nil, types.NewErrorWithStatusCode(errors.New("provider task failed"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+				}
+				return &GenericImageExecutionResult{Response: response, Usage: &dto.Usage{PromptTokens: 1, TotalTokens: 1}}, nil
+			})
+			completed, err := executeAsyncImageTask(context.Background(), task)
+			assertAsyncImageFailoverScheduled(t, failed, backup, task, completed, err)
+			var user model.User
+			require.NoError(t, model.DB.First(&user, task.UserId).Error)
+			assert.Equal(t, 900, user.Quota, "switching retains the original reservation")
+			assert.Zero(t, user.UsedQuota)
+			claimed, err := model.ClaimImageTask(task, common.GetTimestamp())
+			require.NoError(t, err)
+			require.True(t, claimed)
+			completed, err = executeAsyncImageTask(context.Background(), task)
+			require.NoError(t, err)
+			assert.Equal(t, succeeds, completed)
+			assert.Equal(t, []int{failed.Id, backup.Id}, calls)
+			finalization, err := model.FinalizeImageTask(task.TaskID)
+			require.NoError(t, err)
+			assert.False(t, finalization.Applied, "repeated finalization must not settle or refund again")
+			require.NoError(t, model.DB.First(&user, task.UserId).Error)
+			if succeeds {
+				assert.Equal(t, 900, user.Quota)
+				assert.Equal(t, 100, user.UsedQuota)
+				assert.Equal(t, model.TaskStatus(model.TaskStatusSuccess), finalization.Task.Status)
+				assert.NotEmpty(t, finalization.Task.PrivateData.ResultURL)
+			} else {
+				assert.Equal(t, 1000, user.Quota)
+				assert.Zero(t, user.UsedQuota)
+				assert.Equal(t, model.TaskStatus(model.TaskStatusFailure), finalization.Task.Status)
+			}
+		})
+	}
+}
+
+func TestResponsesImageProviderFailuresSwitchChannel(t *testing.T) {
+	for _, failure := range []string{"http503", "disconnect", "invalid-image"} {
+		t.Run(failure, func(t *testing.T) {
+			failed, backup, task := setupCheckpointedProviderFailoverTest(t, "responses-"+failure)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+				assert.Equal(t, "/v1/responses", request.URL.Path)
+				_, _ = io.Copy(io.Discard, request.Body)
+				switch failure {
+				case "http503":
+					w.WriteHeader(http.StatusServiceUnavailable)
+				case "disconnect":
+					conn, _, err := w.(http.Hijacker).Hijack()
+					if assert.NoError(t, err) {
+						_ = conn.Close()
+					}
+				case "invalid-image":
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"image_generation_call\",\"result\":\"bm90LWFuLWltYWdl\"}}\n\n")
+					_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-image-2\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
+				}
+			}))
+			t.Cleanup(upstream.Close)
+			failed.BaseURL = &upstream.URL
+			require.NoError(t, model.DB.Save(failed).Error)
+			payload := decodeStoredAsyncImagePayload(t, task.CheckpointData)
+			payload.Executor = AsyncImageExecutorResponses
+			payload.PreparedRequest = nil
+			payload.ImageRoutingProtocol = dto.ImageRoutingProtocolResponsesSSE
+			payload.ImageRoutingUpstreamPath = "/v1/responses"
+			task.SetCheckpointData(payload)
+			completed, err := executeAsyncImageTask(context.Background(), task)
+			assertAsyncImageFailoverScheduled(t, failed, backup, task, completed, err)
+		})
 	}
 }

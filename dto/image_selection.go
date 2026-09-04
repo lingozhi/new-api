@@ -165,14 +165,13 @@ func resolveImageSelectionRequirement(request *ImageRequest, model string, opera
 			if variant.Size != requirement.Size {
 				continue
 			}
-			if hasResolution && requirement.Resolution != variant.Resolution {
-				return ImageSelectionRequirement{}, fmt.Errorf("size %s conflicts with resolution %s", requirement.Size, requirement.Resolution)
+			// Catalog entries are defaults, not provider-independent constraints.
+			if !hasResolution {
+				requirement.Resolution = variant.Resolution
 			}
-			if hasAspectRatio && requirement.AspectRatio != variant.AspectRatio {
-				return ImageSelectionRequirement{}, fmt.Errorf("size %s conflicts with aspect_ratio %s", requirement.Size, requirement.AspectRatio)
+			if !hasAspectRatio {
+				requirement.AspectRatio = variant.AspectRatio
 			}
-			requirement.Resolution = variant.Resolution
-			requirement.AspectRatio = variant.AspectRatio
 			break
 		}
 	}
@@ -194,16 +193,10 @@ func resolveImageSelectionRequirement(request *ImageRequest, model string, opera
 				requirement.AspectRatio = "1:1"
 			}
 		}
-		if size, ok := capabilities.SizeFor(requirement.Resolution, requirement.AspectRatio); ok {
-			if requirement.Size != "" && requirement.Size != size {
-				return ImageSelectionRequirement{}, fmt.Errorf(
-					"size %s conflicts with resolution %s and aspect_ratio %s",
-					requirement.Size,
-					requirement.Resolution,
-					requirement.AspectRatio,
-				)
+		if requirement.Size == "" {
+			if size, ok := capabilities.SizeFor(requirement.Resolution, requirement.AspectRatio); ok {
+				requirement.Size = size
 			}
-			requirement.Size = size
 		}
 	}
 

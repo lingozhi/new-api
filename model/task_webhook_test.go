@@ -611,3 +611,43 @@ func TestImageTaskPendingProviderPollDoesNotConsumeFailureRetryBudget(t *testing
 	assert.Equal(t, now+30, stored.ProviderNextRetryAt)
 	assert.JSONEq(t, string(task.CheckpointData), string(stored.CheckpointData))
 }
+
+func TestFailedAcceptedImageTaskSwitchKeepsReservationAndFencesOldWorker(t *testing.T) {
+	truncateTables(t)
+	task := &Task{
+		TaskID: "task_failed_accepted_image_switch", Platform: constant.TaskPlatformOpenAIImage,
+		Status: TaskStatusInProgress, ChannelId: 116, Attempt: 2, Quota: 100,
+		DownloadAttempts: 3, DownloadNextRetryAt: 999, DownloadError: "bad provider image",
+		UploadAttempts: 2, UploadNextRetryAt: 999, UploadError: "old attempt",
+		PrivateData: TaskPrivateData{TokenId: 7, TokenPreConsumed: 100, TokenBillingEnabled: true},
+	}
+	require.NoError(t, DB.Create(task).Error)
+	stale := *task
+	switched, err := task.SwitchFailedImageProviderChannelWithModel(118, "provider-image-model", task.PrivateData, []byte(`{"provider_stored":false}`), "provider task failed")
+	require.NoError(t, err)
+	require.True(t, switched)
+	assert.Equal(t, 100, task.Quota)
+	assert.Equal(t, 100, task.PrivateData.TokenPreConsumed)
+	assert.Zero(t, task.DownloadAttempts)
+	assert.Zero(t, task.DownloadNextRetryAt)
+	assert.Empty(t, task.DownloadError)
+	assert.Zero(t, task.UploadAttempts)
+	assert.Equal(t, "provider-image-model", task.Properties.UpstreamModelName)
+
+	claimed, err := ClaimImageTask(task, common.GetTimestamp())
+	require.NoError(t, err)
+	require.True(t, claimed)
+	assert.Equal(t, 3, task.Attempt)
+	won, err := stale.TransitionImageTaskToFinalizing(TaskStatusFailure, 0)
+	require.NoError(t, err)
+	assert.False(t, won, "late failure cannot refund the replacement attempt")
+	switched, err = stale.SwitchFailedImageProviderChannelWithModel(119, "late-worker", stale.PrivateData, []byte(`{}`), "late")
+	require.NoError(t, err)
+	assert.False(t, switched)
+	var stored Task
+	require.NoError(t, DB.First(&stored, task.ID).Error)
+	assert.Equal(t, 118, stored.ChannelId)
+	assert.Equal(t, 100, stored.Quota)
+	assert.Equal(t, 100, stored.PrivateData.TokenPreConsumed)
+	assert.Equal(t, TaskStatus(TaskStatusInProgress), stored.Status)
+}

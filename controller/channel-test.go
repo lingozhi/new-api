@@ -49,6 +49,14 @@ func normalizeChannelTestEndpoint(channel *model.Channel, modelName, endpointTyp
 	if strings.HasSuffix(modelName, ratio_setting.CompactModelSuffix) {
 		return string(constant.EndpointTypeOpenAIResponseCompact)
 	}
+	if channel != nil {
+		if profile, ok := channel.GetOtherSettings().ImageRouting.ProfileForModel(modelName); ok && profile.Protocol == dto.ImageRoutingProtocolImagesGenerations {
+			return string(constant.EndpointTypeImageGeneration)
+		}
+	}
+	if common.ImageModelCapabilitiesForModel(modelName).Family != common.ImageModelFamilyGeneric {
+		return string(constant.EndpointTypeImageGeneration)
+	}
 	if channel != nil && channel.Type == constant.ChannelTypeCodex {
 		return string(constant.EndpointTypeOpenAIResponse)
 	}
@@ -150,6 +158,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		if strings.HasSuffix(testModel, ratio_setting.CompactModelSuffix) {
 			requestPath = "/v1/responses/compact"
 		}
+	}
+	if endpointType == string(constant.EndpointTypeImageGeneration) {
+		requestPath = "/v1/images/generations"
 	}
 	if strings.HasPrefix(requestPath, "/v1/responses/compact") && !ratio_setting.CompactUseBaseModel() {
 		testModel = ratio_setting.WithCompactModelSuffix(testModel)
@@ -511,7 +522,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		Group:            info.UsingGroup,
 		Other:            other,
 	})
-	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
+	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, common.LocalLogPreview(string(respBody))))
 	return testResult{
 		context:     c,
 		localErr:    nil,
@@ -706,13 +717,21 @@ func buildTestRequest(model string, endpointType string, channel *model.Channel,
 				Input: []any{"hello world"},
 			}
 		case constant.EndpointTypeImageGeneration:
-			// 返回 ImageRequest
-			return &dto.ImageRequest{
-				Model:  model,
-				Prompt: "a cute cat",
-				N:      lo.ToPtr(uint(1)),
-				Size:   "1024x1024",
+			request := &dto.ImageRequest{
+				Model: model, Prompt: "a cute cat", N: lo.ToPtr(uint(1)),
+				Size: common.ImageModelCapabilitiesForChannel(model, channel.Type).DefaultSize,
 			}
+			if profile, ok := channel.GetOtherSettings().ImageRouting.ProfileForModel(model); ok {
+				request.Size = profile.DefaultSize
+				if request.Size == "" && len(profile.Sizes) > 0 {
+					request.Size = profile.Sizes[0]
+				}
+				request.Quality = profile.DefaultQuality
+				if profile.DefaultOutputFormat != "" {
+					request.OutputFormat, _ = common.Marshal(profile.DefaultOutputFormat)
+				}
+			}
+			return request
 		case constant.EndpointTypeJinaRerank:
 			// 返回 RerankRequest
 			return &dto.RerankRequest{

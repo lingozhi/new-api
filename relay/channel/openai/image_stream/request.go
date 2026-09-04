@@ -87,20 +87,8 @@ func gptImageSizeFromUnifiedOptions(req *dto.ImageRequest, model string) (string
 	capabilities := common.ImageModelCapabilitiesForModel(model)
 	frozenRequirement, hasFrozenRequirement := req.ImageSelectionRequirement()
 	if req.Size != "" {
-		size := strings.TrimSpace(req.Size)
-		if capabilities.Family == common.ImageModelFamilyGPTImage2 {
-			if capabilities.SupportsSize(size) {
-				return size, nil
-			}
-			return "", fmt.Errorf("size %q is not supported by model %s; use a size published by the model capability profile", size, model)
-		}
-		if capabilities.Family == common.ImageModelFamilyGPTImage {
-			if capabilities.SupportsSize(size) {
-				return size, nil
-			}
-			return "", fmt.Errorf("size %q is not supported by model %s", size, model)
-		}
-		return size, nil
+		// Explicit pixel sizes belong to the provider, not the catalog.
+		return strings.TrimSpace(req.Size), nil
 	}
 
 	rawAspect, hasAspect := req.Extra["aspect_ratio"]
