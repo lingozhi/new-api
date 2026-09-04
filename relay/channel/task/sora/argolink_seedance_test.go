@@ -131,7 +131,7 @@ func TestArgolinkSeedancePublicResultUsesGatewayContentURL(t *testing.T) {
 		Data: []byte(`{"model":"seedance-2.5","request_id":"provider-task","status":"done","video":{"duration":4,"url":"/v1/videos/provider-task/content"}}`),
 	}
 
-	encoded, err := convertArgolinkSeedance25Task(task)
+	encoded, err := convertArgolinkSeedanceTask(task)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{
 		"model":"seedance-2.5",
@@ -160,4 +160,41 @@ func TestArgolinkReferenceVideoBillingAndDeliveredDuration(t *testing.T) {
 	assert.Zero(t, adaptor.AdjustBillingOnComplete(task, result))
 	task.Data = []byte(`{"video":{"duration":9223372036854775807}}`)
 	assert.Equal(t, common.QuotaFromFloat(0.17*common.QuotaPerUnit*float64(relaycommon.MaxTaskDurationSeconds)*1.6), adaptor.AdjustBillingOnComplete(task, result))
+}
+
+func TestSeedance20ModelContracts(t *testing.T) {
+	for _, tc := range []struct {
+		body              string
+		code              string
+		resolution, video float64
+	}{
+		{`{"model":"seedance-2.0","prompt":"forest","duration":15,"resolution":"480p"}`, "", 0.05 / 0.11, 0},
+		{`{"model":"seedance-2.0","reference_videos":[{"url":"https://example.com/v.mp4"}],"resolution":"1080p"}`, "", 0.28 / 0.11, 2},
+		{`{"model":"seedance-2.0","prompt":"forest","duration":16}`, "invalid_duration", 0, 0},
+		{`{"model":"seedance-2.0","prompt":"forest","resolution":"1080p"}`, "invalid_resolution", 0, 0},
+	} {
+		c, _, info := newArgolinkSeedanceContext(t, tc.body)
+		info.OriginModelName, info.UpstreamModelName = constant.ArgolinkSeedance20Model, constant.ArgolinkSeedance20Model
+		a := &TaskAdaptor{}
+		a.Init(info)
+		err := a.ValidateRequestAndSetAction(c, info)
+		if tc.code != "" {
+			require.NotNil(t, err)
+			assert.Equal(t, tc.code, err.Code)
+			continue
+		}
+		require.Nil(t, err)
+		ratios := a.EstimateBilling(c, info)
+		assert.InDelta(t, tc.resolution, ratios["resolution"], 1e-12)
+		assert.Equal(t, tc.video, ratios["video_input"])
+		body, buildErr := a.BuildRequestBody(c, info)
+		require.NoError(t, buildErr)
+		data, readErr := io.ReadAll(body)
+		require.NoError(t, readErr)
+		assert.Contains(t, string(data), `"model":"seedance-2.0"`)
+		task := &model.Task{TaskID: "task_20", Properties: model.Properties{OriginModelName: constant.ArgolinkSeedance20Model}}
+		public, convertErr := a.ConvertToOpenAIVideo(task)
+		require.NoError(t, convertErr)
+		assert.Contains(t, string(public), `"model":"seedance-2.0"`)
+	}
 }

@@ -353,7 +353,7 @@ func channelSupportsRequestPath(channel *model.Channel, requestPath string, requ
 	if channel == nil {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(requestModel), constant.ArgolinkSeedance25Model) {
+	if strings.EqualFold(strings.TrimSpace(requestModel), constant.ArgolinkSeedance25Model) || strings.EqualFold(strings.TrimSpace(requestModel), constant.ArgolinkSeedance20Model) {
 		return requestPath == "/v1/media/uploads" || requestPath == "/v1/videos/generations" ||
 			(strings.HasPrefix(requestPath, "/v1/videos/") && !strings.HasSuffix(requestPath, "/remix"))
 	}

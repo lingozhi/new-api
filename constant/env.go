@@ -31,6 +31,7 @@ var TaskPricePatches []string
 // maximum submit-time precharge to the provider-reported duration on completion.
 var TaskPricePerSecondModels = []string{
 	ArgolinkSeedance25Model,
+	ArgolinkSeedance20Model,
 	"MiniMax-H3",
 	"depth-anything-v2-small-video",
 	"subtitle-remove",

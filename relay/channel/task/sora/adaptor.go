@@ -94,8 +94,8 @@ func validateRemixRequest(c *gin.Context) *dto.TaskError {
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
-	if isArgolinkSeedance25Request(c, info) {
-		return validateArgolinkSeedance25Request(c, info)
+	if isArgolinkSeedanceRequest(c, info) {
+		return validateArgolinkSeedanceRequest(c, info)
 	}
 	if info.Action == constant.TaskActionRemix {
 		return validateRemixRequest(c)
@@ -105,8 +105,8 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 // EstimateBilling 根据用户请求的 seconds 和 size 计算 OtherRatios。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
-	if isArgolinkSeedance25Request(c, info) {
-		return estimateArgolinkSeedance25Billing(c)
+	if isArgolinkSeedanceRequest(c, info) {
+		return estimateArgolinkSeedanceBilling(c)
 	}
 	// remix 路径的 OtherRatios 已在 ResolveOriginTask 中设置
 	if info.Action == constant.TaskActionRemix {
@@ -142,7 +142,7 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	if isArgolinkSeedance25Model(info.OriginModelName) {
+	if isArgolinkSeedanceModel(info.OriginModelName) {
 		return fmt.Sprintf("%s/v1/videos/generations", a.baseURL), nil
 	}
 	if info.Action == constant.TaskActionRemix {
@@ -156,7 +156,7 @@ func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	req.Header.Set("Accept", "application/json")
-	if isArgolinkSeedance25Model(info.OriginModelName) {
+	if isArgolinkSeedanceModel(info.OriginModelName) {
 		req.Header.Set("User-Agent", "new-api/1.0")
 	}
 	return nil
@@ -177,7 +177,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
-			if isArgolinkSeedance25Model(info.OriginModelName) {
+			if isArgolinkSeedanceModel(info.OriginModelName) {
 				if value, ok := c.Get(argolinkSeedance25ContextKey); ok {
 					if request, ok := value.(argolinkSeedance25Request); ok {
 						bodyMap["duration"] = argolinkSeedance25DefaultDuration
@@ -282,7 +282,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 
-	if isArgolinkSeedance25Request(c, info) {
+	if isArgolinkSeedanceRequest(c, info) {
 		c.JSON(http.StatusAccepted, gin.H{"request_id": info.PublicTaskID})
 		return upstreamID, responseBody, nil
 	}
@@ -318,7 +318,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 }
 
 func (a *TaskAdaptor) GetModelList() []string {
-	return append(append([]string(nil), ModelList...), constant.ArgolinkSeedance25Model)
+	return append(append([]string(nil), ModelList...), constant.ArgolinkSeedance25Model, constant.ArgolinkSeedance20Model)
 }
 
 func (a *TaskAdaptor) GetChannelName() string {
@@ -360,8 +360,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
-	if task != nil && isArgolinkSeedance25Model(task.Properties.OriginModelName) {
-		return convertArgolinkSeedance25Task(task)
+	if task != nil && isArgolinkSeedanceModel(task.Properties.OriginModelName) {
+		return convertArgolinkSeedanceTask(task)
 	}
 	data := task.Data
 	var err error

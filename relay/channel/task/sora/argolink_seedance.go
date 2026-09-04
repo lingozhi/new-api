@@ -64,25 +64,25 @@ type argolinkPublicResponse struct {
 	Error     *argolinkPublicError `json:"error,omitempty"`
 }
 
-func isArgolinkSeedance25Model(modelName string) bool {
-	return strings.EqualFold(strings.TrimSpace(modelName), constant.ArgolinkSeedance25Model)
+func isArgolinkSeedanceModel(modelName string) bool {
+	return strings.EqualFold(strings.TrimSpace(modelName), constant.ArgolinkSeedance25Model) || strings.EqualFold(strings.TrimSpace(modelName), constant.ArgolinkSeedance20Model)
 }
 
-func isArgolinkSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo) bool {
+func isArgolinkSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) bool {
 	if c != nil && c.Request != nil && c.Request.URL.Path == "/v1/videos/generations" {
 		return true
 	}
-	return info != nil && isArgolinkSeedance25Model(info.OriginModelName)
+	return info != nil && isArgolinkSeedanceModel(info.OriginModelName)
 }
 
-func validateArgolinkSeedance25Request(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+func validateArgolinkSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
 	var request argolinkSeedance25Request
 	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
-	if !isArgolinkSeedance25Model(request.Model) {
+	if !isArgolinkSeedanceModel(request.Model) {
 		return service.TaskErrorWrapperLocal(
-			fmt.Errorf("model must be %s", constant.ArgolinkSeedance25Model),
+			fmt.Errorf("model must be seedance-2.0 or seedance-2.5"),
 			"invalid_model",
 			http.StatusBadRequest,
 		)
@@ -97,8 +97,12 @@ func validateArgolinkSeedance25Request(c *gin.Context, info *relaycommon.RelayIn
 	if request.Duration != nil {
 		duration = *request.Duration
 	}
-	if duration < 4 || duration > 30 {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be between 4 and 30 seconds"), "invalid_duration", http.StatusBadRequest)
+	maxDuration := 30
+	if strings.EqualFold(strings.TrimSpace(request.Model), constant.ArgolinkSeedance20Model) {
+		maxDuration = 15
+	}
+	if duration < 4 || duration > maxDuration {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be between 4 and %d seconds", maxDuration), "invalid_duration", http.StatusBadRequest)
 	}
 	if request.N != nil && *request.N != 1 {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("n must be 1"), "invalid_n", http.StatusBadRequest)
@@ -110,6 +114,9 @@ func validateArgolinkSeedance25Request(c *gin.Context, info *relaycommon.RelayIn
 	}
 	if _, ok := argolinkSeedance25ResolutionPrices[resolution]; !ok {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("resolution must be 480p, 720p, or 1080p"), "invalid_resolution", http.StatusBadRequest)
+	}
+	if maxDuration == 15 && !hasMedia && resolution == "1080p" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("seedance-2.0 text-to-video supports 480p or 720p"), "invalid_resolution", http.StatusBadRequest)
 	}
 	request.Resolution = resolution
 	c.Set(argolinkSeedance25ContextKey, request)
@@ -140,7 +147,7 @@ func validateArgolinkSeedance25Request(c *gin.Context, info *relaycommon.RelayIn
 	return nil
 }
 
-func estimateArgolinkSeedance25Billing(c *gin.Context) map[string]float64 {
+func estimateArgolinkSeedanceBilling(c *gin.Context) map[string]float64 {
 	value, ok := c.Get(argolinkSeedance25ContextKey)
 	if !ok {
 		return nil
@@ -154,24 +161,36 @@ func estimateArgolinkSeedance25Billing(c *gin.Context) map[string]float64 {
 		duration = *request.Duration
 	}
 	price := argolinkSeedance25ResolutionPrices[request.Resolution]
+	basePrice, videoInputRatio := argolinkSeedance25BasePrice, 1.6
+	if strings.EqualFold(strings.TrimSpace(request.Model), constant.ArgolinkSeedance20Model) {
+		basePrice, videoInputRatio = 0.11, 2
+		switch request.Resolution {
+		case "480p":
+			price = 0.05
+		case "720p":
+			price = 0.11
+		case "1080p":
+			price = 0.28
+		}
+	}
 	ratios := map[string]float64{
 		"seconds":    float64(duration),
-		"resolution": price / argolinkSeedance25BasePrice,
+		"resolution": price / basePrice,
 	}
 	if len(request.ReferenceVideos) > 0 {
-		ratios["video_input"] = 1.6
+		ratios["video_input"] = videoInputRatio
 	}
 	return ratios
 }
 
-func convertArgolinkSeedance25Task(task *model.Task) ([]byte, error) {
+func convertArgolinkSeedanceTask(task *model.Task) ([]byte, error) {
 	var upstream responseTask
 	if len(task.Data) > 0 {
 		_ = common.Unmarshal(task.Data, &upstream)
 	}
 	status := "pending"
 	response := argolinkPublicResponse{
-		Model:     constant.ArgolinkSeedance25Model,
+		Model:     task.Properties.OriginModelName,
 		RequestID: task.TaskID,
 		Status:    status,
 	}
@@ -209,7 +228,7 @@ func convertArgolinkSeedance25Task(task *model.Task) ([]byte, error) {
 
 // AdjustBillingOnComplete reconciles against delivered seconds using the saved price.
 func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, result *relaycommon.TaskInfo) int {
-	if task == nil || result == nil || result.Status != model.TaskStatusSuccess || !isArgolinkSeedance25Model(task.Properties.OriginModelName) {
+	if task == nil || result == nil || result.Status != model.TaskStatusSuccess || !isArgolinkSeedanceModel(task.Properties.OriginModelName) {
 		return 0
 	}
 	billing := task.PrivateData.BillingContext

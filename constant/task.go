@@ -9,6 +9,8 @@ const (
 	TaskPlatformAutoDL                   = "60"
 )
 
+const ArgolinkSeedance20Model = "seedance-2.0"
+
 const ArgolinkSeedance25Model = "seedance-2.5"
 
 const (
