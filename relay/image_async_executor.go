@@ -3,6 +3,7 @@ package relay
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/openai/image_stream"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -343,35 +345,44 @@ func executeGenericImageAdaptor(ctx context.Context, input *image_stream.Generic
 		} else if !acceptedKIEJob {
 			responseBody, readErr := io.ReadAll(io.LimitReader(httpResponse.Body, maxGenericImageErrorResponseBytes+1))
 			service.CloseResponseBodyGracefully(httpResponse)
+			logGenericImageHTTPFailure(ctx, info, httpResponse, responseBody, providerErrorSecrets)
 			if readErr != nil {
-				return nil, types.NewErrorWithStatusCode(
+				wrapped := types.NewErrorWithStatusCode(
 					fmt.Errorf("%w: %v", image_stream.ErrGenericImageDefinitiveResponse, readErr),
 					types.ErrorCodeReadResponseBodyFailed,
 					httpResponse.StatusCode,
 				)
+				wrapped.UpstreamStatusCode = httpResponse.StatusCode
+				return nil, wrapped
 			}
 			if len(responseBody) > maxGenericImageErrorResponseBytes {
-				return nil, types.NewErrorWithStatusCode(
+				wrapped := types.NewErrorWithStatusCode(
 					fmt.Errorf("%w: provider error response exceeds %d bytes", image_stream.ErrGenericImageDefinitiveResponse, maxGenericImageErrorResponseBytes),
 					types.ErrorCodeBadResponseStatusCode,
 					httpResponse.StatusCode,
 				)
+				wrapped.UpstreamStatusCode = httpResponse.StatusCode
+				return nil, wrapped
 			}
 			httpResponse.Body = io.NopCloser(bytes.NewReader(responseBody))
 			apiErr := service.RelayErrorHandler(ctx, httpResponse, false)
 			service.ResetStatusCode(apiErr, c.GetString("status_code_mapping"))
 			if apiErr != nil {
-				return nil, types.NewErrorWithStatusCode(
+				wrapped := types.NewErrorWithStatusCode(
 					fmt.Errorf("%w: %s", image_stream.ErrGenericImageDefinitiveResponse, maskGenericImageProviderError(apiErr.Error(), providerErrorSecrets...)),
 					types.ErrorCodeBadResponseStatusCode,
 					apiErr.StatusCode,
 				)
+				wrapped.UpstreamStatusCode = httpResponse.StatusCode
+				return nil, wrapped
 			}
-			return nil, types.NewErrorWithStatusCode(
+			wrapped := types.NewErrorWithStatusCode(
 				fmt.Errorf("%w: provider returned HTTP %d", image_stream.ErrGenericImageDefinitiveResponse, httpResponse.StatusCode),
 				types.ErrorCodeBadResponseStatusCode,
 				httpResponse.StatusCode,
 			)
+			wrapped.UpstreamStatusCode = httpResponse.StatusCode
+			return nil, wrapped
 		}
 	}
 	if input.UpstreamResponse == nil {
@@ -817,6 +828,47 @@ func isGenericImageGatewayField(name string) bool {
 	default:
 		return false
 	}
+}
+
+// logGenericImageHTTPFailure preserves evidence from the HTTP peer without
+// logging credentials, request prompts, signed URLs, or response bodies.
+func logGenericImageHTTPFailure(ctx context.Context, info *relaycommon.RelayInfo, response *http.Response, body []byte, secrets []string) {
+	headers := make(map[string]string)
+	for _, name := range []string{"Server", "Date", "Content-Type", "X-Request-Id", "Request-Id", "X-Trace-Id", "Cf-Ray", "Via", "X-Cache"} {
+		value := maskGenericImageProviderError(response.Header.Get(name), secrets...)
+		if value == "" {
+			continue
+		}
+		if len(value) > 256 {
+			value = value[:256]
+		}
+		headers[name] = value
+	}
+	endpoint := ""
+	if response.Request != nil && response.Request.URL != nil {
+		endpoint = response.Request.URL.Scheme + "://" + response.Request.URL.Host + response.Request.URL.Path
+	}
+	for _, secret := range secrets {
+		if secret != "" {
+			endpoint = strings.ReplaceAll(endpoint, secret, "***")
+		}
+	}
+	if len(endpoint) > 2048 {
+		endpoint = endpoint[:2048]
+	}
+	diagnostic := map[string]any{
+		"task_id": info.RequestId, "channel_id": info.ChannelId,
+		"http_status": response.StatusCode, "http_protocol": response.Proto,
+		"endpoint": endpoint, "response_headers": headers,
+		"body_bytes_read": len(body), "body_sha256": fmt.Sprintf("%x", sha256.Sum256(body)),
+		"tls_verified": response.TLS != nil && len(response.TLS.VerifiedChains) > 0,
+	}
+	encoded, err := common.Marshal(diagnostic)
+	if err != nil {
+		logger.LogWarn(ctx, "encode async image HTTP failure diagnostic: "+err.Error())
+		return
+	}
+	logger.LogWarn(ctx, "async image upstream HTTP response: "+string(encoded))
 }
 
 func maskGenericImageProviderError(message string, secrets ...string) string {

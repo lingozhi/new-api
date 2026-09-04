@@ -1,12 +1,14 @@
 package relay
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,10 +19,70 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/gin-gonic/gin"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestGenericImageHTTPFailurePreservesPeerEvidenceWithoutSecrets(t *testing.T) {
+	var logs bytes.Buffer
+	previousWriter := gin.DefaultErrorWriter
+	gin.DefaultErrorWriter = &logs
+	t.Cleanup(func() { gin.DefaultErrorWriter = previousWriter })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Server", "test-edge")
+		w.Header().Set("X-Request-Id", "peer-request-123")
+		w.Header().Set("Cf-Ray", "peer-ray-456")
+		w.Header().Set("X-Trace-Id", "provider-secret")
+		w.Header().Set("Set-Cookie", "session=cookie-secret")
+		w.WriteHeader(http.StatusBadGateway)
+		_, err := io.WriteString(w, `{"error":{"message":"Upstream service temporarily unavailable provider-secret","private":"body-secret"}}`)
+		require.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	info := &relaycommon.RelayInfo{
+		RequestId: "task-peer-diagnostic", RelayMode: relayconstant.RelayModeImagesGenerations,
+		RelayFormat: types.RelayFormatOpenAIImage, RequestURLPath: "/v1/images/generations",
+		RequestHeaders: map[string]string{"Content-Type": "application/json"},
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType: constant.ChannelTypeOpenAI, ApiType: constant.APITypeOpenAI,
+			ChannelId: 140, ChannelBaseUrl: server.URL, ApiKey: "provider-secret", UpstreamModelName: "gpt-image-2",
+		},
+	}
+	_, apiErr := image_stream.ExecuteGenericImageAdaptor(context.Background(), &image_stream.GenericImageExecutionRequest{
+		RelayInfo: info, ImageRequest: &dto.ImageRequest{Model: "gpt-image-2", Prompt: "private-prompt", Size: "auto"},
+	})
+	require.NotNil(t, apiErr)
+	assert.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	assert.Equal(t, http.StatusBadGateway, apiErr.UpstreamStatusCode)
+	assert.ErrorIs(t, apiErr, image_stream.ErrGenericImageDefinitiveResponse)
+	_, entry, found := strings.Cut(logs.String(), "async image upstream HTTP response: ")
+	require.True(t, found)
+	entry, _, _ = strings.Cut(entry, "\n")
+	var diagnostic struct {
+		TaskID    string            `json:"task_id"`
+		ChannelID int               `json:"channel_id"`
+		Status    int               `json:"http_status"`
+		Endpoint  string            `json:"endpoint"`
+		Headers   map[string]string `json:"response_headers"`
+		BodyHash  string            `json:"body_sha256"`
+	}
+	require.NoError(t, common.UnmarshalJsonStr(strings.TrimSpace(entry), &diagnostic))
+	assert.Equal(t, info.RequestId, diagnostic.TaskID)
+	assert.Equal(t, 140, diagnostic.ChannelID)
+	assert.Equal(t, 502, diagnostic.Status)
+	assert.Equal(t, server.URL+"/v1/images/generations", diagnostic.Endpoint)
+	assert.Equal(t, "peer-request-123", diagnostic.Headers["X-Request-Id"])
+	assert.Equal(t, "peer-ray-456", diagnostic.Headers["Cf-Ray"])
+	assert.Equal(t, "test-edge", diagnostic.Headers["Server"])
+	assert.NotEmpty(t, diagnostic.BodyHash)
+	assert.NotContains(t, diagnostic.Headers, "Set-Cookie")
+	for _, secret := range []string{"provider-secret", "cookie-secret", "body-secret", "private-prompt"} {
+		assert.NotContains(t, logs.String(), secret)
+	}
+}
 
 func TestGenericImageExecutorPreservesExtraAndAppliesParamOverride(t *testing.T) {
 	var upstreamBody map[string]any
@@ -637,6 +699,7 @@ func TestGenericImageExecutorBoundsProviderErrorBody(t *testing.T) {
 	require.NotNil(t, apiErr)
 	assert.Equal(t, types.ErrorCodeBadResponseStatusCode, apiErr.GetErrorCode())
 	assert.Equal(t, http.StatusServiceUnavailable, apiErr.StatusCode)
+	assert.Equal(t, http.StatusServiceUnavailable, apiErr.UpstreamStatusCode)
 	assert.Contains(t, apiErr.Error(), "provider error response exceeds")
 }
 
