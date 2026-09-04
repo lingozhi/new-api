@@ -644,6 +644,13 @@ func validateImageRoutingDefaultConsistency(requested dto.ImageSelectionRequirem
 		if field.requested != "" {
 			continue
 		}
+		// Explicit auto/ratio sizes delegate pixel dimensions to the provider.
+		// The selected profile freezes its billing tier before pre-consumption;
+		// fallback selection still uses that frozen requirement.
+		if (requested.Size == "auto" || strings.Contains(requested.Size, ":")) &&
+			(field.name == "resolution" || field.name == "aspect_ratio") {
+			continue
+		}
 		baseline := field.value(resolved[0])
 		for _, requirement := range resolved[1:] {
 			if field.value(requirement) != baseline {

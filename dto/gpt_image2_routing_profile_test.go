@@ -187,7 +187,7 @@ func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaul
 			Profiles: []dto.ImageRoutingProfile{candidate},
 		}).Validate()
 		require.Error(t, err)
-		assert.ErrorContains(t, err, "exact size")
+		assert.ErrorContains(t, err, "bind resolution to a size")
 	})
 
 	t.Run("contract auto sentinel cannot carry output controls", func(t *testing.T) {
@@ -206,7 +206,7 @@ func TestGPTImage2ProductionProfileAllowsContractAutoTupleWithoutInventingDefaul
 			Profiles: []dto.ImageRoutingProfile{candidate},
 		}).Validate()
 		require.Error(t, err)
-		assert.ErrorContains(t, err, "exact size")
+		assert.ErrorContains(t, err, "bind resolution to a size")
 	})
 
 	for _, testCase := range []struct {

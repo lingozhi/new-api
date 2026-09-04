@@ -169,8 +169,16 @@ func (requirement ImageSelectionRequirement) Normalize() (ImageSelectionRequirem
 	if normalized.AspectRatio != "" && normalized.AspectRatio != "auto" && !imageAspectRatioPattern.MatchString(normalized.AspectRatio) {
 		return ImageSelectionRequirement{}, fmt.Errorf("aspect_ratio %q is invalid", requirement.AspectRatio)
 	}
-	if normalized.Size != "" && normalized.Size != "auto" && !imageSizePattern.MatchString(normalized.Size) {
+	if !validImageSize(normalized.Size) {
 		return ImageSelectionRequirement{}, fmt.Errorf("size %q is invalid", requirement.Size)
+	}
+	if imageAspectRatioPattern.MatchString(normalized.Size) {
+		if err := validateImageRoutingCombinationGeometry(normalized.Size, normalized.AspectRatio); err != nil {
+			return ImageSelectionRequirement{}, err
+		}
+		if normalized.AspectRatio == "" || normalized.AspectRatio == "auto" {
+			normalized.AspectRatio = normalized.Size
+		}
 	}
 	if normalized.Quality != "" && !imageQualityPattern.MatchString(normalized.Quality) {
 		return ImageSelectionRequirement{}, fmt.Errorf("quality %q is invalid", requirement.Quality)
@@ -670,16 +678,18 @@ func (profile *ImageRoutingProfile) validate(index int) error {
 		coveredSizes := make(map[string]struct{}, len(profile.Sizes))
 		for i, combination := range profile.AllowedCombinations {
 			isVerifiedAutoGeometry := profile.isVerifiedGPTImage2AutoGeometry(combination)
+			// The provider may choose pixel dimensions for auto or ratio sizes.
+			// Keep an explicit billing tier without requiring a pixel-size promise.
 			if !isVerifiedAutoGeometry &&
-				(combination.Resolution == "" || !imageSizePattern.MatchString(combination.Size)) {
-				return fmt.Errorf("%s.allowed_combinations[%d] must bind resolution to an exact size for output verification", prefix, i)
+				(combination.Resolution == "" || combination.Size == "") {
+				return fmt.Errorf("%s.allowed_combinations[%d] must bind resolution to a size for billing", prefix, i)
 			}
 			coveredResolutions[combination.Resolution] = struct{}{}
 			coveredSizes[combination.Size] = struct{}{}
 		}
 		for _, resolution := range profile.Resolutions {
 			if _, ok := coveredResolutions[resolution]; !ok {
-				return fmt.Errorf("%s.resolution %q is not covered by an exact-size combination", prefix, resolution)
+				return fmt.Errorf("%s.resolution %q is not covered by a size combination", prefix, resolution)
 			}
 		}
 		for _, size := range profile.Sizes {
@@ -839,7 +849,11 @@ func validateImageRoutingCombinationGeometry(size, aspectRatio string) error {
 	if size == "" || size == "auto" || aspectRatio == "" || aspectRatio == "auto" {
 		return nil
 	}
-	widthText, heightText, _ := strings.Cut(size, "x")
+	separator := "x"
+	if imageAspectRatioPattern.MatchString(size) {
+		separator = ":"
+	}
+	widthText, heightText, _ := strings.Cut(size, separator)
 	aspectWidthText, aspectHeightText, _ := strings.Cut(aspectRatio, ":")
 	width, widthErr := strconv.Atoi(widthText)
 	height, heightErr := strconv.Atoi(heightText)
@@ -1317,7 +1331,7 @@ func validImageAspectRatio(aspectRatio string) bool {
 }
 
 func validImageSize(size string) bool {
-	return size == "" || size == "auto" || imageSizePattern.MatchString(size)
+	return size == "" || size == "auto" || imageSizePattern.MatchString(size) || imageAspectRatioPattern.MatchString(size)
 }
 
 func validImageQuality(quality string) bool {

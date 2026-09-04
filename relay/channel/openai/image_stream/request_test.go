@@ -237,7 +237,7 @@ func TestGPTImageSizeFromUnifiedOptionsPreservesExplicitSizes(t *testing.T) {
 		"1920x1280", "1280x1920", "1600x1280", "1280x1600", "2048x1024",
 		"1024x2048", "1920x640", "640x1920", "2016x864", "864x2016",
 		"2880x2880", "3840x2160", "2160x3840", "2448x3264", "3264x2448",
-		"auto",
+		"auto", "9:16", "21:9",
 	}
 	for _, explicitSize := range verifiedGPTImage2Sizes {
 		t.Run(explicitSize, func(t *testing.T) {
@@ -517,4 +517,25 @@ func TestRequestAsyncImageUpstreamDoesNotReturnProviderErrorBody(t *testing.T) {
 	assert.Contains(t, err.Error(), "status 401")
 	assert.NotContains(t, err.Error(), "provider-secret")
 	assert.NotContains(t, err.Error(), "json-secret")
+}
+
+func TestProviderSizeSurvivesImageRelayNormalization(t *testing.T) {
+	for _, size := range []string{"auto", "9:16", "21:9", "2160x2160", "3840x1646"} {
+		t.Run(size, func(t *testing.T) {
+			request := &dto.ImageRequest{Model: "gpt-image-2", Size: size, Extra: map[string]json.RawMessage{
+				"resolution": json.RawMessage(`"4K"`),
+			}}
+			require.NoError(t, request.SetImageSelectionRequirement(dto.ImageSelectionRequirement{
+				Operation: dto.ImageOperationGeneration, Resolution: "4K", Size: size, N: 1,
+			}))
+			require.NoError(t, NormalizeUnifiedGPTImageDimensions(request, request.Model))
+			encoded, err := common.Marshal(request)
+			require.NoError(t, err)
+			var upstream map[string]interface{}
+			require.NoError(t, common.Unmarshal(encoded, &upstream))
+			assert.Equal(t, size, upstream["size"])
+			assert.NotContains(t, upstream, "resolution")
+			assert.Equal(t, "4K", request.GetTokenCountMeta().ImageResolution)
+		})
+	}
 }

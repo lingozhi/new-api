@@ -3483,6 +3483,12 @@ func asyncImageExpectedOutputContract(payload asyncImageTaskPayload) asyncImageO
 	if aspectRatio == "auto" {
 		aspectRatio = ""
 	}
+	if strings.Contains(size, ":") {
+		if aspectRatio == "" {
+			aspectRatio = size
+		}
+		size = ""
+	}
 	outputFormat := strings.ToLower(strings.TrimSpace(payload.ImageRequirement.OutputFormat))
 	if outputFormat == "jpg" {
 		outputFormat = "jpeg"

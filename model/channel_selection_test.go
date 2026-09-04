@@ -1742,3 +1742,56 @@ func TestGetChannelDoesNotFallbackToStrictCoolingChannelWithoutMemoryCache(t *te
 	require.NoError(t, err)
 	assert.Nil(t, selected, "strict cooldown must be enforced without the memory cache")
 }
+
+func TestProviderSelectedImageSizeUsesPriorityThenFreezesFallbackTier(t *testing.T) {
+	setImageResolutionPricesForChannelSelectionTest(t)
+	previousMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	ClearChannelCacheForTest()
+	clearChannelCooldownsForTest()
+	t.Cleanup(func() {
+		ClearChannelCacheForTest()
+		clearChannelCooldownsForTest()
+		common.MemoryCacheEnabled = previousMemoryCacheEnabled
+	})
+	for _, size := range []string{"auto", "9:16"} {
+		t.Run(size, func(t *testing.T) {
+			weight := uint(100)
+			high, low := int64(30), int64(10)
+			primary := &Channel{Id: 116, Status: common.ChannelStatusEnabled, Weight: &weight, Priority: &high}
+			fallback := &Channel{Id: 140, Status: common.ChannelStatusEnabled, Weight: &weight, Priority: &low}
+			for i, channel := range []*Channel{primary, fallback} {
+				resolution := []string{"1K", "4K"}[i]
+				aspect := size
+				config := &dto.ImageRoutingConfig{Version: dto.ImageRoutingVersion1, Profiles: []dto.ImageRoutingProfile{{
+					Model: "gpt-image-2", Protocol: dto.ImageRoutingProtocolImagesGenerations,
+					UpstreamPath: "/v1/images/generations", Operations: []dto.ImageOperation{dto.ImageOperationGeneration},
+					Resolutions: []string{resolution}, AspectRatios: []string{aspect}, Sizes: []string{size},
+					VerificationStatus: dto.ImageRoutingVerificationProductionVerified,
+					AllowedCombinations: []dto.ImageRoutingCombination{{Operation: dto.ImageOperationGeneration,
+						Resolution: resolution, AspectRatio: aspect, Size: size}},
+				}}}
+				require.NoError(t, config.Validate())
+				channel.SetOtherSettings(dto.ChannelOtherSettings{ImageRouting: config})
+			}
+			SetChannelCacheForTest(map[int]*Channel{116: primary, 140: fallback}, map[string]map[string][]int{
+				"default": {"gpt-image-2": {116, 140}},
+			})
+			selection, err := dto.ResolveImageSelectionRequirement(&dto.ImageRequest{Model: "gpt-image-2", Size: size}, "gpt-image-2", dto.ImageOperationGeneration)
+			require.NoError(t, err)
+			selected, err := GetRandomSatisfiedChannelWithOptions("default", "gpt-image-2", 0, ChannelSelectionOptions{ImageRequirement: &selection})
+			require.NoError(t, err)
+			require.NotNil(t, selected)
+			assert.Equal(t, primary.Id, selected.Id)
+			profile, _ := ChannelImageRoutingProfile(selected, "gpt-image-2")
+			frozen, err := profile.ApplyDefaults(selection)
+			require.NoError(t, err)
+			assert.Equal(t, "1K", frozen.Resolution)
+			selected, err = GetRandomSatisfiedChannelWithOptions("default", "gpt-image-2", 0, ChannelSelectionOptions{
+				ImageRequirement: &frozen, ExcludedChannelIDs: map[int]struct{}{primary.Id: {}},
+			})
+			require.NoError(t, err)
+			assert.Nil(t, selected, "fallback must not silently change the frozen billing tier")
+		})
+	}
+}

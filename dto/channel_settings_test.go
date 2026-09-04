@@ -841,13 +841,13 @@ func TestImageRoutingConfigRejectsInvalidProfiles(t *testing.T) {
 			c.Profiles[0].AspectRatios = append(c.Profiles[0].AspectRatios, "16:9")
 			c.Profiles[0].AllowedCombinations[1].AspectRatio = "16:9"
 		}, want: "conflicts with aspect_ratio"},
-		{name: "verified resolution missing exact size", mutate: func(c *ImageRoutingConfig) {
+		{name: "verified resolution missing size", mutate: func(c *ImageRoutingConfig) {
 			c.Profiles[0].AllowedCombinations[1].Size = ""
-		}, want: "exact size"},
-		{name: "verified resolution cannot use auto size", mutate: func(c *ImageRoutingConfig) {
+		}, want: "bind resolution to a size"},
+		{name: "declared pixel size still requires combination coverage", mutate: func(c *ImageRoutingConfig) {
 			c.Profiles[0].Sizes = append(c.Profiles[0].Sizes, "auto")
 			c.Profiles[0].AllowedCombinations[1].Size = "auto"
-		}, want: "exact size"},
+		}, want: "not covered by a resolution combination"},
 		{name: "verified defaults must match an allowed combination", mutate: func(c *ImageRoutingConfig) {
 			c.Profiles[0].Resolutions = []string{"1K"}
 			c.Profiles[0].Sizes = []string{"1024x1024"}
@@ -897,7 +897,7 @@ func TestImageRoutingConfigRejectsInvalidProfiles(t *testing.T) {
 	}
 }
 
-func TestGPTImage2VerifiedProfileAllowsOnlyTheDocumentedAutoGeometryTuple(t *testing.T) {
+func TestVerifiedProfileAllowsProviderSelectedGeometryWithBillingTier(t *testing.T) {
 	profile := ImageRoutingProfile{
 		Model:              "gpt-image-2",
 		Protocol:           ImageRoutingProtocolImagesGenerations,
@@ -927,27 +927,28 @@ func TestGPTImage2VerifiedProfileAllowsOnlyTheDocumentedAutoGeometryTuple(t *tes
 		mutate func(*ImageRoutingProfile)
 	}{
 		{
-			name: "rejects auto geometry outside 1K",
+			name: "allows auto geometry outside 1K",
 			mutate: func(candidate *ImageRoutingProfile) {
 				candidate.DefaultResolution = "2K"
 				candidate.AllowedCombinations[0].Resolution = "2K"
 			},
 		},
 		{
-			name: "rejects auto size for a fixed aspect ratio",
+			name: "allows auto size for a declared aspect ratio",
 			mutate: func(candidate *ImageRoutingProfile) {
+				candidate.AspectRatios = []string{"1:1"}
 				candidate.DefaultAspectRatio = "1:1"
 				candidate.AllowedCombinations[0].AspectRatio = "1:1"
 			},
 		},
 		{
-			name: "rejects the exception for another model",
+			name: "allows provider selected geometry for another model",
 			mutate: func(candidate *ImageRoutingProfile) {
 				candidate.Model = "future-image-model"
 			},
 		},
 		{
-			name: "rejects the exception for image editing",
+			name: "allows provider selected geometry for image editing",
 			mutate: func(candidate *ImageRoutingProfile) {
 				candidate.Protocol = ImageRoutingProtocolImagesEdits
 				candidate.UpstreamPath = "/v1/images/edits"
@@ -972,8 +973,7 @@ func TestGPTImage2VerifiedProfileAllowsOnlyTheDocumentedAutoGeometryTuple(t *tes
 				Version:  ImageRoutingVersion1,
 				Profiles: []ImageRoutingProfile{candidate},
 			}).Validate()
-			require.Error(t, err)
-			assert.ErrorContains(t, err, "exact size")
+			require.NoError(t, err)
 		})
 	}
 }
