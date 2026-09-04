@@ -9,6 +9,8 @@ const (
 	TaskPlatformAutoDL                   = "60"
 )
 
+const ArgolinkSeedance25Model = "seedance-2.5"
+
 const (
 	SunoActionMusic  = "MUSIC"
 	SunoActionLyrics = "LYRICS"
