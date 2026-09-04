@@ -263,8 +263,13 @@ func (config *ImageRoutingConfig) Supports(model string, requirement ImageSelect
 	if err != nil {
 		return false
 	}
+	protocol, _, _ := profile.RouteForOperation(normalized.Operation)
+	// An omitted quality catalog on a pass-through Images endpoint means the
+	// upstream chooses which values it accepts, without inventing a default.
+	forwardUndeclaredQuality := profile.Qualities == nil &&
+		(protocol == ImageRoutingProtocolImagesGenerations || protocol == ImageRoutingProtocolImagesEdits)
 	if !containsImageOperation(profile.Operations, normalized.Operation) ||
-		!matchesOptionalImageValue(profile.Qualities, normalized.Quality) ||
+		(!forwardUndeclaredQuality && !matchesOptionalImageValue(profile.Qualities, normalized.Quality)) ||
 		!matchesOptionalImageValue(profile.OutputFormats, normalized.OutputFormat) {
 		return false
 	}
@@ -314,6 +319,9 @@ func (config *ImageRoutingConfig) Supports(model string, requirement ImageSelect
 	normalized.Resolution = ""
 	normalized.AspectRatio = ""
 	normalized.Size = ""
+	if forwardUndeclaredQuality {
+		normalized.Quality = ""
+	}
 
 	for _, combination := range profile.AllowedCombinations {
 		if profile.allowedCombinationMatches(combination, normalized) {

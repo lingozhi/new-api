@@ -842,12 +842,13 @@ func TestGenericImageExecutorRehydratesAdvancedCustomRoute(t *testing.T) {
 
 func TestImageGeometryPassesThroughToUpstream(t *testing.T) {
 	for _, tc := range []struct {
-		name, size string
-		extra      map[string]json.RawMessage
+		name, size, quality string
+		extra               map[string]json.RawMessage
 	}{
 		{name: "provider-specific", size: " 1024×1537 ", extra: map[string]json.RawMessage{"resolution": json.RawMessage(`"Ultra-HD"`), "aspect_ratio": json.RawMessage(`"9:21"`)}},
 		{name: "conflicting-ratio", size: "9:16", extra: map[string]json.RawMessage{"resolution": json.RawMessage(`"auto"`), "aspect_ratio": json.RawMessage(`"16:9"`)}},
 		{name: "omitted"},
+		{name: "explicit-quality", size: "1024x1024", quality: "high"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var received map[string]json.RawMessage
@@ -858,7 +859,7 @@ func TestImageGeometryPassesThroughToUpstream(t *testing.T) {
 				require.NoError(t, err)
 			}))
 			t.Cleanup(server.Close)
-			request := &dto.ImageRequest{Model: "gpt-image-2", Prompt: "a teacup", Size: tc.size, Extra: tc.extra}
+			request := &dto.ImageRequest{Model: "gpt-image-2", Prompt: "a teacup", Size: tc.size, Quality: tc.quality, Extra: tc.extra}
 			requirement, err := dto.ResolveImageSelectionRequirement(request, request.Model, dto.ImageOperationGeneration)
 			require.NoError(t, err)
 			profile := &dto.ImageRoutingProfile{DefaultSize: "3840x2160", DefaultResolution: "4K", DefaultAspectRatio: "16:9", VerificationStatus: dto.ImageRoutingVerificationProductionVerified}
@@ -881,6 +882,11 @@ func TestImageGeometryPassesThroughToUpstream(t *testing.T) {
 				var size string
 				require.NoError(t, common.Unmarshal(received["size"], &size))
 				assert.Equal(t, tc.size, size)
+			}
+			if tc.quality == "" {
+				assert.NotContains(t, received, "quality")
+			} else {
+				assert.JSONEq(t, `"high"`, string(received["quality"]))
 			}
 			for _, field := range []string{"resolution", "aspect_ratio"} {
 				if raw, ok := tc.extra[field]; ok {
