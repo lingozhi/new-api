@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { EXCLUDED_GROUPS, FILTER_ALL, QUOTA_TYPE_VALUES } from '../constants'
 import type { PricingModel } from '../types'
 import { supportsMiniMaxVideoV2Endpoint } from './minimax-video-api-docs'
+import { isSeedanceModel } from './seedance-api-docs'
 
 // ----------------------------------------------------------------------------
 // Model Helper Utilities
@@ -111,7 +112,8 @@ export function isTokenBasedModel(model: PricingModel): boolean {
 
 export function getFixedPriceUnit(model: PricingModel): 'request' | 'seconds' {
   return model.api_profile?.pricing_variants?.[0]?.unit === 'second' ||
-    supportsMiniMaxVideoV2Endpoint(model)
+    supportsMiniMaxVideoV2Endpoint(model) ||
+    isSeedanceModel(model.model_name)
     ? 'seconds'
     : 'request'
 }
