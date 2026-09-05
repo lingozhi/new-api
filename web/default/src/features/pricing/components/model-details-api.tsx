@@ -79,11 +79,13 @@ import {
   type SupportedParameter,
 } from '../lib/mock-stats'
 import { replaceModelInPath } from '../lib/model-helpers'
+import { isSeedanceModel } from '../lib/seedance-api-docs'
 import type {
   ApiProfileParameter,
   ModelApiProfile,
   PricingModel,
 } from '../types'
+import { SeedanceApiDocs } from './seedance-api-docs'
 
 // ---------------------------------------------------------------------------
 // Code-sample registry
@@ -1297,6 +1299,10 @@ export function ModelDetailsApi(props: {
       ?.type ??
     endpoints[0]?.type ??
     ''
+
+  if (isSeedanceModel(props.model.model_name || '')) {
+    return <SeedanceApiDocs modelName={props.model.model_name || ''} />
+  }
 
   return (
     <div className='space-y-6'>
