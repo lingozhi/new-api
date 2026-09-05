@@ -37,6 +37,8 @@ type Pricing struct {
 	BillingExpr            string                  `json:"billing_expr,omitempty"`
 	APIProfile             *common.ImageAPIProfile `json:"api_profile,omitempty"`
 	ImageResolutionPrices  map[string]float64      `json:"image_resolution_prices,omitempty"`
+	VideoResolutionPrices  map[string]float64      `json:"video_resolution_prices,omitempty"`
+	VideoInputRatio        float64                 `json:"video_input_ratio,omitempty"`
 	PricingVersion         string                  `json:"pricing_version,omitempty"`
 }
 
@@ -427,6 +429,13 @@ func updatePricing() {
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
 		if findPrice || len(pricing.ImageResolutionPrices) > 0 {
 			pricing.ModelPrice = modelPrice
+			if ratios := common.SeedanceResolutionRatios(model); len(ratios) > 0 {
+				pricing.VideoResolutionPrices = make(map[string]float64, len(ratios))
+				for resolution, ratio := range ratios {
+					pricing.VideoResolutionPrices[resolution] = modelPrice * ratio
+				}
+				pricing.VideoInputRatio = common.SeedanceVideoInputRatio(model)
+			}
 			pricing.QuotaType = 1
 		} else {
 			modelRatio, _, _ := ratio_setting.GetModelRatio(model)

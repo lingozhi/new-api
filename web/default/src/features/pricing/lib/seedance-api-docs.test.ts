@@ -20,6 +20,9 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { test } from 'node:test'
 
+import type { PricingModel } from '../types'
+import { getVideoStartingPrice } from './model-helpers'
+import { formatRequestPrice } from './price'
 import {
   SEEDANCE_MODELS,
   seedanceRequest,
@@ -62,3 +65,33 @@ for (const model of SEEDANCE_MODELS) {
     assert.ok(upload.includes('/v1/media/uploads'))
   })
 }
+
+test('video cards use the lowest server-provided tier and apply the selected group', () => {
+  const model: PricingModel = {
+    id: 1,
+    model_name: 'seedance-2.5',
+    quota_type: 1,
+    model_ratio: 0,
+    completion_ratio: 0,
+    model_price: 1.241,
+    enable_groups: ['official'],
+    group_ratio: { official: 2 },
+    video_resolution_prices: { '1080p': 3.139, '720p': 1.241, '480p': 0.5621 },
+  }
+  assert.equal(getVideoStartingPrice(model), 0.5621)
+  assert.equal(formatRequestPrice(model, false, 1, 1, 'official'), '$1.1242')
+  assert.equal(
+    getVideoStartingPrice({ ...model, video_resolution_prices: undefined }),
+    null
+  )
+  assert.equal(
+    formatRequestPrice(
+      { ...model, video_resolution_prices: undefined },
+      false,
+      1,
+      1,
+      'official'
+    ),
+    '$2.482'
+  )
+})

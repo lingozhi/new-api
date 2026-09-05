@@ -25,7 +25,7 @@ import {
 } from '../constants'
 import type { PricingModel } from '../types'
 import { getImageResolutionStartingPrice } from './image-resolution-price'
-import { getDisplayGroupRatio } from './model-helpers'
+import { getDisplayGroupRatio, getVideoStartingPrice } from './model-helpers'
 
 // ----------------------------------------------------------------------------
 // Filter Utilities
@@ -111,7 +111,9 @@ function getModelPrice(model: PricingModel, selectedGroup?: string): number {
   }
 
   const basePrice =
-    model.quota_type === 0 ? model.model_ratio : model.model_price || 0
+    model.quota_type === 0
+      ? model.model_ratio
+      : (getVideoStartingPrice(model) ?? model.model_price ?? 0)
   return basePrice * displayGroupRatio
 }
 

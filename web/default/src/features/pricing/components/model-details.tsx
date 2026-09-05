@@ -90,6 +90,7 @@ import type {
   ModelCapability,
   PriceType,
   PricingModel,
+  ModelPricingVariant,
   TokenUnit,
 } from '../types'
 import { DynamicPricingBreakdown } from './dynamic-pricing-breakdown'
@@ -118,14 +119,24 @@ function MediaVariantPricingSection(props: {
   usableGroup: Record<string, { desc: string; ratio: number }>
 }) {
   const { t } = useTranslation()
-  const variants = props.model.api_profile?.pricing_variants || []
+  const videoPrices = props.model.video_resolution_prices
+  const variants: ModelPricingVariant[] = videoPrices
+    ? Object.entries(videoPrices)
+        .sort(([a], [b]) => Number.parseInt(a) - Number.parseInt(b))
+        .map(([resolution, price]) => ({
+          label: resolution,
+          parameters: { resolution },
+          price,
+          unit: 'second',
+        }))
+    : props.model.api_profile?.pricing_variants || []
   if (variants.length === 0) return null
   const groups = getAvailableGroups(props.model, props.usableGroup)
 
   return (
     <div className='space-y-2'>
       <p className='text-muted-foreground text-xs font-medium'>
-        {t('Parameter pricing')}
+        {videoPrices ? t('Resolution') : t('Parameter pricing')}
       </p>
       <div className='overflow-hidden rounded-lg border'>
         {variants.map((variant) => {
@@ -139,11 +150,13 @@ function MediaVariantPricingSection(props: {
             >
               <div className='min-w-0'>
                 <p className='text-sm font-medium'>{variant.label}</p>
-                <code className='text-muted-foreground block text-xs break-all'>
-                  {parameters}
-                </code>
+                {!videoPrices && (
+                  <code className='text-muted-foreground block text-xs break-all'>
+                    {parameters}
+                  </code>
+                )}
               </div>
-              <div className='flex shrink-0 flex-col items-end gap-1'>
+              <div className='flex max-w-full min-w-0 flex-col items-end gap-1'>
                 {groups.map((group) => {
                   const displayPrice = calculateMediaVariantPrice(
                     variant.price,
@@ -173,6 +186,21 @@ function MediaVariantPricingSection(props: {
                           ? t('seconds')
                           : t('request')}
                       </span>
+                      {videoPrices && props.model.video_input_ratio && (
+                        <span className='text-muted-foreground mt-1 block font-sans text-xs font-normal'>
+                          {t('Reference video multiplier')} ×
+                          {props.model.video_input_ratio}:{' '}
+                          {formatCurrencyFromUSD(
+                            displayPrice * props.model.video_input_ratio,
+                            {
+                              digitsLarge: 4,
+                              digitsSmall: 6,
+                              abbreviate: false,
+                            }
+                          )}{' '}
+                          / {t('seconds')}
+                        </span>
+                      )}
                     </span>
                   )
                 })}
@@ -181,6 +209,20 @@ function MediaVariantPricingSection(props: {
           )
         })}
       </div>
+      {videoPrices && (
+        <div className='text-muted-foreground space-y-2 text-xs leading-relaxed'>
+          <p>
+            {t(
+              'Seedance 2.0 supports 1080p only with media input. Fast does not support 1080p. None of these models supports 4K.'
+            )}
+          </p>
+          <p>
+            {t(
+              'Billing uses delivered seconds, resolution, your group price, and the reference video multiplier. Failed tasks are refunded. Audio generation and image references do not add a multiplier. Use the current model price rather than a fixed example price.'
+            )}
+          </p>
+        </div>
+      )}
     </div>
   )
 }
@@ -1363,7 +1405,9 @@ export function ModelDetailsContent(props: ModelDetailsContentProps) {
   const isDynamic =
     props.model.billing_mode === 'tiered_expr' &&
     Boolean(props.model.billing_expr)
-  const isMediaProfile = props.model.api_profile?.kind === 'media'
+  const isMediaProfile =
+    props.model.api_profile?.kind === 'media' ||
+    Boolean(props.model.video_resolution_prices)
   const showPerformance = supportsPerformanceMetrics(props.model)
   const tabValues = showPerformance
     ? TAB_VALUES

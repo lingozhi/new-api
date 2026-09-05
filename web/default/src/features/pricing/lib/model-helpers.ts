@@ -124,3 +124,11 @@ export function supportsPerformanceMetrics(model: PricingModel): boolean {
     !supportsMiniMaxVideoV2Endpoint(model)
   )
 }
+
+/** Lowest available resolution price, before group and currency adjustments. */
+export function getVideoStartingPrice(model: PricingModel): number | null {
+  const prices = Object.values(model.video_resolution_prices ?? {}).filter(
+    (price) => Number.isFinite(price) && price >= 0
+  )
+  return prices.length > 0 ? Math.min(...prices) : null
+}

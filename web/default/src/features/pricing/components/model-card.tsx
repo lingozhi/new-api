@@ -34,6 +34,7 @@ import { getImageResolutionStartingPrice } from '../lib/image-resolution-price'
 import {
   getDisplayGroupRatio,
   getFixedPriceUnit,
+  getVideoStartingPrice,
   isTokenBasedModel,
   supportsPerformanceMetrics,
 } from '../lib/model-helpers'
@@ -215,6 +216,11 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
     priceSummary = (
       <span className='text-muted-foreground whitespace-nowrap'>
         <span className='text-foreground font-mono font-semibold'>
+          {getVideoStartingPrice(props.model) !== null && (
+            <span className='mr-1 font-sans text-xs font-normal'>
+              {t('From')}
+            </span>
+          )}
           {formatRequestPrice(
             props.model,
             showRechargePrice,

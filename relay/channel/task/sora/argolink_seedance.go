@@ -19,7 +19,6 @@ const (
 	argolinkSeedance25ContextKey        = "argolink_seedance_2_5_request"
 	argolinkSeedance25DefaultDuration   = 5
 	argolinkSeedance25DefaultResolution = "720p"
-	argolinkSeedance25BasePrice         = 0.17
 )
 
 var argolinkSeedance25ResolutionPrices = map[string]float64{
@@ -160,33 +159,13 @@ func estimateArgolinkSeedanceBilling(c *gin.Context) map[string]float64 {
 	if request.Duration != nil {
 		duration = *request.Duration
 	}
-	price := argolinkSeedance25ResolutionPrices[request.Resolution]
-	basePrice, videoInputRatio := argolinkSeedance25BasePrice, 1.6
-	if !strings.EqualFold(strings.TrimSpace(request.Model), constant.ArgolinkSeedance25Model) {
-		basePrice, videoInputRatio = 0.11, 2
-		switch request.Resolution {
-		case "480p":
-			price = 0.05
-		case "720p":
-			price = 0.11
-		case "1080p":
-			price = 0.28
-		}
-	}
-	if strings.EqualFold(strings.TrimSpace(request.Model), constant.ArgolinkSeedance20FastModel) {
-		basePrice = 0.091
-		if request.Resolution == "480p" {
-			price = 0.04
-		} else {
-			price = 0.091
-		}
-	}
+	modelName := strings.ToLower(strings.TrimSpace(request.Model))
 	ratios := map[string]float64{
 		"seconds":    float64(duration),
-		"resolution": price / basePrice,
+		"resolution": common.SeedanceResolutionRatios(modelName)[request.Resolution],
 	}
 	if len(request.ReferenceVideos) > 0 {
-		ratios["video_input"] = videoInputRatio
+		ratios["video_input"] = common.SeedanceVideoInputRatio(modelName)
 	}
 	return ratios
 }

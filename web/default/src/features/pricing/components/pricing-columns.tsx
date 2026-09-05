@@ -38,6 +38,7 @@ import { getImageResolutionStartingPrice } from '../lib/image-resolution-price'
 import {
   getDisplayGroupRatio,
   getFixedPriceUnit,
+  getVideoStartingPrice,
   isTokenBasedModel,
 } from '../lib/model-helpers'
 import {
@@ -261,7 +262,12 @@ export function usePricingColumns(
 
         return (
           <div className='max-w-full min-w-0'>
-            <span className='font-mono text-sm tabular-nums'>{price}</span>
+            <span className='font-mono text-sm tabular-nums'>
+              {getVideoStartingPrice(model) !== null && (
+                <span className='mr-1 font-sans text-xs'>{t('From')}</span>
+              )}
+              {price}
+            </span>
             <div className='text-muted-foreground/50 text-[10px]'>
               / {t(getFixedPriceUnit(model))}
             </div>
