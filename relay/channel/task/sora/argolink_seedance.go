@@ -163,6 +163,8 @@ func estimateArgolinkSeedanceBilling(c *gin.Context) map[string]float64 {
 	ratios := map[string]float64{
 		"seconds":    float64(duration),
 		"resolution": common.SeedanceResolutionRatios(modelName)[request.Resolution],
+		// Hold a reserve until completion; this is excluded from the final charge.
+		"preconsume_buffer": 2,
 	}
 	if len(request.ReferenceVideos) > 0 {
 		ratios["video_input"] = common.SeedanceVideoInputRatio(modelName)
@@ -223,13 +225,20 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, result *relaycom
 		return 0
 	}
 	var response responseTask
-	if err := common.Unmarshal(task.Data, &response); err != nil || response.Video == nil || response.Video.Duration <= 0 {
-		return 0
+	seconds := billing.OtherRatios["seconds"]
+	if err := common.Unmarshal(task.Data, &response); err == nil && response.Video != nil && response.Video.Duration > 0 {
+		seconds = float64(min(response.Video.Duration, relaycommon.MaxTaskDurationSeconds))
+	} else {
+		// Older tasks without a reserve keep their existing settlement behavior.
+		// A missing delivered duration must not turn the new reserve into a charge.
+		if billing.OtherRatios["preconsume_buffer"] <= 0 || !(seconds > 0 && seconds <= relaycommon.MaxTaskDurationSeconds) {
+			return 0
+		}
+		common.SysError(fmt.Sprintf("Seedance task %s missing delivered duration; settling requested duration and releasing reserve", task.TaskID))
 	}
-	seconds := min(response.Video.Duration, relaycommon.MaxTaskDurationSeconds)
 	price := &types.PriceData{}
 	for name, ratio := range billing.OtherRatios {
-		if name != "seconds" {
+		if name != "seconds" && name != "preconsume_buffer" {
 			price.AddOtherRatio(name, ratio)
 		}
 	}

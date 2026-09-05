@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -157,7 +158,7 @@ func TestArgolinkReferenceVideoBillingAndDeliveredDuration(t *testing.T) {
 		assert.Equal(t, common.QuotaFromFloat(0.17*common.QuotaPerUnit*float64(duration)*1.6), adaptor.AdjustBillingOnComplete(task, result))
 	}
 	task.Data = []byte(`{"video":{"duration":-1}}`)
-	assert.Zero(t, adaptor.AdjustBillingOnComplete(task, result))
+	assert.Equal(t, common.QuotaFromFloat(0.17*common.QuotaPerUnit*10*1.6), adaptor.AdjustBillingOnComplete(task, result))
 	task.Data = []byte(`{"video":{"duration":9223372036854775807}}`)
 	assert.Equal(t, common.QuotaFromFloat(0.17*common.QuotaPerUnit*float64(relaycommon.MaxTaskDurationSeconds)*1.6), adaptor.AdjustBillingOnComplete(task, result))
 }
@@ -231,5 +232,35 @@ func TestSeedanceFastContracts(t *testing.T) {
 			multiplier = tc.video
 		}
 		assert.Equal(t, common.QuotaFromFloat(0.091*common.QuotaPerUnit*4*tc.resolution*multiplier), a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}))
+	}
+}
+
+func TestSeedanceReserveIsReleasedAtCompletion(t *testing.T) {
+	for _, name := range []string{constant.ArgolinkSeedance20Model, constant.ArgolinkSeedance20FastModel, constant.ArgolinkSeedance25Model} {
+		t.Run(name, func(t *testing.T) {
+			c, _, info := newArgolinkSeedanceContext(t, `{"model":"`+name+`","prompt":"forest","duration":4,"resolution":"480p"}`)
+			info.OriginModelName, info.UpstreamModelName = name, name
+			a := &TaskAdaptor{}
+			a.Init(info)
+			require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+			ratios := a.EstimateBilling(c, info)
+			assert.Equal(t, 2.0, ratios["preconsume_buffer"])
+			price := &types.PriceData{}
+			require.True(t, price.ReplaceOtherRatios(ratios))
+			reserved := common.QuotaFromFloat(price.ApplyOtherRatiosToFloat(common.QuotaPerUnit))
+			task := &model.Task{Quota: reserved, Properties: model.Properties{OriginModelName: name}}
+			task.PrivateData.BillingContext = &model.TaskBillingContext{ModelPrice: 1, GroupRatio: 1, OtherRatios: ratios}
+			expected := common.QuotaFromFloat(common.QuotaPerUnit * 4 * common.SeedanceResolutionRatios(name)["480p"])
+			assert.InDelta(t, float64(expected)*2, reserved, 1)
+			for _, data := range []string{`{"video":{"duration":4}}`, `{}`, `{"video":{"duration":0}}`} {
+				task.Data = []byte(data)
+				assert.Equal(t, expected, a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}))
+			}
+			assert.Equal(t, 2.0, task.PrivateData.BillingContext.OtherRatios["preconsume_buffer"])
+			assert.Zero(t, a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{Status: model.TaskStatusFailure}))
+			delete(ratios, "preconsume_buffer")
+			task.Data = []byte(`{}`)
+			assert.Zero(t, a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}))
+		})
 	}
 }
