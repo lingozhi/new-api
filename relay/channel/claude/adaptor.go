@@ -8,6 +8,7 @@ import (
 	"net/url"
 
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service/relayconvert"
@@ -26,6 +27,9 @@ func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dt
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
+	if count := normalizeSDKRejectedToolInputs(request); count > 0 && c != nil {
+		logger.LogInfo(c, fmt.Sprintf("SDK rejected tool inputs projected as error text: %d", count))
+	}
 	return request, nil
 }
 
