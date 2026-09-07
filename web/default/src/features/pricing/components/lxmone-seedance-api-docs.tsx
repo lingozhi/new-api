@@ -16,16 +16,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Copy } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import {
   CodeBlock,
   CodeBlockCopyButton,
 } from '@/components/ai-elements/code-block'
 import { StaticDataTable } from '@/components/data-table'
+import { Button } from '@/components/ui/button'
 import { useStatus } from '@/hooks/use-status'
+import { copyToClipboard } from '@/lib/copy-to-clipboard'
 
 import {
+  buildLxmoneSeedanceAiIntegrationGuide,
   lxmoneSeedanceRequest,
   lxmoneSeedancePythonExample,
 } from '../lib/lxmone-seedance-api-docs'
@@ -33,11 +39,29 @@ import {
 export function LxmoneSeedanceApiDocs(props: { modelName: string }) {
   const { t } = useTranslation()
   const { status } = useStatus()
+  const [copying, setCopying] = useState(false)
   const configured = (status as Record<string, unknown> | null)?.server_address
   const baseUrl =
     typeof configured === 'string' && configured
       ? configured.replace(/\/$/, '')
       : window.location.origin
+  const copyGuide = async () => {
+    setCopying(true)
+    try {
+      const copied = await copyToClipboard(
+        buildLxmoneSeedanceAiIntegrationGuide(props.modelName, baseUrl)
+      )
+      if (copied) {
+        toast.success(t('Copied to clipboard'))
+      } else {
+        toast.error(t('Failed to copy'))
+      }
+    } catch {
+      toast.error(t('Failed to copy'))
+    } finally {
+      setCopying(false)
+    }
+  }
   const fast =
     props.modelName === 'seedance-2-fast' ||
     props.modelName === 'seedance-2-mini'
@@ -111,7 +135,20 @@ export function LxmoneSeedanceApiDocs(props: { modelName: string }) {
   return (
     <div className='space-y-6'>
       <section className='space-y-3'>
-        <h3 className='text-sm font-semibold'>{t('Seedance API')}</h3>
+        <div className='flex flex-wrap items-center justify-between gap-2'>
+          <h3 className='text-sm font-semibold'>{t('Seedance API')}</h3>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            disabled={copying}
+            aria-busy={copying}
+            onClick={copyGuide}
+          >
+            <Copy aria-hidden='true' className='size-3.5' />
+            {t('Copy AI integration guide')}
+          </Button>
+        </div>
         <p className='text-muted-foreground text-sm'>{rules[0]}</p>
         <CodeBlock
           language='text'

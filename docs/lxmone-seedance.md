@@ -80,3 +80,10 @@ multimodal reference examples are alternatives, not bodies to merge.
 Provider media validation and example shapes have not all been live-tested:
 the completed low-cost checks cover text-to-video for Seedance 2, Fast and Mini;
 Seedance 2.5 was accepted but failed upstream and was refunded by the website.
+
+The API tab also provides **Copy AI integration guide**. It copies a standalone
+Markdown contract for the selected public model, including the website origin,
+all supported fields and aliases, required/optional types and defaults, media
+constraints, rejected/undocumented options, response states, recovery guidance,
+USD billing, alternate request bodies, and a complete Python example. No stored
+API key is read or copied; credentials remain placeholders/environment variables.
