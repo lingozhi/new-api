@@ -94,6 +94,9 @@ func validateRemixRequest(c *gin.Context) *dto.TaskError {
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
+	if common.WanVideoResolutionRatios(info.OriginModelName) != nil {
+		return validateWanVideoRequest(c, info)
+	}
 	if isArgolinkSeedanceRequest(c, info) {
 		return validateArgolinkSeedanceRequest(c, info)
 	}
@@ -134,6 +137,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	ratios := map[string]float64{
 		"seconds": float64(seconds),
 		"size":    1,
+	}
+	if resolutionRatios := common.WanVideoResolutionRatios(info.OriginModelName); resolutionRatios != nil {
+		return map[string]float64{"seconds": float64(seconds), "resolution": resolutionRatios[size]}
 	}
 	if size == "1792x1024" || size == "1024x1792" {
 		ratios["size"] = 1.666667
@@ -177,6 +183,16 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
+			if common.WanVideoResolutionRatios(info.OriginModelName) != nil {
+				request, err := relaycommon.GetTaskRequest(c)
+				if err != nil {
+					return nil, err
+				}
+				bodyMap["seconds"] = request.Seconds
+				bodyMap["duration"] = request.Duration
+				bodyMap["size"] = strings.ToUpper(request.Size)
+				bodyMap["resolution"] = strings.ToUpper(request.Size)
+			}
 			if isArgolinkSeedanceModel(info.OriginModelName) {
 				if value, ok := c.Get(argolinkSeedance25ContextKey); ok {
 					if request, ok := value.(argolinkSeedance25Request); ok {
@@ -338,7 +354,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	switch resTask.Status {
 	case "queued", "pending":
 		taskResult.Status = model.TaskStatusQueued
-	case "processing", "in_progress":
+	case "processing", "in_progress", "archiving":
 		taskResult.Status = model.TaskStatusInProgress
 	case "completed", "done":
 		taskResult.Status = model.TaskStatusSuccess
