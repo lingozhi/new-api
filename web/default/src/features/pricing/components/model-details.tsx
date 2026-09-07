@@ -86,6 +86,7 @@ import {
   formatGroupPrice,
   formatImageResolutionPrice,
 } from '../lib/price'
+import { isSeedanceModel } from '../lib/seedance-api-docs'
 import type {
   ModelCapability,
   PriceType,
@@ -209,7 +210,7 @@ function MediaVariantPricingSection(props: {
           )
         })}
       </div>
-      {videoPrices && (
+      {videoPrices && isSeedanceModel(props.model.model_name) && (
         <div className='text-muted-foreground space-y-2 text-xs leading-relaxed'>
           <p>
             {t(
