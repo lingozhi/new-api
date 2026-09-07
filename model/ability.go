@@ -31,12 +31,13 @@ type AbilityWithChannel struct {
 	ChannelType              int     `json:"channel_type"`
 	ChannelModelMapping      *string `json:"-"`
 	ChannelOtherSettingsJSON string  `json:"-"`
+	ChannelBaseURL           string  `json:"-"`
 }
 
 func GetAllEnableAbilityWithChannels() ([]AbilityWithChannel, error) {
 	var abilities []AbilityWithChannel
 	err := DB.Table("abilities").
-		Select("abilities.*, channels.type as channel_type, channels.model_mapping as channel_model_mapping, channels.settings as channel_other_settings_json").
+		Select("abilities.*, channels.type as channel_type, channels.model_mapping as channel_model_mapping, channels.settings as channel_other_settings_json, channels.base_url as channel_base_url").
 		Joins("left join channels on abilities.channel_id = channels.id").
 		Where("abilities.enabled = ?", true).
 		Scan(&abilities).Error
@@ -573,6 +574,9 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 			continue
 		}
 		if channel.Type == constant.ChannelTypeAutoDL {
+			continue
+		}
+		if !common.SeedanceRequestPathSupported(channel.GetBaseURL(), model, requestPath) {
 			continue
 		}
 		if channel.Type != constant.ChannelTypeAdvancedCustom {

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -23,21 +22,7 @@ func isLxmoneSeedanceRequest(info *relaycommon.RelayInfo) bool {
 	if info == nil || info.ChannelMeta == nil {
 		return false
 	}
-	base, err := url.Parse(info.ChannelBaseUrl)
-	return err == nil && strings.EqualFold(base.Hostname(), "lxmone.xyz") && lxmoneSeedanceModel(info.OriginModelName) != ""
-}
-
-func lxmoneSeedanceModel(name string) string {
-	switch name {
-	case "seedance-2", "seedance-2-pro":
-		return "seedance-2-pro"
-	case "seedance-2.5", "seedance-2.5-pro":
-		return "seedance-2.5-pro"
-	case "seedance-2-fast", "seedance-2-mini":
-		return name
-	default:
-		return ""
-	}
+	return common.IsLxmoneSeedance(info.ChannelBaseUrl, info.OriginModelName)
 }
 
 type lxmoneSeedanceRequest struct {
@@ -95,7 +80,7 @@ func validateLxmoneSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) 
 		}
 		duration = seconds
 	}
-	upstreamModel := lxmoneSeedanceModel(info.OriginModelName)
+	upstreamModel := common.LxmoneSeedanceModel(info.OriginModelName)
 	validDuration := duration >= 4 && duration <= 15
 	switch upstreamModel {
 	case "seedance-2.5-pro":

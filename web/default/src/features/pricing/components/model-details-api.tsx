@@ -1300,7 +1300,10 @@ export function ModelDetailsApi(props: {
     endpoints[0]?.type ??
     ''
 
-  if (isSeedanceModel(props.model.model_name || '')) {
+  if (
+    props.model.video_provider !== 'lxmone-seedance' &&
+    isSeedanceModel(props.model.model_name || '')
+  ) {
     return <SeedanceApiDocs modelName={props.model.model_name || ''} />
   }
 

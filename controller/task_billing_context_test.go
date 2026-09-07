@@ -50,3 +50,11 @@ func TestSeedanceUsesDurationSettlement(t *testing.T) {
 	info.PriceData.UsePrice = true
 	assert.False(t, buildTaskBillingContext(info).PerCallBilling)
 }
+
+func TestLxmoneSeedanceNewNamesUseDurationSettlement(t *testing.T) {
+	for _, name := range []string{"seedance-2", "seedance-2-fast", "seedance-2-mini", "seedance-2.5"} {
+		info := &relaycommon.RelayInfo{OriginModelName: name, TaskRelayInfo: &relaycommon.TaskRelayInfo{Video: &relaycommon.TaskVideoProperties{Provider: "lxmone-seedance"}}}
+		info.PriceData.UsePrice = true
+		assert.False(t, buildTaskBillingContext(info).PerCallBilling, name)
+	}
+}

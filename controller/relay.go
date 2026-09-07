@@ -1410,6 +1410,7 @@ func buildTaskBillingContext(relayInfo *relaycommon.RelayInfo) *model.TaskBillin
 		OriginModelName: relayInfo.OriginModelName,
 		PerCallBilling: (common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) ||
 			relayInfo.PriceData.UsePrice) &&
+			!(relayInfo.TaskRelayInfo != nil && relayInfo.TaskRelayInfo.Video != nil && relayInfo.TaskRelayInfo.Video.Provider == "lxmone-seedance") &&
 			!common.StringsContains(constant.TaskPricePerSecondModels, relayInfo.OriginModelName),
 	}
 }

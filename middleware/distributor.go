@@ -353,6 +353,9 @@ func channelSupportsRequestPath(channel *model.Channel, requestPath string, requ
 	if channel == nil {
 		return false
 	}
+	if common.IsLxmoneSeedance(channel.GetBaseURL(), requestModel) {
+		return common.SeedanceRequestPathSupported(channel.GetBaseURL(), requestModel, requestPath)
+	}
 	if strings.EqualFold(strings.TrimSpace(requestModel), constant.ArgolinkSeedance25Model) || strings.EqualFold(strings.TrimSpace(requestModel), constant.ArgolinkSeedance20Model) || strings.EqualFold(strings.TrimSpace(requestModel), constant.ArgolinkSeedance20FastModel) {
 		return requestPath == "/v1/media/uploads" || requestPath == "/v1/videos/generations" ||
 			(strings.HasPrefix(requestPath, "/v1/videos/") && !strings.HasSuffix(requestPath, "/remix"))

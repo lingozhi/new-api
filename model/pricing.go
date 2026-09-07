@@ -39,6 +39,7 @@ type Pricing struct {
 	ImageResolutionPrices  map[string]float64      `json:"image_resolution_prices,omitempty"`
 	VideoResolutionPrices  map[string]float64      `json:"video_resolution_prices,omitempty"`
 	VideoInputRatio        float64                 `json:"video_input_ratio,omitempty"`
+	VideoProvider          string                  `json:"video_provider,omitempty"`
 	PricingVersion         string                  `json:"pricing_version,omitempty"`
 }
 
@@ -115,6 +116,9 @@ func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
 }
 
 func getPricingEndpointTypesForAbility(ability AbilityWithChannel, advancedCustomConfigs map[int]*dto.AdvancedCustomConfig) []constant.EndpointType {
+	if common.IsLxmoneSeedance(ability.ChannelBaseURL, ability.Model) {
+		return []constant.EndpointType{constant.EndpointTypeOpenAIVideo}
+	}
 	var endpointTypes []constant.EndpointType
 	if ability.ChannelType != constant.ChannelTypeAdvancedCustom {
 		endpointTypes = common.GetEndpointTypesByChannelType(ability.ChannelType, pricingCapabilityModel(ability.Model, ability))
@@ -434,6 +438,11 @@ func updatePricing() {
 				pricing.VideoInputRatio = common.SeedanceVideoInputRatio(model)
 			} else {
 				videoRatios = common.WanVideoResolutionRatios(model)
+			}
+			if ratios, ok := lxmonePricingResolutionRatios(model, modelAbilitiesMap[model]); ok {
+				videoRatios = ratios
+				pricing.VideoProvider = "lxmone-seedance"
+				pricing.VideoInputRatio = 0
 			}
 			if ratios := videoRatios; len(ratios) > 0 {
 				pricing.VideoResolutionPrices = make(map[string]float64, len(ratios))

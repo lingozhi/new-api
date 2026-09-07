@@ -54,9 +54,11 @@ When the provider returns delivered duration, settlement uses it with the saved
 ratio and saturated quota math. Without delivered duration, the original charge
 remains. Standard failed-task refunds are unchanged.
 
-Production channel 148 is staged in the official group. Channel 145 retains its
-original settings while disabled. No live generation should be submitted until
-channel 148's prices are configured. Catalog price/documentation display still
-needs to be aligned with the selected channel before making it publicly available.
+The model catalog displays the highest-priority enabled provider's tiers and
+protocol. With equal priorities, the lower channel ID wins catalog selection;
+use different priorities when providers have different price contracts. Both
+cached and database routing exclude providers that cannot serve the request path.
+Channel 145's original model prices and request contract remain available when
+it is re-enabled. Channel-local tier ratios must be configured before testing.
 
 Provider contract: https://lxmone.xyz/user-api-docs.html?base_url=https%3A%2F%2Flxmone.xyz%2Fv1#seedance
