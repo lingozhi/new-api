@@ -16,7 +16,7 @@ import (
 
 // Unified Wan requests retain one public model while selecting the provider workflow.
 func validateUnifiedWanVideoRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	contentType, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
+	contentType, _, err := mime.ParseMediaType(c.GetHeader("Content-Type"))
 	if err != nil || contentType != "application/json" || c.Request.URL.Path != "/v1/videos" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("wan3.0 requires JSON POST /v1/videos"), "invalid_request", http.StatusBadRequest)
 	}
