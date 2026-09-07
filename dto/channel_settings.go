@@ -55,6 +55,9 @@ type ChannelOtherSettings struct {
 	UpstreamModelUpdateIgnoredModels      []string              `json:"upstream_model_update_ignored_models,omitempty"`       // 手动忽略的模型
 	AdvancedCustom                        *AdvancedCustomConfig `json:"advanced_custom,omitempty"`
 	ImageRouting                          *ImageRoutingConfig   `json:"image_routing,omitempty"`
+
+	// Upstream model -> effective resolution -> multiplier of the public ModelPrice.
+	LxmoneSeedanceResolutionRatios map[string]map[string]float64 `json:"lxmone_seedance_resolution_ratios,omitempty"`
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
