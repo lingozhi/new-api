@@ -62,3 +62,21 @@ Channel 145's original model prices and request contract remain available when
 it is re-enabled. Channel-local tier ratios must be configured before testing.
 
 Provider contract: https://lxmone.xyz/user-api-docs.html?base_url=https%3A%2F%2Flxmone.xyz%2Fv1#seedance
+
+## Website API documentation
+
+The model detail API tab uses `LxmoneSeedanceApiDocs` when `video_provider` is
+`lxmone-seedance`. Legacy Argolink models continue to use `SeedanceApiDocs`.
+The dedicated page documents all validated request fields, aliases, defaults,
+frame/reference conflicts, provider-advertised media counts, unsupported fields,
+resolution normalization, USD-per-second billing, and failure refunds.
+
+Examples use public website aliases and website API keys, never provider keys.
+The Python example saves the returned task ID before polling, handles both
+pending states, checks failures, bounds polling, and downloads completed MP4
+content. It never retries a creation request automatically. JSON frame and
+multimodal reference examples are alternatives, not bodies to merge.
+
+Provider media validation and example shapes have not all been live-tested:
+the completed low-cost checks cover text-to-video for Seedance 2, Fast and Mini;
+Seedance 2.5 was accepted but failed upstream and was refunded by the website.
