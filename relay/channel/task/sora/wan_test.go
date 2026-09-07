@@ -244,3 +244,16 @@ func TestUnifiedWanReferenceLimitsBeforeBilling(t *testing.T) {
 		})
 	}
 }
+
+func TestUnifiedWanRejectsOtherSubmissionProtocols(t *testing.T) {
+	for _, tc := range []struct{ path, contentType string }{{"/v1/videos/task_x/remix", "application/json"}, {"/v1/videos", "multipart/form-data"}, {"/v1/videos", "text/plain"}} {
+		t.Run(tc.path+tc.contentType, func(t *testing.T) {
+			c, info := newWanContext(t, "wan3.0", `{"prompt":"test"}`)
+			c.Request.URL.Path = tc.path
+			c.Request.Header.Set("Content-Type", tc.contentType)
+			taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, taskErr)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+		})
+	}
+}
