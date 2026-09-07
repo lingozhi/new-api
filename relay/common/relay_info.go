@@ -804,6 +804,7 @@ type TaskRelayInfo struct {
 }
 
 type TaskVideoProperties struct {
+	Provider        string `json:"provider,omitempty"`
 	Resolution      string `json:"resolution,omitempty"`
 	Duration        int    `json:"duration,omitempty"`
 	Ratio           string `json:"ratio,omitempty"`

@@ -94,6 +94,9 @@ func validateRemixRequest(c *gin.Context) *dto.TaskError {
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *dto.TaskError) {
+	if isLxmoneSeedanceRequest(info) {
+		return validateLxmoneSeedanceRequest(c, info)
+	}
 	if common.WanVideoResolutionRatios(info.OriginModelName) != nil {
 		return validateWanVideoRequest(c, info)
 	}
@@ -108,6 +111,13 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 // EstimateBilling 根据用户请求的 seconds 和 size 计算 OtherRatios。
 func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	if isLxmoneSeedanceRequest(info) {
+		req, err := relaycommon.GetTaskRequest(c)
+		if err != nil {
+			return nil
+		}
+		return map[string]float64{"seconds": float64(req.Duration), "resolution": c.GetFloat64("lxmone_seedance_resolution_ratio")}
+	}
 	if isArgolinkSeedanceRequest(c, info) {
 		return estimateArgolinkSeedanceBilling(c)
 	}
@@ -148,6 +158,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if isLxmoneSeedanceRequest(info) {
+		return fmt.Sprintf("%s/v1/videos", a.baseURL), nil
+	}
 	if isArgolinkSeedanceModel(info.OriginModelName) {
 		return fmt.Sprintf("%s/v1/videos/generations", a.baseURL), nil
 	}
@@ -183,7 +196,14 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
-			if common.WanVideoResolutionRatios(info.OriginModelName) != nil {
+			if isLxmoneSeedanceRequest(info) {
+				expected := lxmoneSeedanceModel(info.OriginModelName)
+				if info.UpstreamModelName != info.OriginModelName && info.UpstreamModelName != expected {
+					return nil, fmt.Errorf("invalid lxmone Seedance model mapping")
+				}
+				bodyMap["model"] = expected
+			}
+			if common.WanVideoResolutionRatios(info.OriginModelName) != nil || isLxmoneSeedanceRequest(info) {
 				request, err := relaycommon.GetTaskRequest(c)
 				if err != nil {
 					return nil, err
@@ -192,8 +212,12 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 				bodyMap["duration"] = request.Duration
 				bodyMap["size"] = strings.ToUpper(request.Size)
 				bodyMap["resolution"] = strings.ToUpper(request.Size)
+				if isLxmoneSeedanceRequest(info) {
+					bodyMap["aspect_ratio"] = info.TaskRelayInfo.Video.Ratio
+					bodyMap["ratio"] = info.TaskRelayInfo.Video.Ratio
+				}
 			}
-			if isArgolinkSeedanceModel(info.OriginModelName) {
+			if !isLxmoneSeedanceRequest(info) && isArgolinkSeedanceModel(info.OriginModelName) {
 				if value, ok := c.Get(argolinkSeedance25ContextKey); ok {
 					if request, ok := value.(argolinkSeedance25Request); ok {
 						bodyMap["duration"] = argolinkSeedance25DefaultDuration
@@ -298,7 +322,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 		return
 	}
 
-	if isArgolinkSeedanceRequest(c, info) {
+	if !isLxmoneSeedanceRequest(info) && isArgolinkSeedanceRequest(c, info) {
 		c.JSON(http.StatusAccepted, gin.H{"request_id": info.PublicTaskID})
 		return upstreamID, responseBody, nil
 	}
@@ -306,6 +330,9 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	// 使用公开 task_xxxx ID 返回给客户端
 	dResp.ID = info.PublicTaskID
 	dResp.TaskID = info.PublicTaskID
+	if isLxmoneSeedanceRequest(info) {
+		dResp.Model = info.OriginModelName
+	}
 	c.JSON(http.StatusOK, dResp)
 	return upstreamID, responseBody, nil
 }
@@ -376,13 +403,21 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
-	if task != nil && isArgolinkSeedanceModel(task.Properties.OriginModelName) {
+	if task != nil && !isLxmoneSeedanceTask(task) && isArgolinkSeedanceModel(task.Properties.OriginModelName) {
 		return convertArgolinkSeedanceTask(task)
 	}
 	data := task.Data
 	var err error
 	if data, err = sjson.SetBytes(data, "id", task.TaskID); err != nil {
 		return nil, errors.Wrap(err, "set id failed")
+	}
+	if isLxmoneSeedanceTask(task) {
+		for key, value := range map[string]string{"model": task.Properties.OriginModelName, "task_id": task.TaskID, "request_id": task.TaskID} {
+			data, err = sjson.SetBytes(data, key, value)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	return data, nil
 }

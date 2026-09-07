@@ -217,7 +217,7 @@ func convertArgolinkSeedanceTask(task *model.Task) ([]byte, error) {
 
 // AdjustBillingOnComplete reconciles against delivered seconds using the saved price.
 func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, result *relaycommon.TaskInfo) int {
-	if task == nil || result == nil || result.Status != model.TaskStatusSuccess || !isArgolinkSeedanceModel(task.Properties.OriginModelName) {
+	if task == nil || result == nil || result.Status != model.TaskStatusSuccess || (!isLxmoneSeedanceTask(task) && !isArgolinkSeedanceModel(task.Properties.OriginModelName)) {
 		return 0
 	}
 	billing := task.PrivateData.BillingContext
