@@ -210,20 +210,22 @@ function MediaVariantPricingSection(props: {
           )
         })}
       </div>
-      {videoPrices && isSeedanceModel(props.model.model_name) && (
-        <div className='text-muted-foreground space-y-2 text-xs leading-relaxed'>
-          <p>
-            {t(
-              'Seedance 2.0 supports 1080p only with media input. Fast does not support 1080p. None of these models supports 4K.'
-            )}
-          </p>
-          <p>
-            {t(
-              'Billing uses delivered seconds, resolution, your group price, and the reference video multiplier. Failed tasks are refunded. Audio generation and image references do not add a multiplier. Use the current model price rather than a fixed example price.'
-            )}
-          </p>
-        </div>
-      )}
+      {videoPrices &&
+        props.model.video_provider !== 'lxmone-seedance' &&
+        isSeedanceModel(props.model.model_name) && (
+          <div className='text-muted-foreground space-y-2 text-xs leading-relaxed'>
+            <p>
+              {t(
+                'Seedance 2.0 supports 1080p only with media input. Fast does not support 1080p. None of these models supports 4K.'
+              )}
+            </p>
+            <p>
+              {t(
+                'Billing uses delivered seconds, resolution, your group price, and the reference video multiplier. Failed tasks are refunded. Audio generation and image references do not add a multiplier. Use the current model price rather than a fixed example price.'
+              )}
+            </p>
+          </div>
+        )}
     </div>
   )
 }

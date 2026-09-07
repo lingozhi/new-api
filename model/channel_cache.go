@@ -750,6 +750,9 @@ func filterChannelsByRequestPathAndModel(channels []int, requestPath string, mod
 		if channel.Type == constant.ChannelTypeAutoDL {
 			continue
 		}
+		if !common.SeedanceRequestPathSupported(channel.GetBaseURL(), model, requestPath) {
+			continue
+		}
 		if channel.Type != constant.ChannelTypeAdvancedCustom {
 			filtered = append(filtered, channelId)
 			continue

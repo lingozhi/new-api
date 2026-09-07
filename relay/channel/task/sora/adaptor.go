@@ -197,7 +197,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
 			if isLxmoneSeedanceRequest(info) {
-				expected := lxmoneSeedanceModel(info.OriginModelName)
+				expected := common.LxmoneSeedanceModel(info.OriginModelName)
 				if info.UpstreamModelName != info.OriginModelName && info.UpstreamModelName != expected {
 					return nil, fmt.Errorf("invalid lxmone Seedance model mapping")
 				}
@@ -332,6 +332,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	dResp.TaskID = info.PublicTaskID
 	if isLxmoneSeedanceRequest(info) {
 		dResp.Model = info.OriginModelName
+		dResp.RequestID = info.PublicTaskID
 	}
 	c.JSON(http.StatusOK, dResp)
 	return upstreamID, responseBody, nil
@@ -412,7 +413,16 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		return nil, errors.Wrap(err, "set id failed")
 	}
 	if isLxmoneSeedanceTask(task) {
-		for key, value := range map[string]string{"model": task.Properties.OriginModelName, "task_id": task.TaskID, "request_id": task.TaskID} {
+		status := "queued"
+		switch task.Status {
+		case model.TaskStatusInProgress:
+			status = "in_progress"
+		case model.TaskStatusSuccess:
+			status = "completed"
+		case model.TaskStatusFailure:
+			status = "failed"
+		}
+		for key, value := range map[string]string{"model": task.Properties.OriginModelName, "task_id": task.TaskID, "request_id": task.TaskID, "status": status} {
 			data, err = sjson.SetBytes(data, key, value)
 			if err != nil {
 				return nil, err

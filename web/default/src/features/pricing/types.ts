@@ -42,6 +42,7 @@ export type PricingModel = {
   model_price?: number
   image_resolution_prices?: Record<string, number>
   video_resolution_prices?: Record<string, number>
+  video_provider?: string
   video_input_ratio?: number
   cache_ratio?: number | null
   create_cache_ratio?: number | null
