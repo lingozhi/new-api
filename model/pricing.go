@@ -429,12 +429,17 @@ func updatePricing() {
 		modelPrice, findPrice := ratio_setting.GetModelPrice(model, false)
 		if findPrice || len(pricing.ImageResolutionPrices) > 0 {
 			pricing.ModelPrice = modelPrice
-			if ratios := common.SeedanceResolutionRatios(model); len(ratios) > 0 {
+			videoRatios := common.SeedanceResolutionRatios(model)
+			if len(videoRatios) > 0 {
+				pricing.VideoInputRatio = common.SeedanceVideoInputRatio(model)
+			} else {
+				videoRatios = common.WanVideoResolutionRatios(model)
+			}
+			if ratios := videoRatios; len(ratios) > 0 {
 				pricing.VideoResolutionPrices = make(map[string]float64, len(ratios))
 				for resolution, ratio := range ratios {
 					pricing.VideoResolutionPrices[resolution] = modelPrice * ratio
 				}
-				pricing.VideoInputRatio = common.SeedanceVideoInputRatio(model)
 			}
 			pricing.QuotaType = 1
 		} else {
