@@ -80,6 +80,7 @@ import {
 } from '../lib/mock-stats'
 import { replaceModelInPath } from '../lib/model-helpers'
 import { isSeedanceModel } from '../lib/seedance-api-docs'
+import { isWanModel } from '../lib/wan-api-docs'
 import type {
   ApiProfileParameter,
   ModelApiProfile,
@@ -87,6 +88,7 @@ import type {
 } from '../types'
 import { LxmoneSeedanceApiDocs } from './lxmone-seedance-api-docs'
 import { SeedanceApiDocs } from './seedance-api-docs'
+import { WanApiDocs } from './wan-api-docs'
 
 // ---------------------------------------------------------------------------
 // Code-sample registry
@@ -1300,6 +1302,10 @@ export function ModelDetailsApi(props: {
       ?.type ??
     endpoints[0]?.type ??
     ''
+
+  if (isWanModel(props.model.model_name || '')) {
+    return <WanApiDocs />
+  }
 
   if (props.model.video_provider === 'lxmone-seedance') {
     return <LxmoneSeedanceApiDocs modelName={props.model.model_name || ''} />

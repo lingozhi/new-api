@@ -116,7 +116,7 @@ func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
 }
 
 func getPricingEndpointTypesForAbility(ability AbilityWithChannel, advancedCustomConfigs map[int]*dto.AdvancedCustomConfig) []constant.EndpointType {
-	if common.IsLxmoneSeedance(ability.ChannelBaseURL, ability.Model) {
+	if common.WanVideoResolutionRatios(ability.Model) != nil || common.IsLxmoneSeedance(ability.ChannelBaseURL, ability.Model) {
 		return []constant.EndpointType{constant.EndpointTypeOpenAIVideo}
 	}
 	var endpointTypes []constant.EndpointType
