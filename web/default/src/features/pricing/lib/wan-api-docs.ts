@@ -1,0 +1,223 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+export function isWanModel(model: string): boolean {
+  return model === 'wan3.0'
+}
+
+export const WAN_PARAMETERS = [
+  { name: 'model', type: 'string *', value: 'wan3.0' },
+  { name: 'prompt', type: 'string *', value: 'string (length > 0)' },
+  {
+    name: 'mode',
+    type: 'string',
+    value: 'auto | general | reference | frames; default: auto',
+  },
+  { name: 'speed', type: 'string', value: 'standard | fast' },
+  { name: 'seconds', type: 'integer string', value: '2–30; default: 5' },
+  { name: 'duration', type: 'integer', value: '= seconds; 2–30' },
+  { name: 'size', type: 'string', value: '480P | 720P | 1080P; default: 720P' },
+  { name: 'resolution', type: 'string', value: '= size' },
+  {
+    name: 'aspect_ratio',
+    type: 'string',
+    value: '16:9 | 9:16 | 1:1; default: 16:9',
+  },
+  { name: 'ratio', type: 'string', value: '= aspect_ratio' },
+  { name: 'n', type: 'integer', value: '1' },
+  { name: 'prompt_extend', type: 'boolean', value: 'true | false' },
+  {
+    name: 'first_frame',
+    type: 'string',
+    value: 'https://example.com/first.jpg',
+  },
+  { name: 'last_frame', type: 'string', value: 'https://example.com/last.jpg' },
+  { name: 'reference_images', type: 'object[]', value: '≤10; {url, role?}' },
+  {
+    name: 'reference_images[].url',
+    type: 'string *',
+    value: 'https://example.com/image.jpg',
+  },
+  {
+    name: 'reference_images[].role',
+    type: 'string',
+    value: 'reference_image | first_frame | last_frame',
+  },
+  { name: 'reference_videos', type: 'object[]', value: '≤5; {url, duration?}' },
+  {
+    name: 'reference_videos[].url',
+    type: 'string *',
+    value: 'https://example.com/reference.mp4',
+  },
+  {
+    name: 'reference_videos[].duration',
+    type: 'number',
+    value: 'general: 0 < duration ≤ 3600 (s)',
+  },
+  { name: 'reference_audios', type: 'object[]', value: '≤5; {url}' },
+  {
+    name: 'reference_audios[].url',
+    type: 'string *',
+    value: 'https://example.com/reference.mp3',
+  },
+]
+
+export function wanRequest(): Record<string, unknown> {
+  return {
+    model: 'wan3.0',
+    prompt: 'A blue ball on a white table, fixed camera.',
+    mode: 'auto',
+    speed: 'standard',
+    seconds: '2',
+    size: '480P',
+    aspect_ratio: '16:9',
+    prompt_extend: false,
+  }
+}
+
+export const WAN_EXAMPLES = [
+  wanRequest(),
+  {
+    ...wanRequest(),
+    speed: 'fast',
+    reference_images: [{ url: 'https://example.com/reference.jpg' }],
+  },
+  {
+    ...wanRequest(),
+    mode: 'reference',
+    speed: 'fast',
+    reference_images: [{ url: 'https://example.com/reference.jpg' }],
+    reference_videos: [{ url: 'https://example.com/reference.mp4' }],
+    reference_audios: [{ url: 'https://example.com/reference.mp3' }],
+  },
+  {
+    ...wanRequest(),
+    mode: 'frames',
+    first_frame: 'https://example.com/first.jpg',
+    last_frame: 'https://example.com/last.jpg',
+  },
+]
+
+export function wanPythonExample(): string {
+  return `import json, os, time
+from pathlib import Path
+import requests
+
+base = os.environ["NEW_API_BASE_URL"].rstrip("/")
+headers = {"Authorization": "Bearer " + os.environ["NEW_API_KEY"]}
+body = json.loads(${JSON.stringify(JSON.stringify(wanRequest()))})
+r = requests.post(base + "/v1/videos", headers=headers, json=body, timeout=120)
+r.raise_for_status()
+job = r.json()
+task_id = job["id"]
+Path("wan-task.json").write_text(json.dumps(job))
+print("Saved task:", task_id)
+for _ in range(120):
+    r = requests.get(base + "/v1/videos/" + task_id, headers=headers, timeout=60)
+    r.raise_for_status()
+    job = r.json()
+    state = job["status"]
+    if state in ("completed", "done"):
+        with requests.get(base + "/v1/videos/" + task_id + "/content",
+                          headers=headers, stream=True, timeout=300) as media:
+            media.raise_for_status()
+            with open("wan.mp4", "wb") as output:
+                for chunk in media.iter_content(1024 * 1024):
+                    output.write(chunk)
+        break
+    if state in ("failed", "error", "expired", "cancelled"):
+        raise RuntimeError(job)
+    if state not in ("queued", "pending", "processing", "in_progress", "archiving"):
+        raise RuntimeError(job)
+    time.sleep(15)
+else:
+    raise TimeoutError("Query the saved ID later; do not create a duplicate task.")`
+}
+
+export function buildWanAiIntegrationGuide(origin: string): string {
+  const base = origin.replace(/\/$/, '')
+  return [
+    '# Unified Wan 3.0 website API',
+    `API origin: ${base}; public model is always wan3.0.`,
+    'Use a website key from the official group in NEW_API_KEY. Never put real keys in frontend code or logs.',
+    'Authorization: Bearer <NEW_API_KEY>; Content-Type: application/json.',
+    `POST ${base}/v1/videos`,
+    `GET ${base}/v1/videos/{id}`,
+    `GET ${base}/v1/videos/{id}/content`,
+    '',
+    '## Mode/speed mapping (the server does this; do not replace the public model)',
+    '| mode | speed | Required input | Internal target |',
+    '| general | standard (default) | prompt; reference lists optional | wan3.0-video |',
+    '| general | fast | prompt; reference lists optional | wan3.0-video-prime |',
+    '| reference | fast (default and only allowed value) | prompt + non-empty reference lists | wan3.0-prime-r2v |',
+    '| frames | standard (default and only allowed value) | prompt + first_frame + last_frame | wan3.0-i2v |',
+    '- mode defaults to auto: any first_frame/last_frame selects frames, otherwise general. Reference lists alone do not force R2V; select reference explicitly for that workflow.',
+    '- auto/general defaults to standard speed; reference defaults to fast. Invalid mode/speed combinations are rejected, never silently changed.',
+    '',
+    '## Complete field inventory (* required; nested * applies when item exists)',
+    '| Field | Type | Values |',
+    '| --- | --- | --- |',
+    ...WAN_PARAMETERS.map(
+      (p) => `| ${p.name} | ${p.type} | ${p.value.replaceAll('|', '/')} |`
+    ),
+    '',
+    '## Parameter rules',
+    '- model=wan3.0 and non-empty prompt are required even with media. Omit unused optional fields; null and unknown top-level fields are rejected.',
+    '- seconds is an integer string such as "2"; duration is an integer alias. Generated duration 2–30, default 5. No fractions, negative values or -1. Aliases must agree.',
+    '- size/resolution: 480P,720P,1080P case-insensitive, default 720P; aliases must agree. 4K/pixel dimensions are rejected.',
+    '- aspect_ratio/ratio: 16:9,9:16,1:1 only, default 16:9; aliases must agree.',
+    '- n is optional and only 1 is valid. prompt_extend is optional boolean; false disables provider prompt enhancement. Omit it to use the provider default; false is preserved.',
+    '- Frames requires both first_frame and last_frame HTTPS URLs, with no non-empty reference lists. general/reference must not contain frame fields. Do not send media: the server builds it for R2V/I2V.',
+    '- general/reference use the same reference_images (max 10), reference_videos (max 5), reference_audios (max 5) object arrays. Each entry requires a public HTTPS url without embedded credentials.',
+    '- In general mode, reference_images[].role optionally supports reference_image,first_frame,last_frame. In reference mode only reference_image or omitted is valid; never convert frame roles silently.',
+    '- reference_videos[].duration is optional in general mode only: positive finite seconds, at most 3600 (gateway safety bound; actual media limits are provider-validated). It describes the input video, not generated duration. reference mode rejects this field rather than discarding it.',
+    '- Nested media fields are limited to url, image role, and video duration. Unknown nested fields are rejected. Provider checks actual file availability, formats and media limits; no private-only URLs or local paths.',
+    '- stream, response_format, webhook_url, callback_url, seed, negative_prompt, file_id, input_reference, image, image_end, end_image_url and media are not unified API fields. Do not import fields from another provider or legacy workflow.',
+    '',
+    '## Responses and recovery',
+    '- Creation HTTP 200: id,task_id,request_id use the same public task ID; model remains wan3.0. Save id immediately.',
+    '- Query states: queued,in_progress,completed,failed. progress is informative; status is authoritative. Failed tasks include available provider error data.',
+    '- Poll every 10–15 seconds with per-request timeouts and a finite deadline. On query 429/5xx/network errors respect Retry-After/backoff and resume the SAME ID.',
+    '- Never automatically retry a timed-out POST: it may already be accepted and repeating it can charge twice. If no ID was received, inspect website task logs.',
+    '- On completed, download /content with the same token and save the MP4; follow ordinary redirects without forwarding credentials to a different host. Do not assume video.url exists.',
+    '- invalid_request/invalid_duration/invalid_resolution/invalid_n/invalid_media: fix input. Auth/group/quota errors: check key, official group and balance. Provider generation failure is not permission to auto-create another paid task.',
+    '## Billing',
+    '- USD per generated second at the effective resolution and applicable group multiplier. Check current model pricing. Requested seconds determine the reservation; failed tasks refund it. All modes retain the existing Wan price tiers.',
+    '## Four alternative request examples',
+    ...WAN_EXAMPLES.flatMap((request) => [
+      '```json',
+      JSON.stringify(request, null, 2),
+      '```',
+    ]),
+    '## Python: create once, save ID, poll and download',
+    `Requires requests; set NEW_API_BASE_URL=${base} and NEW_API_KEY=<website key>. Running the example creates one paid task.`,
+    '```python',
+    wanPythonExample(),
+    '```',
+    '## Resume a saved task (do not rerun creation)',
+    '```bash',
+    `export NEW_API_BASE_URL='${base}'`,
+    'export NEW_API_KEY="<NEW_API_KEY>"',
+    'TASK_ID="task_example"',
+    'curl --fail-with-body "$NEW_API_BASE_URL/v1/videos/$TASK_ID" -H "Authorization: Bearer $NEW_API_KEY"',
+    '# Only after completed:',
+    'curl --fail-with-body --location "$NEW_API_BASE_URL/v1/videos/$TASK_ID/content" -H "Authorization: Bearer $NEW_API_KEY" --output wan.mp4',
+    '```',
+    'The four old model IDs remain compatibility routes with their original protocols. Use only wan3.0 and the fields above for new integrations.',
+  ].join('\n')
+}

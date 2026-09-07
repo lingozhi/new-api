@@ -97,6 +97,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if isLxmoneSeedanceRequest(info) {
 		return validateLxmoneSeedanceRequest(c, info)
 	}
+	if info.OriginModelName == "wan3.0" {
+		return validateUnifiedWanVideoRequest(c, info)
+	}
 	if common.WanVideoResolutionRatios(info.OriginModelName) != nil {
 		return validateWanVideoRequest(c, info)
 	}
@@ -195,6 +198,19 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if strings.HasPrefix(contentType, "application/json") {
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
+			if info.OriginModelName == "wan3.0" {
+				normalized, ok := c.Get("wan_unified_body")
+				if !ok {
+					return nil, fmt.Errorf("missing normalized Wan request")
+				}
+				normalizedBody, valid := normalized.(map[string]any)
+				if !valid {
+					return nil, fmt.Errorf("invalid normalized Wan request")
+				}
+				bodyMap = normalizedBody
+				info.UpstreamModelName = c.GetString("wan_unified_model")
+				info.IsModelMapped = true
+			}
 			bodyMap["model"] = info.UpstreamModelName
 			if isLxmoneSeedanceRequest(info) {
 				expected := common.LxmoneSeedanceModel(info.OriginModelName)
@@ -330,7 +346,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	// 使用公开 task_xxxx ID 返回给客户端
 	dResp.ID = info.PublicTaskID
 	dResp.TaskID = info.PublicTaskID
-	if isLxmoneSeedanceRequest(info) {
+	if isLxmoneSeedanceRequest(info) || info.OriginModelName == "wan3.0" {
 		dResp.Model = info.OriginModelName
 		dResp.RequestID = info.PublicTaskID
 	}
@@ -412,7 +428,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if data, err = sjson.SetBytes(data, "id", task.TaskID); err != nil {
 		return nil, errors.Wrap(err, "set id failed")
 	}
-	if isLxmoneSeedanceTask(task) {
+	if isLxmoneSeedanceTask(task) || (task.Properties.Video != nil && task.Properties.Video.Provider == "wan-unified") {
 		status := "queued"
 		switch task.Status {
 		case model.TaskStatusInProgress:
