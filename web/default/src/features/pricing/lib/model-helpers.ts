@@ -113,6 +113,7 @@ export function isTokenBasedModel(model: PricingModel): boolean {
 export function getFixedPriceUnit(model: PricingModel): 'request' | 'seconds' {
   return model.api_profile?.pricing_variants?.[0]?.unit === 'second' ||
     supportsMiniMaxVideoV2Endpoint(model) ||
+    Boolean(model.video_resolution_prices) ||
     isSeedanceModel(model.model_name)
     ? 'seconds'
     : 'request'
