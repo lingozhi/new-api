@@ -85,6 +85,7 @@ import type {
   ModelApiProfile,
   PricingModel,
 } from '../types'
+import { LxmoneSeedanceApiDocs } from './lxmone-seedance-api-docs'
 import { SeedanceApiDocs } from './seedance-api-docs'
 
 // ---------------------------------------------------------------------------
@@ -1300,10 +1301,11 @@ export function ModelDetailsApi(props: {
     endpoints[0]?.type ??
     ''
 
-  if (
-    props.model.video_provider !== 'lxmone-seedance' &&
-    isSeedanceModel(props.model.model_name || '')
-  ) {
+  if (props.model.video_provider === 'lxmone-seedance') {
+    return <LxmoneSeedanceApiDocs modelName={props.model.model_name || ''} />
+  }
+
+  if (isSeedanceModel(props.model.model_name || '')) {
     return <SeedanceApiDocs modelName={props.model.model_name || ''} />
   }
 
