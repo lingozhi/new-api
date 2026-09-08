@@ -68,3 +68,9 @@ provider model mapping is necessary: the adaptor selects a target per request.
 The website API tab and one-click AI guide share the unified parameter inventory
 and four alternative request examples. No real API key is included in copied
 content. UI translations follow the project locale sync workflow.
+
+## Optional webhooks
+
+`webhook_url` and `webhook_secret` are website-only fields supported by the unified
+model. They are not forwarded upstream. See [video webhooks](video-webhooks.md)
+for limits, payloads, signatures and retry behavior. Existing polling remains available.

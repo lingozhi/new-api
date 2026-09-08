@@ -16,11 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { videoWebhookGuide } from './video-webhook-docs'
+
 export function isWanModel(model: string): boolean {
   return model === 'wan3.0'
 }
 
 export const WAN_PARAMETERS = [
+  { name: 'webhook_url', type: 'string', value: 'HTTPS :443; ≤2048 bytes' },
+  { name: 'webhook_secret', type: 'string', value: '≤512 bytes' },
   { name: 'model', type: 'string *', value: 'wan3.0' },
   { name: 'prompt', type: 'string *', value: 'string (length > 0)' },
   {
@@ -187,8 +191,9 @@ export function buildWanAiIntegrationGuide(origin: string): string {
     '- In general mode, reference_images[].role optionally supports reference_image,first_frame,last_frame. In reference mode only reference_image or omitted is valid; never convert frame roles silently.',
     '- reference_videos[].duration is optional in general mode only: positive finite seconds, at most 3600 (gateway safety bound; actual media limits are provider-validated). It describes the input video, not generated duration. reference mode rejects this field rather than discarding it.',
     '- Nested media fields are limited to url, image role, and video duration. Unknown nested fields are rejected. Provider checks actual file availability, formats and media limits; no private-only URLs or local paths.',
-    '- stream, response_format, webhook_url, callback_url, seed, negative_prompt, file_id, input_reference, image, image_end, end_image_url and media are not unified API fields. Do not import fields from another provider or legacy workflow.',
+    '- stream, response_format, callback_url, seed, negative_prompt, file_id, input_reference, image, image_end, end_image_url and media are not unified API fields. Do not import fields from another provider or legacy workflow.',
     '',
+    videoWebhookGuide(),
     '## Responses and recovery',
     '- Creation HTTP 200: id,task_id,request_id use the same public task ID; model remains wan3.0. Save id immediately.',
     '- Query states: queued,in_progress,completed,failed. progress is informative; status is authoritative. Failed tasks include available provider error data.',

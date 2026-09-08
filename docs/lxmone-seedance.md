@@ -17,7 +17,8 @@ Use `POST /v1/videos`, JSON, and a website API key in the official group. Defaul
 are 5 seconds, 720p, and 16:9. Both integer and string `seconds` are accepted;
 `duration` is an integer alias. Conflicting aliases are rejected before billing.
 The normalized duration and resolution are used for both billing and the upstream
-request. `stream`, `n`, `response_format`, and `webhook_url` are unsupported.
+request. `stream`, `n`, and `response_format` are unsupported. Optional website webhooks use
+`webhook_url` and `webhook_secret`; see [video webhooks](video-webhooks.md).
 
 First-frame `input_reference` / `image` and last-frame `image_end` /
 `end_image_url` pass through unchanged. A last frame requires a first frame;

@@ -77,7 +77,7 @@ func validateLxmoneSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) 
 	if err := common.UnmarshalBodyReusable(c, &fields); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
-	for _, key := range []string{"stream", "n", "response_format", "webhook_url"} {
+	for _, key := range []string{"stream", "n", "response_format"} {
 		if _, exists := fields[key]; exists {
 			return service.TaskErrorWrapperLocal(fmt.Errorf("%s is not supported by this provider", key), "invalid_request", http.StatusBadRequest)
 		}
@@ -236,7 +236,7 @@ func validateLxmoneSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) 
 	if info.TaskRelayInfo != nil {
 		info.TaskRelayInfo.Video = &relaycommon.TaskVideoProperties{Provider: "lxmone-seedance", Duration: duration, Resolution: resolution, Ratio: aspectRatio, InputImageCount: len(request.ReferenceImages)}
 	}
-	return nil
+	return validateVideoWebhook(c)
 }
 
 func isLxmoneSeedanceTask(task *model.Task) bool {

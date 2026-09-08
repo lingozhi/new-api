@@ -213,6 +213,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			}
 			bodyMap["model"] = info.UpstreamModelName
 			if isLxmoneSeedanceRequest(info) {
+				delete(bodyMap, "webhook_url")
+				delete(bodyMap, "webhook_secret")
 				media, ok := c.Get("lxmone_seedance_media")
 				if !ok {
 					return nil, fmt.Errorf("missing normalized Seedance media")

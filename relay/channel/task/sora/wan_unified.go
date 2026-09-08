@@ -38,7 +38,7 @@ func validateUnifiedWanVideoRequest(c *gin.Context, info *relaycommon.RelayInfo)
 	if err := common.UnmarshalBodyReusable(c, &body); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
-	allowed := map[string]bool{"model": true, "prompt": true, "seconds": true, "duration": true, "size": true, "resolution": true, "aspect_ratio": true, "ratio": true, "n": true, "prompt_extend": true, "mode": true, "speed": true, "first_frame": true, "last_frame": true, "reference_images": true, "reference_videos": true, "reference_audios": true}
+	allowed := map[string]bool{"webhook_url": true, "webhook_secret": true, "model": true, "prompt": true, "seconds": true, "duration": true, "size": true, "resolution": true, "aspect_ratio": true, "ratio": true, "n": true, "prompt_extend": true, "mode": true, "speed": true, "first_frame": true, "last_frame": true, "reference_images": true, "reference_videos": true, "reference_audios": true}
 	for key, value := range body {
 		if !allowed[key] || value == nil {
 			return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported or null field %s; omit unused fields", key), "invalid_request", http.StatusBadRequest)
@@ -145,7 +145,7 @@ func validateUnifiedWanVideoRequest(c *gin.Context, info *relaycommon.RelayInfo)
 	if err := validateWanVideoFields(c, info, request, target); err != nil {
 		return err
 	}
-	for _, field := range []string{"mode", "speed", "first_frame", "last_frame"} {
+	for _, field := range []string{"mode", "speed", "first_frame", "last_frame", "webhook_url", "webhook_secret"} {
 		delete(body, field)
 	}
 	if mode != "general" {
@@ -159,5 +159,5 @@ func validateUnifiedWanVideoRequest(c *gin.Context, info *relaycommon.RelayInfo)
 	if info.TaskRelayInfo != nil && info.TaskRelayInfo.Video != nil {
 		info.TaskRelayInfo.Video.Provider = "wan-unified"
 	}
-	return nil
+	return validateVideoWebhook(c)
 }
