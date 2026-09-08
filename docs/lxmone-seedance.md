@@ -13,6 +13,9 @@ pricing, reference-video multiplier, reserve, and response format.
 
 ## Requests and polling
 
+The old `/v1/videos/generations` creation path is reserved for the legacy
+channel and rejects website webhook fields before upstream submission.
+
 Use `POST /v1/videos`, JSON, and a website API key in the official group. Defaults
 are 5 seconds, 720p, and 16:9. Both integer and string `seconds` are accepted;
 `duration` is an integer alias. Conflicting aliases are rejected before billing.
@@ -21,10 +24,22 @@ request. `stream`, `n`, and `response_format` are unsupported. Optional website 
 `webhook_url` and `webhook_secret`; see [video webhooks](video-webhooks.md).
 
 First-frame `input_reference` / `image` and last-frame `image_end` /
-`end_image_url` pass through unchanged. A last frame requires a first frame;
+`end_image_url` accept URL strings or objects containing only `url`. The gateway
+normalizes both frame and reference inputs to URL strings; duplicate frame aliases
+must resolve to the same URL. Media URLs must use HTTP or HTTPS without
+credentials. A last frame requires a first frame;
 frame mode cannot be combined with `reference_*`. Reference audio on 2.0 models
-requires reference images or videos. Upstream validation handles media URLs and
-provider-specific media limits.
+requires reference images or videos. The gateway validates URL syntax and
+maximum reference counts (9/3/3 for
+2/Fast/Mini; 30/10/10 for 2.5). The provider checks reachability, actual formats,
+file sizes and durations. `sound_effects: false` or `no_music: true` disables
+generated sound effects. Both are optional booleans; if both are supplied, they
+must be opposite. Explicit false is preserved.
+
+Creation returns HTTP 200 with public `id`, `task_id`, and `request_id`. Query
+status is queued/in_progress/completed/failed; progress and error detail fields
+are provider-dependent, not required completion indicators. Webhooks use the
+separate fixed terminal schema documented above.
 
 Save the website's returned `id`; query `GET /v1/videos/{id}` and download
 `GET /v1/videos/{id}/content` with the same website key. Tasks persist their
