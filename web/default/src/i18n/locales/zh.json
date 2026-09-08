@@ -4157,6 +4157,7 @@
     "Seedance 2, Fast and Mini require a reference image or video when reference audio is supplied. Seedance 2.5 also accepts reference audio alone.": "Seedance 2、Fast、Mini 使用参考音频时，必须同时提供参考图片或视频。Seedance 2.5 支持单独提供参考音频。",
     "Seedance 2.0 and Fast allow 9 images, 3 videos, and 3 audios. Seedance 2.5 allows 30 images, 10 videos, and 10 audios, up to 50 assets; video and audio references each total at most 30 seconds.": "Seedance 2.0 和 Fast 支持最多 9 张图片、3 段视频及 3 段音频。Seedance 2.5 支持 30 张图片、10 段视频及 10 段音频，合计最多 50 个素材；参考视频和音频各自总时长不超过 30 秒。",
     "Seedance 2.0 supports 1080p only with media input. Fast does not support 1080p. None of these models supports 4K.": "Seedance 2.0 仅在带素材输入时支持 1080p。Fast 不支持 1080p。这些型号均不支持 4K。",
+    "Seedance 2.5 at 720p and 30 seconds automatically uses SD-2.5 internally. Keep model=seedance-2.5. This combination accepts text and up to 10 reference_images, converted to images; frame, video, audio and sound-effect options are rejected. Other specifications keep the original model. Billing stays at the website 720p rate for 30 seconds; polling, downloads and webhooks keep the public model name.": "Seedance 2.5 在 720p、30 秒时自动使用内部 SD-2.5，model 仍传 seedance-2.5。此组合仅支持文本及最多 10 张 reference_images，网站会转换为 images；不支持首尾帧、视频、音频和音效参数，传入会报错。其他规格仍使用原模型。网站按现有 720p 单价计费 30 秒，查询、下载和 webhook 保持公开模型名称。",
     "Seedance API": "Seedance 接口",
     "Select": "选择",
     "Select a color": "选择颜色",

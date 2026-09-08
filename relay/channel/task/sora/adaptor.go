@@ -231,6 +231,26 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 					return nil, fmt.Errorf("invalid lxmone Seedance model mapping")
 				}
 				bodyMap["model"] = expected
+				if c.GetString("lxmone_seedance_target") == "sd-2.5" {
+					request, err := relaycommon.GetTaskRequest(c)
+					if err != nil {
+						return nil, err
+					}
+					// Build the fixed upstream contract explicitly; never send ignored
+					// duration fields, legacy media fields, or callback credentials.
+					payload := map[string]any{"model": "sd-2.5", "prompt": request.Prompt, "resolution": "720p", "aspect_ratio": info.TaskRelayInfo.Video.Ratio}
+					if images, ok := normalizedMedia["reference_images"]; ok {
+						payload["images"] = images
+					}
+					encoded, err := common.Marshal(payload)
+					if err != nil {
+						return nil, err
+					}
+					// Persist the actual upstream identity at the submission checkpoint.
+					info.UpstreamModelName = "sd-2.5"
+					info.IsModelMapped = true
+					return bytes.NewReader(encoded), nil
+				}
 			}
 			if common.WanVideoResolutionRatios(info.OriginModelName) != nil || isLxmoneSeedanceRequest(info) {
 				request, err := relaycommon.GetTaskRequest(c)

@@ -11,6 +11,26 @@ pricing, reference-video multiplier, reserve, and response format.
 | seedance-2-mini | seedance-2-mini | 5 or 10 seconds | 480p, 720p; 1080p becomes 720p |
 | seedance-2.5 | seedance-2.5-pro | 4–30 seconds | 480p, 720p, 1080p; 4k becomes 1080p |
 
+## Internal SD-2.5 mapping
+
+On the Lxmone channel, public `seedance-2.5` with exactly 30 seconds and effective
+720p always selects upstream `sd-2.5`. The default 720p and `seconds`/`duration`,
+`size`/`resolution` aliases participate in the same normalization. Other specs
+retain `seedance-2.5-pro`. No new public model, channel ability, or price is added.
+Legacy Argolink calls retain their original mapping.
+
+This fixed specification accepts prompt and up to 10 `reference_images` (URL
+strings or objects containing only `url`). The gateway sends these as `images`,
+with `resolution: "720p"` and `aspect_ratio`. It omits ignored duration/size fields
+and removes website webhook credentials. Frame inputs, reference videos/audio,
+sound controls and unknown options return 400 `unsupported_sd25_input`; there is
+no silent fallback to the original model or loss of input media.
+
+The actual upstream name is persisted before the provider checkpoint. Public
+responses, queries, downloads and callbacks still use `seedance-2.5`. Billing
+retains the existing website 720p rate multiplied by 30 seconds; delivered-duration
+metadata cannot adjust this fixed-spec charge. Failure refunds are unchanged.
+
 ## Requests and polling
 
 The old `/v1/videos/generations` creation path is reserved for the legacy
