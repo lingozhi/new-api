@@ -97,17 +97,21 @@ export function LxmoneSeedanceApiDocs(props: { modelName: string }) {
     },
     {
       name: 'reference_images',
-      value: '[{"url":"https://example.com/reference.jpg"}]',
+      value: '["https://example.com/reference.jpg"]',
     },
     {
       name: 'reference_videos',
-      value: '[{"url":"https://example.com/reference.mp4"}]',
+      value: '["https://example.com/reference.mp4"]',
     },
     {
       name: 'reference_audios',
-      value: '[{"url":"https://example.com/reference.mp3"}]',
+      value: '["https://example.com/reference.mp3"]',
     },
   ]
+  parameters.push({
+    name: 'sound_effects / no_music',
+    value: 'boolean; false / true',
+  })
   const request = lxmoneSeedanceRequest(props.modelName)
   const rules = [
     t(
@@ -132,6 +136,21 @@ export function LxmoneSeedanceApiDocs(props: { modelName: string }) {
       'Fast and Mini normalize 1080p to 720p and reject 4K. Seedance 2.5 normalizes 4K to 1080p. Billing uses the effective resolution and USD per second; failed tasks are refunded. See the current model price.'
     ),
   ]
+  rules.push(
+    t(
+      'Reference arrays accept URL strings or objects containing only url; the gateway sends URL strings upstream. Frame aliases must agree. sound_effects=false or no_music=true disables generated sound effects. If both are supplied, their boolean values must be opposite.'
+    )
+  )
+  rules.push(
+    t(
+      'Use @Image1, @Video1 and @Audio1 to reference media in array order. Seedance 2/Fast/Mini reference videos are typically 2–15 seconds and up to 50 MB; audio is typically 2–15 seconds and up to 15 MB. Seedance 2.5 reference videos are typically 2–30 seconds and up to 200 MB. The provider checks actual media compatibility.'
+    )
+  )
+  rules.push(
+    t(
+      'Download after completion. Earlier requests return 409. Range and If-Range support resumable downloads with 206; an unsatisfiable range returns 416. The provider normally retains results for 48 hours, but may change this period. Download promptly; permanent storage is not guaranteed.'
+    )
+  )
   return (
     <div className='space-y-6'>
       <section className='space-y-3'>
@@ -216,9 +235,9 @@ export function LxmoneSeedanceApiDocs(props: { modelName: string }) {
           code={JSON.stringify(
             {
               ...request,
-              reference_images: [{ url: 'https://example.com/reference.jpg' }],
-              reference_videos: [{ url: 'https://example.com/reference.mp4' }],
-              reference_audios: [{ url: 'https://example.com/reference.mp3' }],
+              reference_images: ['https://example.com/reference.jpg'],
+              reference_videos: ['https://example.com/reference.mp4'],
+              reference_audios: ['https://example.com/reference.mp3'],
             },
             null,
             2

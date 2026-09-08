@@ -124,6 +124,16 @@ export function WanApiDocs() {
           )}
         </p>
       </section>
+      <p className='text-muted-foreground text-sm'>
+        {t(
+          'Wan currently charges the requested output seconds. Reference video duration is not added to the website charge, and actual output duration does not change the final charge. Failed tasks are refunded. The 3600-second reference duration bound is a gateway safety limit, not a provider capability guarantee.'
+        )}
+      </p>
+      <p className='text-muted-foreground text-sm'>
+        {t(
+          'Download after completion. Earlier requests return 409. Range and If-Range support resumable downloads with 206; an unsatisfiable range returns 416. The provider normally retains results for 48 hours, but may change this period. Download promptly; permanent storage is not guaranteed.'
+        )}
+      </p>
       <section className='space-y-3'>
         <h3 className='text-sm font-semibold'>{t('Example')}</h3>
         <p className='text-muted-foreground text-sm'>

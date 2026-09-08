@@ -58,8 +58,14 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
+	resumableVideo := task.Properties.Video != nil &&
+		(task.Properties.Video.Provider == "wan-unified" || task.Properties.Video.Provider == "lxmone-seedance")
 	if task.Status != model.TaskStatusSuccess {
-		videoProxyError(c, http.StatusBadRequest, "invalid_request_error",
+		status := http.StatusBadRequest
+		if resumableVideo {
+			status = http.StatusConflict
+		}
+		videoProxyError(c, status, "invalid_request_error",
 			fmt.Sprintf("Task is not completed yet, current status: %s", task.Status))
 		return
 	}
@@ -199,6 +205,12 @@ func VideoProxy(c *gin.Context) {
 		return
 	}
 
+	if resumableVideo && c.GetHeader("Range") != "" {
+		req.Header.Set("Range", c.GetHeader("Range"))
+		if value := c.GetHeader("If-Range"); value != "" {
+			req.Header.Set("If-Range", value)
+		}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if isAutoDLTask {
@@ -211,7 +223,15 @@ func VideoProxy(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resumableVideo && req.Header.Get("Range") != "" && resp.StatusCode == http.StatusRequestedRangeNotSatisfiable {
+		if value := resp.Header.Get("Content-Range"); value != "" {
+			c.Header("Content-Range", value)
+		}
+		videoProxyError(c, http.StatusRequestedRangeNotSatisfiable, "invalid_request_error", "Requested video range is not satisfiable")
+		return
+	}
+	partialContent := resumableVideo && req.Header.Get("Range") != "" && resp.StatusCode == http.StatusPartialContent
+	if resp.StatusCode != http.StatusOK && !partialContent {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Video upstream returned status %d for task %s", resp.StatusCode, taskID))
 		if isAutoDLTask {
 			videoProxyError(c, http.StatusBadGateway, "server_error",

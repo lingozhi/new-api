@@ -213,6 +213,17 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			}
 			bodyMap["model"] = info.UpstreamModelName
 			if isLxmoneSeedanceRequest(info) {
+				media, ok := c.Get("lxmone_seedance_media")
+				if !ok {
+					return nil, fmt.Errorf("missing normalized Seedance media")
+				}
+				normalizedMedia, valid := media.(map[string]any)
+				if !valid {
+					return nil, fmt.Errorf("invalid normalized Seedance media")
+				}
+				for key, value := range normalizedMedia {
+					bodyMap[key] = value
+				}
 				expected := common.LxmoneSeedanceModel(info.OriginModelName)
 				if info.UpstreamModelName != info.OriginModelName && info.UpstreamModelName != expected {
 					return nil, fmt.Errorf("invalid lxmone Seedance model mapping")

@@ -159,3 +159,81 @@ func TestLxmoneSettlementUsesSavedChannelRatio(t *testing.T) {
 	assert.Equal(t, common.QuotaFromFloat(1*common.QuotaPerUnit), quota)
 	assert.Nil(t, task.PrivateData.FinalQuotaClamp)
 }
+
+func TestLxmoneSeedanceNormalizesMediaAndPreservesSoundFlags(t *testing.T) {
+	for _, fields := range []string{
+		`"reference_images":["https://example.com/a.jpg",{"url":"https://example.com/b.jpg"}],"reference_videos":[{"url":"https://example.com/v.mp4"}],"reference_audios":["https://example.com/a.mp3"]`,
+		`"input_reference":{"url":"https://example.com/a.jpg"},"image":"https://example.com/a.jpg","image_end":"https://example.com/b.jpg"`,
+	} {
+		c, info := newWanContext(t, "seedance-2", `{"prompt":"test","sound_effects":false,"no_music":true,`+fields+`}`)
+		info.ChannelBaseUrl = "https://lxmone.xyz"
+		info.ChannelOtherSettings.LxmoneSeedanceResolutionRatios = map[string]map[string]float64{"seedance-2-pro": {"720p": 1}}
+		a := &TaskAdaptor{}
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+		body, err := a.BuildRequestBody(c, info)
+		require.NoError(t, err)
+		var payload map[string]any
+		require.NoError(t, common.DecodeJson(body, &payload))
+		assert.Equal(t, false, payload["sound_effects"])
+		assert.Equal(t, true, payload["no_music"])
+		if strings.Contains(fields, "reference_images") {
+			assert.Equal(t, []any{"https://example.com/a.jpg", "https://example.com/b.jpg"}, payload["reference_images"])
+			assert.Equal(t, []any{"https://example.com/v.mp4"}, payload["reference_videos"])
+			assert.Equal(t, []any{"https://example.com/a.mp3"}, payload["reference_audios"])
+		} else {
+			assert.Equal(t, "https://example.com/a.jpg", payload["input_reference"])
+			assert.Equal(t, payload["input_reference"], payload["image"])
+		}
+	}
+}
+
+func TestLxmoneSeedanceRejectsInvalidMediaAndSoundBeforeBilling(t *testing.T) {
+	for _, fields := range []string{
+		`"sound_effects":"false"`, `"no_music":0`, `"sound_effects":null`,
+		`"sound_effects":false,"no_music":false`,
+		`"reference_images":[null]`, `"reference_images":null`,
+		`"reference_images":[{"url":"https://example.com/a.jpg","role":"first_frame"}]`,
+		`"reference_videos":["file:///tmp/a.mp4"]`,
+		`"input_reference":""`, `"input_reference":null`,
+		`"image":"https://user:password@example.com/a.jpg"`,
+		`"input_reference":"https://example.com/a.jpg","image":"https://example.com/b.jpg"`,
+	} {
+		t.Run(fields, func(t *testing.T) {
+			c, info := newWanContext(t, "seedance-2", `{"prompt":"test",`+fields+`}`)
+			info.ChannelBaseUrl = "https://lxmone.xyz"
+			err := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, err)
+			assert.Equal(t, http.StatusBadRequest, err.StatusCode)
+			assert.NotEqual(t, "model_price_error", err.Code)
+			_, exists := c.Get("task_request")
+			assert.False(t, exists)
+		})
+	}
+}
+
+func TestLxmoneSeedanceReferenceCounts(t *testing.T) {
+	for _, tc := range []struct {
+		model, field string
+		count, limit int
+	}{
+		{"seedance-2", "reference_images", 10, 9},
+		{"seedance-2-fast", "reference_videos", 4, 3},
+		{"seedance-2-mini", "reference_audios", 4, 3},
+		{"seedance-2.5", "reference_images", 31, 30},
+		{"seedance-2.5", "reference_videos", 11, 10},
+		{"seedance-2.5", "reference_audios", 11, 10},
+	} {
+		entries := make([]string, tc.count)
+		for i := range entries {
+			entries[i] = "https://example.com/media"
+		}
+		raw, err := common.Marshal(map[string]any{"prompt": "test", tc.field: entries})
+		require.NoError(t, err)
+		c, info := newWanContext(t, tc.model, string(raw))
+		info.ChannelBaseUrl = "https://lxmone.xyz"
+		taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr)
+		assert.Equal(t, "invalid_media", taskErr.Code)
+		assert.Contains(t, taskErr.Message, "at most")
+	}
+}
