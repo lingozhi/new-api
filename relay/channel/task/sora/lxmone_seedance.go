@@ -211,6 +211,22 @@ func validateLxmoneSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) 
 	if aspectRatio != "16:9" && aspectRatio != "9:16" && aspectRatio != "1:1" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("unsupported aspect_ratio"), "invalid_request", http.StatusBadRequest)
 	}
+	// SD-2.5 is a fixed-spec upstream workflow, selected without exposing a new model.
+	targetModel := upstreamModel
+	if upstreamModel == "seedance-2.5-pro" && duration == 30 && resolution == "720p" {
+		targetModel = "sd-2.5"
+		allowed := map[string]bool{"model": true, "prompt": true, "seconds": true, "duration": true, "size": true, "resolution": true, "aspect_ratio": true, "ratio": true, "reference_images": true, "webhook_url": true, "webhook_secret": true}
+		for name := range fields {
+			if !allowed[name] {
+				return service.TaskErrorWrapperLocal(fmt.Errorf("720p/30s uses SD-2.5: only text and up to 10 reference_images are supported; unsupported field %s", name), "unsupported_sd25_input", http.StatusBadRequest)
+			}
+		}
+		if len(request.ReferenceImages) > 10 {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("720p/30s uses SD-2.5 and allows at most 10 reference images"), "unsupported_sd25_input", http.StatusBadRequest)
+		}
+	}
+	c.Set("lxmone_seedance_target", targetModel)
+
 	hasFirst := len(request.InputReference) > 0 || len(request.Image) > 0
 	hasLast := len(request.ImageEnd) > 0 || len(request.EndImageURL) > 0
 	hasReferences := len(request.ReferenceImages)+len(request.ReferenceVideos)+len(request.ReferenceAudios) > 0

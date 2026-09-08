@@ -156,6 +156,13 @@ export function LxmoneSeedanceApiDocs(props: { modelName: string }) {
       'Download after completion. Earlier requests return 409. Range and If-Range support resumable downloads with 206; an unsatisfiable range returns 416. The provider normally retains results for 48 hours, but may change this period. Download promptly; permanent storage is not guaranteed.'
     )
   )
+  if (v25) {
+    rules.push(
+      t(
+        'Seedance 2.5 at 720p and 30 seconds automatically uses SD-2.5 internally. Keep model=seedance-2.5. This combination accepts text and up to 10 reference_images, converted to images; frame, video, audio and sound-effect options are rejected. Other specifications keep the original model. Billing stays at the website 720p rate for 30 seconds; polling, downloads and webhooks keep the public model name.'
+      )
+    )
+  }
   return (
     <div className='space-y-6'>
       <section className='space-y-3'>
