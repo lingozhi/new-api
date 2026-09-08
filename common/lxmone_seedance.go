@@ -29,7 +29,7 @@ func IsLxmoneSeedance(baseURL, model string) bool {
 // and database-backed selection. Unrelated models retain existing routing.
 func SeedanceRequestPathSupported(baseURL, model, path string) bool {
 	if IsLxmoneSeedance(baseURL, model) {
-		return path == "/v1/videos" || (strings.HasPrefix(path, "/v1/videos/") && !strings.HasSuffix(path, "/remix"))
+		return path == "/v1/videos" || (strings.HasPrefix(path, "/v1/videos/") && path != "/v1/videos/generations" && !strings.HasSuffix(path, "/remix"))
 	}
 	switch strings.ToLower(strings.TrimSpace(model)) {
 	case constant.ArgolinkSeedance25Model, constant.ArgolinkSeedance20Model, constant.ArgolinkSeedance20FastModel:

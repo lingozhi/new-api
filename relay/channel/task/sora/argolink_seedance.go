@@ -75,6 +75,16 @@ func isArgolinkSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) bool
 }
 
 func validateArgolinkSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	// Website callback credentials must never pass through the legacy provider body.
+	var fields map[string]any
+	if err := common.UnmarshalBodyReusable(c, &fields); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	for _, name := range []string{"webhook_url", "webhook_secret"} {
+		if _, exists := fields[name]; exists {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("website webhooks require a supported model on the Lxmone channel via POST /v1/videos; omit webhook fields on the legacy interface"), "unsupported_webhook", http.StatusBadRequest)
+		}
+	}
 	var request argolinkSeedance25Request
 	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)

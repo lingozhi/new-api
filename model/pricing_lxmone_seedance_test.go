@@ -35,6 +35,18 @@ func TestSeedanceProviderPricingAndBothRoutingStores(t *testing.T) {
 	cached := filterChannelsByRequestPathAndModel([]int{145, 148}, "/v1/videos", "seedance-2.5")
 	channelSyncLock.RUnlock()
 	assert.Equal(t, []int{148}, cached)
+	// Exhausting the new channel must not make retry selection fall back to
+	// the old wire protocol. The legacy endpoint still selects the old channel.
+	assert.Empty(t, filterAbilitiesByRequestPathAndModel(abilities[:1], "/v1/videos", "seedance-2.5"))
+	legacy := filterAbilitiesByRequestPathAndModel(abilities, "/v1/videos/generations", "seedance-2.5")
+	require.Len(t, legacy, 1)
+	assert.Equal(t, 145, legacy[0].ChannelId)
+	channelSyncLock.RLock()
+	exhausted := filterChannelsByRequestPathAndModel([]int{145}, "/v1/videos", "seedance-2.5")
+	legacyCached := filterChannelsByRequestPathAndModel([]int{145, 148}, "/v1/videos/generations", "seedance-2.5")
+	channelSyncLock.RUnlock()
+	assert.Empty(t, exhausted)
+	assert.Equal(t, []int{145}, legacyCached)
 	prices := GetPricing()
 	require.Len(t, prices, 1)
 	assert.Equal(t, "lxmone-seedance", prices[0].VideoProvider)

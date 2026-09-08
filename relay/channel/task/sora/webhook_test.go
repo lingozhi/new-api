@@ -87,3 +87,22 @@ func TestVideoWebhookPayloadUsesPublicTerminalIdentity(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, handled)
 }
+
+func TestLegacySeedanceRejectsWebsiteWebhookFields(t *testing.T) {
+	for _, name := range []string{"seedance-2.5", "seedance-2.0", "seedance-2.0-fast"} {
+		for _, field := range []string{`"webhook_url":"https://8.8.8.8/hook"`, `"webhook_secret":"private-signing-secret"`, `"webhook_url":null`, `"webhook_secret":""`} {
+			t.Run(name+"/"+strings.SplitN(field, ":", 2)[0], func(t *testing.T) {
+				c, info := newWanContext(t, name, `{"model":"`+name+`","prompt":"test",`+field+`}`)
+				c.Request.URL.Path = "/v1/videos/generations"
+				info.ChannelBaseUrl = "https://argolink.example"
+				taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+				require.NotNil(t, taskErr)
+				assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+				assert.Equal(t, "unsupported_webhook", taskErr.Code)
+				assert.True(t, taskErr.LocalError)
+				_, exists := c.Get("task_request")
+				assert.False(t, exists, "reject before creating billing or callback state")
+			})
+		}
+	}
+}
