@@ -35,6 +35,7 @@ import {
   lxmoneSeedanceRequest,
   lxmoneSeedancePythonExample,
 } from '../lib/lxmone-seedance-api-docs'
+import { VideoWebhookDocs } from './video-webhook-docs'
 
 export function LxmoneSeedanceApiDocs(props: { modelName: string }) {
   const { t } = useTranslation()
@@ -112,6 +113,10 @@ export function LxmoneSeedanceApiDocs(props: { modelName: string }) {
     name: 'sound_effects / no_music',
     value: 'boolean; false / true',
   })
+  parameters.push(
+    { name: 'webhook_url', value: 'string; HTTPS :443; ≤2048 bytes' },
+    { name: 'webhook_secret', value: 'string; ≤512 bytes' }
+  )
   const request = lxmoneSeedanceRequest(props.modelName)
   const rules = [
     t(
@@ -130,7 +135,7 @@ export function LxmoneSeedanceApiDocs(props: { modelName: string }) {
       'Seedance 2, Fast and Mini require a reference image or video when reference audio is supplied. Seedance 2.5 also accepts reference audio alone.'
     ),
     t(
-      'Do not send stream, n, response_format or webhook_url. generate_audio, seed, negative_prompt, file_id and the old channel upload API are not documented for this channel.'
+      'Do not send stream, n or response_format. generate_audio, seed, negative_prompt, file_id and the old channel upload API are not documented for this channel.'
     ),
     t(
       'Fast and Mini normalize 1080p to 720p and reject 4K. Seedance 2.5 normalizes 4K to 1080p. Billing uses the effective resolution and USD per second; failed tasks are refunded. See the current model price.'
@@ -246,6 +251,7 @@ export function LxmoneSeedanceApiDocs(props: { modelName: string }) {
           <CodeBlockCopyButton />
         </CodeBlock>
       </section>
+      <VideoWebhookDocs />
       <section className='space-y-3'>
         <h3 className='text-sm font-semibold'>{t('Generate and download')}</h3>
         <p className='text-muted-foreground text-sm'>

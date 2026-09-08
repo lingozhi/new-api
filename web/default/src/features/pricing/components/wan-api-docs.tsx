@@ -35,6 +35,7 @@ import {
   wanPythonExample,
   buildWanAiIntegrationGuide,
 } from '../lib/wan-api-docs'
+import { VideoWebhookDocs } from './video-webhook-docs'
 
 export function WanApiDocs() {
   const { t } = useTranslation()
@@ -115,7 +116,7 @@ export function WanApiDocs() {
         </p>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Frames cannot be mixed with reference lists. Do not send media: the server builds it internally. n is optional and must be 1; prompt_extend is an optional boolean, and false disables prompt enhancement. Streaming, callbacks, uploads, seed and other undocumented parameters are not supported by this unified interface.'
+            'Frames cannot be mixed with reference lists. Do not send media: the server builds it internally. n is optional and must be 1; prompt_extend is an optional boolean, and false disables prompt enhancement. Streaming, uploads, seed and other undocumented parameters are not supported by this unified interface.'
           )}
         </p>
         <p className='text-muted-foreground text-sm'>
@@ -151,6 +152,7 @@ export function WanApiDocs() {
           </CodeBlock>
         ))}
       </section>
+      <VideoWebhookDocs />
       <section className='space-y-3'>
         <h3 className='text-sm font-semibold'>{t('Generate and download')}</h3>
         <p className='text-muted-foreground text-sm'>

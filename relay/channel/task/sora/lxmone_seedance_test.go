@@ -70,7 +70,6 @@ func TestLxmoneSeedanceRejectsInvalidRequestsBeforePricing(t *testing.T) {
 		{"seedance-2", `{"prompt":"x","size":"480p","resolution":"720p"}`},
 		{"seedance-2", `{"prompt":"x","stream":false}`},
 		{"seedance-2", `{"prompt":"x","n":1}`},
-		{"seedance-2", `{"prompt":"x","webhook_url":"https://example.com"}`},
 		{"seedance-2", `{"prompt":"x","image_end":"https://example.com/end.png"}`},
 		{"seedance-2", `{"prompt":"x","image":"https://example.com/start.png","reference_images":[{"url":"https://example.com/i.png"}]}`},
 		{"seedance-2", `{"prompt":"x","reference_audios":[{"url":"https://example.com/a.mp3"}]}`},

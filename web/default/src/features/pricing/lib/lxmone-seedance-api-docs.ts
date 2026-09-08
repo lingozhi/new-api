@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { videoWebhookGuide } from './video-webhook-docs'
+
 export function lxmoneSeedanceRequest(model: string) {
   return {
     model,
@@ -113,6 +115,8 @@ export function buildLxmoneSeedanceAiIntegrationGuide(
     '| reference_images | array of URL strings (also accepts {"url": string}) | optional; omitted | Reference image URLs, in order. |',
     '| reference_videos | array of URL strings (also accepts {"url": string}) | optional; omitted | Reference video URLs. |',
     '| reference_audios | array of URL strings (also accepts {"url": string}) | optional; omitted | Reference audio URLs. See audio dependency below. |',
+    '| webhook_url | string | optional | Public HTTPS :443; maximum 2048 bytes. |',
+    '| webhook_secret | string | optional | Maximum 512 bytes; requires webhook_url. |',
     '| sound_effects | boolean | optional; provider default | false disables generated sound effects; explicit false is preserved. |',
     '| no_music | boolean | optional; provider default | true disables generated sound effects. Prefer one option; if both are present they must be opposite. |',
     '',
@@ -128,10 +132,11 @@ export function buildLxmoneSeedanceAiIntegrationGuide(
     '- These media example shapes are documented integration inputs, not a claim that every media combination has passed a live generation test.',
     '',
     '## Rejected and undocumented options',
-    '- The gateway rejects the presence of stream, n, response_format and webhook_url, even stream=false or n=1. Omit these keys entirely.',
+    '- The gateway rejects the presence of stream, n and response_format, even stream=false or n=1. Omit these keys entirely.',
     '- generate_audio, seed, negative_prompt, file_id, callback_url, start_image and reference role/type extensions are not a supported documented contract for this channel. Do not copy optional fields from legacy Argolink or other video APIs.',
-    '- Streaming, batching, callbacks, remix, cancellation and uploads are not documented here. Implement authenticated polling and content download only.',
+    '- Streaming, batching, remix, cancellation and uploads are not documented here. Authenticated polling and content download remain available alongside webhooks.',
     '',
+    videoWebhookGuide(),
     '## Responses, polling and recovery',
     '- Creation returns HTTP 200 with id, task_id and request_id identifying the same public task. Save id immediately; do not use upstream task identifiers.',
     '- Query response status is queued or in_progress while pending, completed on success, or failed with an error. progress ranges from 0 to 100; status is authoritative, not a guessed completion time.',
