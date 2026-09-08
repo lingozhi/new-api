@@ -230,11 +230,6 @@ func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, result *relaycom
 	if task == nil || result == nil || result.Status != model.TaskStatusSuccess || (!isLxmoneSeedanceTask(task) && !isArgolinkSeedanceModel(task.Properties.OriginModelName)) {
 		return 0
 	}
-	if isLxmoneSeedanceTask(task) && task.Properties.UpstreamModelName == "sd-2.5" {
-		// Fixed 30s/720p jobs retain their reservation; provider duration metadata
-		// must not alter this contract. Failed jobs still follow normal refunds.
-		return 0
-	}
 	billing := task.PrivateData.BillingContext
 	if billing == nil || billing.ModelPrice <= 0 || billing.GroupRatio <= 0 {
 		return 0

@@ -236,3 +236,32 @@ func TestLxmoneSeedanceReferenceCounts(t *testing.T) {
 		assert.Contains(t, taskErr.Message, "at most")
 	}
 }
+
+func TestSeedance25ThirtySeconds720pKeepsOriginalProvider(t *testing.T) {
+	for _, spec := range []string{`"seconds":30,"resolution":"720p"`, `"seconds":"30","size":"720P"`, `"duration":30`} {
+		c, info := newWanContext(t, "seedance-2.5", `{"model":"seedance-2.5","prompt":"test","reference_images":["https://example.com/ref.png"],"reference_videos":["https://example.com/ref.mp4"],"no_music":true,"webhook_url":"https://8.8.8.8/hook","webhook_secret":"test-secret",`+spec+`}`)
+		info.ChannelBaseUrl = "https://lxmone.xyz"
+		info.ChannelOtherSettings.LxmoneSeedanceResolutionRatios = map[string]map[string]float64{"seedance-2.5-pro": {"720p": 1}}
+		a := &TaskAdaptor{}
+		require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+		body, err := a.BuildRequestBody(c, info)
+		require.NoError(t, err)
+		var payload map[string]any
+		require.NoError(t, common.DecodeJson(body, &payload))
+		assert.Equal(t, "seedance-2.5-pro", payload["model"])
+		assert.Equal(t, float64(30), payload["duration"])
+		assert.Equal(t, "30", payload["seconds"])
+		assert.Equal(t, "720P", payload["resolution"])
+		assert.Equal(t, []any{"https://example.com/ref.png"}, payload["reference_images"])
+		assert.Equal(t, []any{"https://example.com/ref.mp4"}, payload["reference_videos"])
+		assert.Equal(t, true, payload["no_music"])
+		assert.NotContains(t, payload, "images")
+		assert.NotContains(t, payload, "webhook_secret")
+		assert.NotContains(t, payload, "webhook_url")
+		assert.NotEqual(t, "sd-2.5", info.UpstreamModelName)
+		assert.Equal(t, map[string]float64{"seconds": 30, "resolution": 1}, a.EstimateBilling(c, info))
+		request, err := relaycommon.GetTaskRequest(c)
+		require.NoError(t, err)
+		assert.Equal(t, "https://8.8.8.8/hook", request.WebhookURL)
+	}
+}
