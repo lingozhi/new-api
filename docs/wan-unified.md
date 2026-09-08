@@ -20,7 +20,8 @@ The older routes retain their original validators.
 
 Common fields are model, prompt, mode, speed, seconds/duration,
 size/resolution, aspect_ratio/ratio, n, prompt_extend, first_frame, last_frame,
-and reference_images/reference_videos/reference_audios. Reference items accept
+reference_images/reference_videos/reference_audios, webhook_url and
+webhook_secret. Reference items accept
 url, optional image role, and optional general-mode video duration. R2V rejects
 frame roles and video duration instead of silently discarding them. Image roles
 are reference_image/first_frame/last_frame in general mode, and reference_image
@@ -45,7 +46,10 @@ website's charging policy requires a confirmed business rule and accounting test
 
 The selected upstream name is recorded before the provider checkpoint. Tasks
 persist a `wan-unified` provider marker so responses keep the public model and
-IDs and normalize states to queued/in_progress/completed/failed. Poll and
+IDs and normalize query states to queued/in_progress/completed/failed. Creation
+returns HTTP 200 with public id/task_id/request_id. Other query fields such as
+progress and error depend on the provider; do not require progress=100 or a
+specific error code. Webhooks have their own fixed terminal payload. Poll and
 content endpoints use the same website key. Do not automatically retry POST
 when acceptance is uncertain.
 
