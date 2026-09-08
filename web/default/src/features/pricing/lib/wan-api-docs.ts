@@ -194,10 +194,12 @@ export function buildWanAiIntegrationGuide(origin: string): string {
     '- Query states: queued,in_progress,completed,failed. progress is informative; status is authoritative. Failed tasks include available provider error data.',
     '- Poll every 10–15 seconds with per-request timeouts and a finite deadline. On query 429/5xx/network errors respect Retry-After/backoff and resume the SAME ID.',
     '- Never automatically retry a timed-out POST: it may already be accepted and repeating it can charge twice. If no ID was received, inspect website task logs.',
+    '- Download before completion returns 409. Range/If-Range allow resuming a saved partial file (206); an unsatisfiable range returns 416. A changed If-Range may return the entire file (200). curl --continue-at - can resume downloads.',
+    '- Download promptly: the provider advertises default 48-hour retention, configurable upstream. The website does not provide a permanent storage guarantee.',
     '- On completed, download /content with the same token and save the MP4; follow ordinary redirects without forwarding credentials to a different host. Do not assume video.url exists.',
     '- invalid_request/invalid_duration/invalid_resolution/invalid_n/invalid_media: fix input. Auth/group/quota errors: check key, official group and balance. Provider generation failure is not permission to auto-create another paid task.',
     '## Billing',
-    '- USD per generated second at the effective resolution and applicable group multiplier. Check current model pricing. Requested seconds determine the reservation; failed tasks refund it. All modes retain the existing Wan price tiers.',
+    '- The website currently charges requested output seconds at the effective USD-per-second price and group multiplier; successful tasks keep that amount and failed tasks refund it. Input reference-video duration is not added to the website charge and actual output duration is not used to resettle Wan. The upstream has a separate reference-duration billing rule; do not infer a new website charge from it. Check the current website pricing contract.',
     '## Four alternative request examples',
     ...WAN_EXAMPLES.flatMap((request) => [
       '```json',

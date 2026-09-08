@@ -187,6 +187,27 @@ function MediaVariantPricingSection(props: {
                           ? t('seconds')
                           : t('request')}
                       </span>
+                      {videoPrices &&
+                        /^(wan3\.0|seedance-2(?:\.5|-fast|-mini)?)$/.test(
+                          props.model.model_name
+                        ) && (
+                          <span className='text-muted-foreground mt-1 block font-sans text-xs font-normal'>
+                            {t(
+                              'USD {{price}} / second before recharge discounts',
+                              {
+                                price: Number(
+                                  (
+                                    variant.price *
+                                    getConfiguredGroupRatio(
+                                      props.groupRatio,
+                                      group
+                                    )
+                                  ).toFixed(6)
+                                ),
+                              }
+                            )}
+                          </span>
+                        )}
                       {videoPrices && props.model.video_input_ratio && (
                         <span className='text-muted-foreground mt-1 block font-sans text-xs font-normal'>
                           {t('Reference video multiplier')} ×

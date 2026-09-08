@@ -37,12 +37,24 @@ The existing 720p base price and resolution ratios also apply to wan3.0. At a
 USD 0.30 base price with group ratio 1, 480p/720p/1080p cost USD 0.25/0.30/0.35
 per requested second. Reservation/refund semantics are unchanged. All quantity
 validation occurs before billing; tests cover every target and unsafe inputs.
+The website does not add reference-video duration or resettle Wan against actual
+output duration. The provider documents separate reference-duration billing, but
+does not specify a complete authoritative calculation/rounding contract. Do not
+infer website charges from client-supplied reference duration. Changing the
+website's charging policy requires a confirmed business rule and accounting tests.
 
 The selected upstream name is recorded before the provider checkpoint. Tasks
 persist a `wan-unified` provider marker so responses keep the public model and
 IDs and normalize states to queued/in_progress/completed/failed. Poll and
 content endpoints use the same website key. Do not automatically retry POST
 when acceptance is uncertain.
+
+Unified Wan and new Lxmone Seedance tasks support Range/If-Range on content:
+206 for partial content, 416 for an unsatisfiable range, and 200 when the provider
+returns the full file (including an If-Range mismatch). Download before completion
+returns 409. Legacy tasks retain their existing download behavior. The provider
+advertises a configurable default 48-hour result retention; download promptly,
+as the website does not guarantee permanent media storage.
 
 ## Deployment configuration
 

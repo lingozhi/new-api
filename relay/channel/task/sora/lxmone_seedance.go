@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -40,6 +41,31 @@ type lxmoneSeedanceRequest struct {
 	ReferenceImages []json.RawMessage `json:"reference_images"`
 	ReferenceVideos []json.RawMessage `json:"reference_videos"`
 	ReferenceAudios []json.RawMessage `json:"reference_audios"`
+	SoundEffects    *bool             `json:"sound_effects,omitempty"`
+	NoMusic         *bool             `json:"no_music,omitempty"`
+}
+
+// Accept the website's older {url} inputs, but send the provider's URL strings.
+func lxmoneSeedanceMediaURL(raw json.RawMessage) (string, error) {
+	var value string
+	if common.GetJsonType(raw) == "object" {
+		var item map[string]json.RawMessage
+		if err := common.Unmarshal(raw, &item); err != nil {
+			return "", err
+		}
+		if len(item) != 1 || item["url"] == nil {
+			return "", fmt.Errorf("media objects must contain only url")
+		}
+		raw = item["url"]
+	}
+	if err := common.Unmarshal(raw, &value); err != nil {
+		return "", fmt.Errorf("media must be a URL string or {url} object")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Hostname() == "" || parsed.User != nil {
+		return "", fmt.Errorf("media must be a public HTTP(S) URL without credentials")
+	}
+	return value, nil
 }
 
 func validateLxmoneSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -81,6 +107,60 @@ func validateLxmoneSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) 
 		duration = seconds
 	}
 	upstreamModel := common.LxmoneSeedanceModel(info.OriginModelName)
+	if request.SoundEffects != nil && request.NoMusic != nil && *request.SoundEffects == *request.NoMusic {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("sound_effects and no_music must be opposite when both are supplied"), "invalid_request", http.StatusBadRequest)
+	}
+	for _, field := range []string{"sound_effects", "no_music", "input_reference", "image", "image_end", "end_image_url", "reference_images", "reference_videos", "reference_audios"} {
+		if raw, exists := fields[field]; exists && strings.TrimSpace(string(raw)) == "null" {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("omit unused %s instead of null", field), "invalid_request", http.StatusBadRequest)
+		}
+	}
+	normalizedMedia := make(map[string]any)
+	imageLimit, otherLimit := 9, 3
+	if upstreamModel == "seedance-2.5-pro" {
+		imageLimit, otherLimit = 30, 10
+	}
+	for _, group := range []struct {
+		name  string
+		items []json.RawMessage
+		limit int
+	}{
+		{"reference_images", request.ReferenceImages, imageLimit},
+		{"reference_videos", request.ReferenceVideos, otherLimit},
+		{"reference_audios", request.ReferenceAudios, otherLimit},
+	} {
+		if len(group.items) > group.limit {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("%s allows at most %d items", group.name, group.limit), "invalid_media", http.StatusBadRequest)
+		}
+		if _, exists := fields[group.name]; !exists {
+			continue
+		}
+		urls := make([]string, 0, len(group.items))
+		for _, raw := range group.items {
+			value, err := lxmoneSeedanceMediaURL(raw)
+			if err != nil {
+				return service.TaskErrorWrapperLocal(err, "invalid_media", http.StatusBadRequest)
+			}
+			urls = append(urls, value)
+		}
+		normalizedMedia[group.name] = urls
+	}
+	for _, pair := range [][2]string{{"input_reference", "image"}, {"image_end", "end_image_url"}} {
+		var previous string
+		for _, name := range pair {
+			if raw, exists := fields[name]; exists {
+				value, err := lxmoneSeedanceMediaURL(raw)
+				if err != nil {
+					return service.TaskErrorWrapperLocal(err, "invalid_media", http.StatusBadRequest)
+				}
+				if previous != "" && previous != value {
+					return service.TaskErrorWrapperLocal(fmt.Errorf("%s and %s must agree", pair[0], pair[1]), "invalid_media", http.StatusBadRequest)
+				}
+				previous = value
+				normalizedMedia[name] = value
+			}
+		}
+	}
 	validDuration := duration >= 4 && duration <= 15
 	switch upstreamModel {
 	case "seedance-2.5-pro":
@@ -147,6 +227,7 @@ func validateLxmoneSeedanceRequest(c *gin.Context, info *relaycommon.RelayInfo) 
 		return service.TaskErrorWrapperLocal(fmt.Errorf("this channel has no price for the requested Seedance resolution"), "model_price_error", http.StatusBadRequest)
 	}
 	c.Set("lxmone_seedance_resolution_ratio", ratio)
+	c.Set("lxmone_seedance_media", normalizedMedia)
 	c.Set("task_request", relaycommon.TaskSubmitReq{Model: info.OriginModelName, Prompt: request.Prompt, Seconds: strconv.Itoa(duration), Duration: duration, Size: resolution})
 	info.Action = constant.TaskActionTextGenerate
 	if hasFirst || hasReferences {
