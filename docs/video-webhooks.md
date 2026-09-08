@@ -2,6 +2,8 @@
 
 Supported public models: wan3.0, seedance-2, seedance-2.5, seedance-2-fast, seedance-2-mini.
 
+The legacy Seedance `POST /v1/videos/generations` interface rejects `webhook_url` and `webhook_secret` with HTTP 400 (`unsupported_webhook`) before billing or upstream submission, including null or empty fields. Omit both fields for legacy requests. Website callbacks require the supported models and channels through `POST /v1/videos`.
+
 ## Optional website webhooks (polling remains available)
 - webhook_url: optional string, maximum 2048 bytes, public HTTPS endpoint on port 443 without embedded credentials. Private destinations are rejected. Omit the field when unused; null/empty is rejected.
 - webhook_secret: optional string, maximum 512 bytes; requires webhook_url. Use a strong independent secret, not the website API key. Omitted/empty means no signature. Null is rejected.
