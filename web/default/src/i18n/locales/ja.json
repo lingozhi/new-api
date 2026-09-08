@@ -4157,7 +4157,6 @@
     "Seedance 2, Fast and Mini require a reference image or video when reference audio is supplied. Seedance 2.5 also accepts reference audio alone.": "Seedance 2・Fast・Mini で参照音声を使う場合は参照画像または動画も必要です。Seedance 2.5 は参照音声のみでも受け付けます。",
     "Seedance 2.0 and Fast allow 9 images, 3 videos, and 3 audios. Seedance 2.5 allows 30 images, 10 videos, and 10 audios, up to 50 assets; video and audio references each total at most 30 seconds.": "Seedance 2.0 と Fast は画像9枚、動画3本、音声3件まで対応します。Seedance 2.5 は画像30枚、動画10本、音声10件、合計50素材までです。参照動画と参照音声の合計時間は、それぞれ30秒以内です。",
     "Seedance 2.0 supports 1080p only with media input. Fast does not support 1080p. None of these models supports 4K.": "Seedance 2.0 の 1080p は素材入力がある場合のみ対応します。Fast は 1080p 非対応です。いずれも 4K には対応していません。",
-    "Seedance 2.5 at 720p and 30 seconds automatically uses SD-2.5 internally. Keep model=seedance-2.5. This combination accepts text and up to 10 reference_images, converted to images; frame, video, audio and sound-effect options are rejected. Other specifications keep the original model. Billing stays at the website 720p rate for 30 seconds; polling, downloads and webhooks keep the public model name.": "Seedance 2.5 の 720p・30 秒は内部で自動的に SD-2.5 を使用します。model=seedance-2.5 のまま送信してください。この組み合わせはテキストと最大10枚の reference_images に対応し、images に変換されます。開始・終了フレーム、動画、音声、効果音の指定はエラーになります。他の仕様は元のモデルを使用します。料金はサイトの現行720p単価の30秒分です。照会、ダウンロード、webhook は公開モデル名を維持します。",
     "Seedance API": "Seedance API",
     "Select": "選択",
     "Select a color": "色を選択",
