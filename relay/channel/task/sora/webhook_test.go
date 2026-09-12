@@ -15,7 +15,11 @@ import (
 func TestVideoWebhookStoredForGatewayAndStrippedUpstream(t *testing.T) {
 	for _, name := range []string{"wan3.0", "wan3.0-video", "seedance-2"} {
 		t.Run(name, func(t *testing.T) {
-			c, info := newWanContext(t, name, `{"model":"`+name+`","prompt":"test","webhook_url":"https://8.8.8.8/hook","webhook_secret":"callback-private-value"}`)
+			requestJSON := `{"model":"` + name + `","prompt":"test","webhook_url":"https://8.8.8.8/hook","webhook_secret":"callback-private-value"}`
+			if name == "wan3.0" || name == "wan3.0-video" {
+				requestJSON = strings.Replace(requestJSON, `"prompt":"test"`, `"input":{"prompt":"test"}`, 1)
+			}
+			c, info := newWanContext(t, name, requestJSON)
 			info.ChannelBaseUrl = "https://lxmone.xyz"
 			info.ChannelOtherSettings.LxmoneSeedanceResolutionRatios = map[string]map[string]float64{"seedance-2-pro": {"720p": 1}}
 			a := &TaskAdaptor{}
@@ -46,7 +50,11 @@ func TestVideoWebhookRejectsUnsafeEndpointsAndInvalidOptions(t *testing.T) {
 			`"webhook_url":"https://8.8.8.8/hook","webhook_secret":null`,
 			`"webhook_url":"https://8.8.8.8/hook","webhook_secret":"` + strings.Repeat("x", 513) + `"`,
 		} {
-			c, info := newWanContext(t, name, `{"prompt":"test",`+options+`}`)
+			requestJSON := `{"model":"` + name + `","prompt":"test",` + options + `}`
+			if name == "wan3.0" || name == "wan3.0-video" {
+				requestJSON = strings.Replace(requestJSON, `"prompt":"test"`, `"input":{"prompt":"test"}`, 1)
+			}
+			c, info := newWanContext(t, name, requestJSON)
 			info.ChannelBaseUrl = "https://lxmone.xyz"
 			info.ChannelOtherSettings.LxmoneSeedanceResolutionRatios = map[string]map[string]float64{"seedance-2-pro": {"720p": 1}}
 			err := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)

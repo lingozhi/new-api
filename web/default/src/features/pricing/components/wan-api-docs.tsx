@@ -62,7 +62,7 @@ export function WanApiDocs() {
         </div>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Use model wan3.0 with a website key in the official group. Supports text, reference media and first/last frames.'
+            'Use wan3.0-video (or wan3.0) with a website key in the official group. Requests use the official input, parameters and media structure; task endpoints and responses use this website API.'
           )}
         </p>
         <CodeBlock
@@ -73,15 +73,34 @@ export function WanApiDocs() {
         </CodeBlock>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'mode defaults to auto: frame fields select frames, otherwise general. reference requires at least one reference image, video or audio; frames requires both first_frame and last_frame. speed is not supported; omit it.'
+            'Choose the workflow through input.media[].type and prompt: text, first frame, first/last frames, references, document, webpage, video editing or extension. No mode or speed field.'
           )}
         </p>
       </section>
+      <p className='text-muted-foreground text-sm'>
+        <a
+          className='underline underline-offset-4'
+          href='https://docs.bailian.console.aliyun.com/zh/model-studio/wan3-video-generation-api-reference'
+          target='_blank'
+          rel='noopener noreferrer'
+        >
+          {t('Wan 3.0 API Reference')}
+        </a>
+        {' · '}
+        <a
+          className='underline underline-offset-4'
+          href='https://docs.bailian.console.aliyun.com/zh/model-studio/wan3-video-generation-guide'
+          target='_blank'
+          rel='noopener noreferrer'
+        >
+          {t('Wan 3.0 Generation Guide')}
+        </a>
+      </p>
       <section className='space-y-3'>
         <h3 className='text-sm font-semibold'>{t('Supported parameters')}</h3>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Use a website key in the official group. model and non-empty prompt are required. seconds is an integer string or use the integer duration alias: 2–30 seconds, default 5. Resolution defaults to 720P; aspect ratio defaults to 16:9. Aliases must agree. Omit unused fields; null and unknown fields are rejected.'
+            'model and input are required; provide input.prompt or input.media. Defaults: 1080P, adaptive ratio, 5 seconds. For a low-cost test, explicitly set 480P and 2 seconds. Omit unused fields; null and unknown fields are rejected.'
           )}
         </p>
         <StaticDataTable
@@ -111,23 +130,23 @@ export function WanApiDocs() {
         />
         <p className='text-muted-foreground text-sm'>
           {t(
-            'general and reference accept up to 10 images, 5 videos and 5 audios. general allows image roles reference_image, first_frame and last_frame; reference allows reference_image only. reference_videos entries accept url only; duration metadata is rejected. Use public HTTPS URLs without credentials that remain accessible until completion. File formats and actual media limits are checked by the provider.'
+            'Up to 20 media items: 10 reference images, 5 videos and 5 audios; video and audio totals are each limited to 15 seconds. One first_frame may include one last_frame; frames cannot mix with other media. One file or one link may accompany references.'
           )}
         </p>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Frames cannot be mixed with reference lists. Do not send media: the server builds it internally. n is optional and must be 1; prompt_extend is an optional boolean, and false disables prompt enhancement. Streaming, uploads, seed and other undocumented parameters are not supported by this unified interface.'
+            'Use public HTTP(S) URLs; images also accept Base64 data URLs up to 20 MB. This channel does not accept DashScope OSS URLs or Prime models. The provider checks file formats, dimensions, page counts and actual durations. See the copied guide for all media limits.'
           )}
         </p>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Wan uses USD per second at the effective resolution and group price. Use wan3.0 for all modes.'
+            'parameters supports audio, seed, prompt_extend and watermark. false and seed=0 are preserved. Input video seconds plus output seconds must not exceed 30; duration=-1 selects automatic length.'
           )}
         </p>
       </section>
       <p className='text-muted-foreground text-sm'>
         {t(
-          'Wan charges the requested output seconds at the current website price. Input video length and actual output length do not change the final charge. Failed tasks refund the website reservation.'
+          'Fixed duration charges requested output seconds. Automatic duration reserves 30 seconds and refunds the difference using delivered duration; missing duration settles at the 2-second minimum and is logged. Failed tasks refund the reservation. See current resolution and group prices.'
         )}
       </p>
       <p className='text-muted-foreground text-sm'>
@@ -139,12 +158,12 @@ export function WanApiDocs() {
         <h3 className='text-sm font-semibold'>{t('Example')}</h3>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'These are four alternative JSON requests: text, general with a reference image, reference media, and first/last frames. Replace media URL placeholders with real files. Do not merge all optional fields into one request.'
+            'Eight separate examples: text, first frame, first/last frames, mixed references, document, webpage, editing and extension. Each uses 2-second 480P output. Replace media URLs; each POST creates a paid task.'
           )}
         </p>
         {WAN_EXAMPLES.map((request) => (
           <CodeBlock
-            key={String(request.mode)}
+            key={request.input.prompt}
             language='json'
             code={JSON.stringify(request, null, 2)}
           >

@@ -1,57 +1,30 @@
 # Wan 3.0 through Aijiau
 
-Provider documentation: [API 调用文档](https://api.aijiau.com/docs/api).
-The documented API base is `https://tokens.aijiakefu.com/v1`; `api.aijiau.com`
-hosts the dashboard and documentation.
+The public request now follows the [official Wan 3.0 API reference](https://docs.bailian.console.aliyun.com/zh/model-studio/wan3-video-generation-api-reference) and [generation guide](https://docs.bailian.console.aliyun.com/zh/model-studio/wan3-video-generation-guide).
+See [the complete website contract](wan-unified.md) for fields, defaults, media constraints, examples, billing and recovery.
 
-## Channel setup
+## Channel setup and translation
 
-- Channel type: OpenAI.
-- Base URL: `https://tokens.aijiakefu.com` (a trailing `/v1` is also accepted
-  by the video adapter).
-- Key: an Aijiau API key authorized for video generation.
-- Models: `wan3.0` and/or `wan3.0-video`.
-- Model mapping: not required. The default unified `wan3.0` request becomes
-  the documented upstream `wan3.0-video` model.
+- Type: OpenAI; base URL: `https://tokens.aijiakefu.com` (trailing `/v1` accepted).
+- Credential: Aijiau API key authorized for `wan3.0-video`.
+- Models: `wan3.0-video` and website alias `wan3.0`; no client model mapping.
+- Provider endpoints: `/v1/videos/generations`, `/{id}` and `/{id}/content` beneath it.
+- Website endpoints: `POST /v1/videos`, `GET /v1/videos/{id}`, `GET /v1/videos/{id}/content`.
+- Aijiau dashboard and [API documentation](https://api.aijiau.com/docs/api) are at `api.aijiau.com`.
 
-The unified API converts general/reference/frame inputs into this provider's
-typed `media` array, including `reference_audio` for audio references. All modes
-use the same upstream `wan3.0-video` model. Aijiau has no separate fast model:
-`speed` has been removed from the public contract, including `standard`.
-Requests containing it or reference-video `duration` metadata are rejected
-before billing. Both first and last frames are required for frames mode.
-Retired model routing and legacy parameter conversions have been removed;
-`wan3.0-video` uses the same strict validation as `wan3.0`.
+The adapter converts `input.prompt` and `input.media` to Aijiau's top-level `prompt` and `media`, preserving media order and type. `parameters.ratio` becomes `aspect_ratio`; resolution, duration, audio, seed, prompt_extend and watermark become top-level provider fields. The provider also receives the matching string `seconds`. Website webhook fields stay in the gateway. Defaults are explicitly sent so provider defaults cannot diverge from billing. No DashScope key or async header is needed for website clients.
 
-Configure the gateway's per-second 720p model price and group multiplier before
-enabling paid requests. Existing Wan duration/resolution multipliers apply;
-this integration does not set prices or infer Aijiau's upstream cost. The public
-documentation does not specify a complete price table. Only the current
-upstream `wan3.0-video` model is supported.
+This channel supports the standard model. Prime is not enabled, and Alibaba workspace-scoped `oss://` URLs are rejected; callers can use public HTTP(S) URLs or image Base64 data URLs. File contents and actual media duration are validated by the upstream service. The published Aijiau studio uses this flat payload, but its implementation is not proof that every official media format has passed a live task.
 
-## Gateway request
+## Billing and migration
 
-```sh
-curl "$NEW_API_BASE_URL/v1/videos" \
-  -H "Authorization: Bearer $NEW_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "wan3.0",
-    "prompt": "海边日出，镜头缓慢向前移动",
-    "resolution": "720P",
-    "duration": 5,
-    "aspect_ratio": "16:9"
-  }'
-```
+Configure the 720P per-second base price and group multiplier before enabling requests. Resolution multipliers remain 480P = 0.25/0.30, 720P = 1, 1080P = 0.35/0.30. The official default is now 1080P, adaptive ratio, 5 seconds. Use explicit 480P and 2 seconds when testing.
 
-Save the returned public task ID, then query `GET /v1/videos/{id}` and download
-`GET /v1/videos/{id}/content` using the same gateway key. The gateway routes
-submission, polling and download to Aijiau's `/v1/videos/generations` endpoint
-family, forwarding the provider key only upstream. Existing unified Wan
-validation, billing, public task IDs and webhooks remain available; see
-[Unified Wan 3.0](wan-unified.md).
+Fixed duration charges requested output seconds. Automatic `parameters.duration=-1` reserves 30 output seconds, then settles the provider's `video.duration` bounded to 2–30 seconds using the saved price snapshot. Missing/invalid duration settles at the 2-second minimum and emits an accounting error; failed tasks refund. The maximum reserve must never become a maximum charge merely because metadata is absent. Quota conversion uses checked saturation and carries the marker into settlement logs.
 
-## Verification and deployment record
+The public flat fields (`mode`, `speed`, `seconds`, `size`, duration/resolution/ratio aliases, reference lists and frame fields) are removed. Put prompt/media inside `input` and all generation controls inside `parameters`. Both public model names use the same validator. Saved task IDs remain queryable through the existing task endpoints.
+
+## Earlier verification record (before the nested request migration)
 
 On 2026-09-12, production enabled Aijiau channel 149 and disabled Lxmone Wan
 channel 147. GPT Image and Seedance channels were unchanged. The configured
@@ -105,17 +78,9 @@ Completion timestamps use RFC3339 strings. Polling parses state independently
 of provider-specific video metadata and timestamps so successful tasks settle
 and become downloadable.
 
-## Removal of retired channel parameters
 
-The cleanup removes the `speed` parameter, retired Prime/R2V/I2V model routing,
-reference-video duration compatibility, and conversion from the old `audio`
-media type. Current reference audio still becomes `reference_audio` upstream.
-The gateway continues to offer `mode`, reference lists and frame fields for the
-verified workflows. Duration/resolution aliases are shared current request
-fields; their billing validation remains unchanged.
+## Nested request verification scope
 
-Deterministic adapter tests verify all retained workflows produce the same
-Aijiau media payload and price factors as before, and that retired inputs fail
-before quota reservation for both public model names. Earlier paid task records
-above describe the version tested at that time; any explicit `speed` field in
-saved client requests must now be removed.
+Local contract tests cover official defaults, all seven media types and combination rules, media-only input, Unicode prompt truncation, pointer zero values, URL/Base64 validation, retired flat fields, duration/seed bounds, automatic reserve/settlement, public task identity and website webhooks. Documentation and copied examples use the same request builders.
+
+The earlier paid tasks above used the previous flat public request. They establish provider media generation, download and webhook behavior for that version, not live verification of every newly exposed parameter. Release verification for the nested contract is recorded separately after deployment.

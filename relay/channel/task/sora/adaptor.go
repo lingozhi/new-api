@@ -233,7 +233,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 				}
 				bodyMap["model"] = expected
 			}
-			if common.WanVideoResolutionRatios(info.OriginModelName) != nil || isLxmoneSeedanceRequest(info) {
+			if isLxmoneSeedanceRequest(info) {
 				request, err := relaycommon.GetTaskRequest(c)
 				if err != nil {
 					return nil, err
