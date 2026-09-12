@@ -17,16 +17,17 @@ hosts the dashboard and documentation.
 The unified API converts general/reference/frame inputs into this provider's
 typed `media` array, including `reference_audio` for audio references. All modes
 use the same upstream `wan3.0-video` model. Aijiau has no separate fast model:
-omit `speed` or use `standard`; explicit `fast` requests are rejected before
-billing. Reference-video `duration` metadata is not supported. The existing
-unified frame requirement (both first and last frame) remains unchanged.
+`speed` has been removed from the public contract, including `standard`.
+Requests containing it or reference-video `duration` metadata are rejected
+before billing. Both first and last frames are required for frames mode.
+Retired model routing and legacy parameter conversions have been removed;
+`wan3.0-video` uses the same strict validation as `wan3.0`.
 
 Configure the gateway's per-second 720p model price and group multiplier before
 enabling paid requests. Existing Wan duration/resolution multipliers apply;
 this integration does not set prices or infer Aijiau's upstream cost. The public
-documentation does not specify a complete price table or guarantee every legacy
-Wan workflow. Enable other upstream model IDs only after verifying their
-availability with the provider key.
+documentation does not specify a complete price table. Only the current
+upstream `wan3.0-video` model is supported.
 
 ## Gateway request
 
@@ -103,3 +104,18 @@ terminal aliases `succeeded`/`success` and `canceled`/`rejected`.
 Completion timestamps use RFC3339 strings. Polling parses state independently
 of provider-specific video metadata and timestamps so successful tasks settle
 and become downloadable.
+
+## Removal of retired channel parameters
+
+The cleanup removes the `speed` parameter, retired Prime/R2V/I2V model routing,
+reference-video duration compatibility, and conversion from the old `audio`
+media type. Current reference audio still becomes `reference_audio` upstream.
+The gateway continues to offer `mode`, reference lists and frame fields for the
+verified workflows. Duration/resolution aliases are shared current request
+fields; their billing validation remains unchanged.
+
+Deterministic adapter tests verify all retained workflows produce the same
+Aijiau media payload and price factors as before, and that retired inputs fail
+before quota reservation for both public model names. Earlier paid task records
+above describe the version tested at that time; any explicit `speed` field in
+saved client requests must now be removed.

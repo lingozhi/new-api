@@ -13,7 +13,7 @@ import (
 )
 
 func TestVideoWebhookStoredForGatewayAndStrippedUpstream(t *testing.T) {
-	for _, name := range []string{"wan3.0", "seedance-2"} {
+	for _, name := range []string{"wan3.0", "wan3.0-video", "seedance-2"} {
 		t.Run(name, func(t *testing.T) {
 			c, info := newWanContext(t, name, `{"model":"`+name+`","prompt":"test","webhook_url":"https://8.8.8.8/hook","webhook_secret":"callback-private-value"}`)
 			info.ChannelBaseUrl = "https://lxmone.xyz"
@@ -36,7 +36,7 @@ func TestVideoWebhookStoredForGatewayAndStrippedUpstream(t *testing.T) {
 }
 
 func TestVideoWebhookRejectsUnsafeEndpointsAndInvalidOptions(t *testing.T) {
-	for _, name := range []string{"wan3.0", "seedance-2"} {
+	for _, name := range []string{"wan3.0", "wan3.0-video", "seedance-2"} {
 		for _, options := range []string{
 			`"webhook_url":"http://8.8.8.8/hook"`,
 			`"webhook_url":"https://127.0.0.1/hook"`,

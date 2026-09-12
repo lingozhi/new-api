@@ -62,7 +62,7 @@ export function WanApiDocs() {
         </div>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Use model wan3.0 with a website key in the official group. The current channel supports text, reference media and first/last frames at standard speed only. The previous Wan channel is disabled.'
+            'Use model wan3.0 with a website key in the official group. Supports text, reference media and first/last frames.'
           )}
         </p>
         <CodeBlock
@@ -73,7 +73,7 @@ export function WanApiDocs() {
         </CodeBlock>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'mode defaults to auto: frame fields select frames, otherwise general. reference requires at least one reference image, video or audio; frames requires both first_frame and last_frame. Omit speed or use standard in every mode. fast returns HTTP 400.'
+            'mode defaults to auto: frame fields select frames, otherwise general. reference requires at least one reference image, video or audio; frames requires both first_frame and last_frame. speed is not supported; omit it.'
           )}
         </p>
       </section>
@@ -121,7 +121,7 @@ export function WanApiDocs() {
         </p>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Wan uses USD per second at the effective resolution and group price. Use wan3.0 for all modes; the previous fast, reference and frame model IDs are unavailable on the current official channel.'
+            'Wan uses USD per second at the effective resolution and group price. Use wan3.0 for all modes.'
           )}
         </p>
       </section>
@@ -139,12 +139,12 @@ export function WanApiDocs() {
         <h3 className='text-sm font-semibold'>{t('Example')}</h3>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'These are four alternative JSON requests: text, general with a reference image, reference media, and first/last frames. All use standard speed. Replace media URL placeholders with real files. Do not merge all optional fields into one request.'
+            'These are four alternative JSON requests: text, general with a reference image, reference media, and first/last frames. Replace media URL placeholders with real files. Do not merge all optional fields into one request.'
           )}
         </p>
         {WAN_EXAMPLES.map((request) => (
           <CodeBlock
-            key={`${request.mode}-${request.speed}`}
+            key={String(request.mode)}
             language='json'
             code={JSON.stringify(request, null, 2)}
           >

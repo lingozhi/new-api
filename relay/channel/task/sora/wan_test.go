@@ -88,91 +88,46 @@ func TestWanVideoRejectsUnsafeOrConflictingInputs(t *testing.T) {
 	}
 }
 
-func TestWanMediaModelsPreserveInputsAndPricing(t *testing.T) {
-	for _, tc := range []struct {
-		model, body string
-		valid       bool
-	}{
-		{"wan3.0-video-prime", `{"prompt":"test","reference_images":[{"url":"https://example.com/a.png","role":"first_frame"}]}`, true},
-		{"wan3.0-prime-r2v", `{"prompt":"test","media":[{"type":"reference_image","url":"https://example.com/a.png"}]}`, true},
-		{"wan3.0-i2v", `{"prompt":"test","media":[{"type":"first_frame","url":"https://example.com/a.png"},{"type":"last_frame","url":"https://example.com/b.png"}]}`, true},
-		{"wan3.0-i2v", `{"prompt":"test","media":[{"type":"first_frame","url":"https://example.com/a.png"}]}`, false},
-		{"wan3.0-prime-r2v", `{"prompt":"test","media":[{"type":"first_frame","url":"https://example.com/a.png"}]}`, false},
-		{"wan3.0-prime-r2v", `{"prompt":"test"}`, false},
-	} {
-		t.Run(tc.model+tc.body, func(t *testing.T) {
-			c, info := newWanContext(t, tc.model, tc.body)
-			adaptor := &TaskAdaptor{}
-			err := adaptor.ValidateRequestAndSetAction(c, info)
-			if !tc.valid {
-				require.NotNil(t, err)
-				return
-			}
-			require.Nil(t, err)
-			assert.InDelta(t, 1.5, .30*adaptor.EstimateBilling(c, info)["seconds"], 1e-10)
-			body, buildErr := adaptor.BuildRequestBody(c, info)
-			require.NoError(t, buildErr)
-			encoded, readErr := io.ReadAll(body)
-			require.NoError(t, readErr)
-			var before, after map[string]any
-			require.NoError(t, common.Unmarshal([]byte(tc.body), &before))
-			require.NoError(t, common.Unmarshal(encoded, &after))
-			assert.Equal(t, before["media"], after["media"])
-			assert.Equal(t, before["reference_images"], after["reference_images"])
+func TestWanRejectsRetiredModelsBeforeBilling(t *testing.T) {
+	for _, name := range []string{"wan3.0-video-prime", "wan3.0-prime-r2v", "wan3.0-i2v"} {
+		t.Run(name, func(t *testing.T) {
+			c, info := newWanContext(t, name, `{"prompt":"test"}`)
+			err := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+			require.NotNil(t, err)
+			assert.Equal(t, http.StatusBadRequest, err.StatusCode)
+			_, exists := c.Get("task_request")
+			assert.False(t, exists)
 		})
 	}
-	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{"status":"archiving","progress":95}`))
-	require.NoError(t, err)
-	assert.Equal(t, model.TaskStatusInProgress, result.Status)
 }
 
-func TestUnifiedWanWorkflowMappingAndBilling(t *testing.T) {
-	for _, tc := range []struct{ name, fields, target string }{
-		{"default", ``, "wan3.0-video"},
-		{"fast references", `,"speed":"fast","reference_images":[{"url":"https://example.com/a.jpg","role":"reference_image"}]`, "wan3.0-video-prime"},
-		{"reference conversion", `,"mode":"reference","reference_images":[{"url":"https://example.com/a.jpg"}],"reference_videos":[{"url":"https://example.com/a.mp4"}],"reference_audios":[{"url":"https://example.com/a.mp3"}]`, "wan3.0-prime-r2v"},
-		{"auto frames", `,"first_frame":"https://example.com/a.jpg","last_frame":"https://example.com/b.jpg"`, "wan3.0-i2v"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			c, info := newWanContext(t, "wan3.0", `{"model":"wan3.0","prompt":"test","seconds":"2","resolution":"480p","prompt_extend":false`+tc.fields+`}`)
-			adaptor := &TaskAdaptor{}
-			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
-			// The common task pipeline resets this after validation; mapping must survive.
-			info.UpstreamModelName = "wan3.0"
-			body, err := adaptor.BuildRequestBody(c, info)
-			require.NoError(t, err)
-			var payload map[string]any
-			require.NoError(t, common.DecodeJson(body, &payload))
-			assert.Equal(t, tc.target, payload["model"])
-			assert.Equal(t, tc.target, info.UpstreamModelName)
-			assert.Equal(t, "wan3.0", info.OriginModelName)
-			assert.Equal(t, false, payload["prompt_extend"])
-			assert.Equal(t, "16:9", payload["aspect_ratio"])
-			assert.Equal(t, "480P", payload["resolution"])
-			assert.NotContains(t, payload, "mode")
-			assert.NotContains(t, payload, "speed")
-			assert.NotContains(t, payload, "first_frame")
-			assert.NotContains(t, payload, "last_frame")
-			ratios := adaptor.EstimateBilling(c, info)
-			assert.InDelta(t, .5, .3*ratios["seconds"]*ratios["resolution"], 1e-10)
-			assert.Equal(t, "wan-unified", info.TaskRelayInfo.Video.Provider)
-			if tc.target == "wan3.0-prime-r2v" {
-				assert.NotContains(t, payload, "reference_images")
-				media := payload["media"].([]any)
-				require.Len(t, media, 3)
-				assert.Equal(t, "audio", media[2].(map[string]any)["type"])
+func TestWanRejectsRetiredParametersForEveryModelAndChannel(t *testing.T) {
+	for _, name := range []string{"wan3.0", "wan3.0-video"} {
+		for _, baseURL := range []string{"https://tokens.aijiakefu.com", "https://lxmone.xyz"} {
+			for _, fields := range []string{
+				`,"speed":"standard"`, `,"speed":"fast"`,
+				`,"reference_videos":[{"url":"https://example.com/v.mp4","duration":2}]`,
+				`,"mode":"reference","reference_videos":[{"url":"https://example.com/v.mp4","duration":2}]`,
+				`,"media":[{"type":"audio","url":"https://example.com/a.mp3"}]`,
+			} {
+				t.Run(name+baseURL+fields, func(t *testing.T) {
+					c, info := newWanContext(t, name, `{"prompt":"test"`+fields+`}`)
+					info.ChannelBaseUrl = baseURL
+					err := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+					require.NotNil(t, err)
+					assert.Equal(t, http.StatusBadRequest, err.StatusCode)
+					_, exists := c.Get("task_request")
+					assert.False(t, exists)
+				})
 			}
-			if tc.target == "wan3.0-i2v" {
-				assert.Len(t, payload["media"], 2)
-			}
-		})
+		}
 	}
 }
 
 func TestUnifiedWanRejectsAmbiguousOrUnsupportedInputs(t *testing.T) {
 	for _, fields := range []string{
-		`,"mode":"invalid"`, `,"speed":"turbo"`, `,"mode":"reference","speed":"standard"`,
-		`,"mode":"reference"`, `,"mode":"frames","speed":"fast"`,
+		`,"mode":"invalid"`,
+		`,"mode":"reference"`,
 		`,"first_frame":"https://example.com/a.jpg"`,
 		`,"mode":"general","first_frame":"https://example.com/a.jpg","last_frame":"https://example.com/b.jpg"`,
 		`,"first_frame":"https://example.com/a.jpg","last_frame":"https://example.com/b.jpg","reference_images":[{"url":"https://example.com/c.jpg"}]`,
@@ -211,20 +166,24 @@ func TestUnifiedWanResponseKeepsPublicIdentity(t *testing.T) {
 }
 
 func TestUnifiedWanCreationKeepsProviderIDPrivate(t *testing.T) {
-	recorder := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(recorder)
-	info := &relaycommon.RelayInfo{OriginModelName: "wan3.0", ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "wan3.0-i2v"}, TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"}}
-	response := &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"request_id":"upstream","model":"wan3.0-i2v","status":"queued"}`))}
-	upstreamID, _, taskErr := (&TaskAdaptor{}).DoResponse(c, response, info)
-	require.Nil(t, taskErr)
-	assert.Equal(t, "upstream", upstreamID)
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	var payload map[string]any
-	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
-	for _, key := range []string{"id", "task_id", "request_id"} {
-		assert.Equal(t, "task_public", payload[key])
+	for _, name := range []string{"wan3.0", "wan3.0-video"} {
+		t.Run(name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			info := &relaycommon.RelayInfo{OriginModelName: name, ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "wan3.0-video"}, TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"}}
+			response := &http.Response{StatusCode: http.StatusAccepted, Body: io.NopCloser(strings.NewReader(`{"request_id":"upstream","model":"wan3.0-video","status":"queued"}`))}
+			upstreamID, _, taskErr := (&TaskAdaptor{}).DoResponse(c, response, info)
+			require.Nil(t, taskErr)
+			assert.Equal(t, "upstream", upstreamID)
+			assert.Equal(t, http.StatusOK, recorder.Code)
+			var payload map[string]any
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+			for _, key := range []string{"id", "task_id", "request_id"} {
+				assert.Equal(t, "task_public", payload[key])
+			}
+			assert.Equal(t, name, payload["model"])
+		})
 	}
-	assert.Equal(t, "wan3.0", payload["model"])
 }
 
 func TestUnifiedWanReferenceLimitsBeforeBilling(t *testing.T) {
@@ -318,13 +277,15 @@ func TestAijiauWanMediaWorkflowsUseAvailableModel(t *testing.T) {
 		{"general", "wan3.0", `,"reference_images":[{"url":"https://example.com/a.jpg","role":"first_frame"}],"reference_videos":[{"url":"https://example.com/v.mp4"}],"reference_audios":[{"url":"https://example.com/a.mp3"}]`, []wanMedia{{Type: "first_frame", URL: "https://example.com/a.jpg"}, {Type: "reference_video", URL: "https://example.com/v.mp4"}, {Type: "reference_audio", URL: "https://example.com/a.mp3"}}},
 		{"reference", "wan3.0", `,"mode":"reference","reference_images":[{"url":"https://example.com/a.jpg"}],"reference_audios":[{"url":"https://example.com/a.mp3"}]`, []wanMedia{{Type: "reference_image", URL: "https://example.com/a.jpg"}, {Type: "reference_audio", URL: "https://example.com/a.mp3"}}},
 		{"frames", "wan3.0", `,"first_frame":"https://example.com/a.jpg","last_frame":"https://example.com/b.jpg"`, []wanMedia{{Type: "first_frame", URL: "https://example.com/a.jpg"}, {Type: "last_frame", URL: "https://example.com/b.jpg"}}},
-		{"legacy", "wan3.0-video", `,"reference_images":[{"url":"https://example.com/a.jpg"}]`, []wanMedia{{Type: "reference_image", URL: "https://example.com/a.jpg"}}},
+		{"provider model name", "wan3.0-video", `,"reference_images":[{"url":"https://example.com/a.jpg"}]`, []wanMedia{{Type: "reference_image", URL: "https://example.com/a.jpg"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, info := newWanContext(t, tc.model, `{"prompt":"test","duration":2,"resolution":"480P","prompt_extend":false`+tc.fields+`}`)
 			info.ChannelBaseUrl = "https://tokens.aijiakefu.com"
 			adaptor := &TaskAdaptor{}
 			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			// The common task pipeline resets mapping after validation.
+			info.UpstreamModelName = tc.model
 			body, err := adaptor.BuildRequestBody(c, info)
 			require.NoError(t, err)
 			var payload struct {
@@ -337,6 +298,8 @@ func TestAijiauWanMediaWorkflowsUseAvailableModel(t *testing.T) {
 			require.NoError(t, common.Unmarshal(raw, &payload))
 			assert.Equal(t, "wan3.0-video", payload.Model)
 			assert.Equal(t, payload.Model, info.UpstreamModelName)
+			assert.Equal(t, tc.model, info.OriginModelName)
+			assert.Equal(t, "wan-unified", info.TaskRelayInfo.Video.Provider)
 			assert.Equal(t, tc.media, payload.Media)
 			require.NotNil(t, payload.PromptExtend)
 			assert.False(t, *payload.PromptExtend)
@@ -348,13 +311,7 @@ func TestAijiauWanMediaWorkflowsUseAvailableModel(t *testing.T) {
 			assert.Equal(t, map[string]float64{"seconds": 2, "resolution": .25 / .30}, adaptor.EstimateBilling(c, info))
 		})
 	}
-	for _, fields := range []string{`,"speed":"fast"`, `,"mode":"reference","speed":"fast","reference_images":[{"url":"https://example.com/a.jpg"}]`, `,"reference_videos":[{"url":"https://example.com/v.mp4","duration":2}]`} {
-		c, info := newWanContext(t, "wan3.0", `{"prompt":"test"`+fields+`}`)
-		info.ChannelBaseUrl = "https://tokens.aijiakefu.com"
-		taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
-		require.NotNil(t, taskErr)
-		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
-	}
+
 }
 
 func TestAijiauWanPollingStatusAliases(t *testing.T) {
@@ -364,6 +321,7 @@ func TestAijiauWanPollingStatusAliases(t *testing.T) {
 	}{
 		{"pending", model.TaskStatusQueued},
 		{"running", model.TaskStatusInProgress},
+		{"archiving", model.TaskStatusInProgress},
 		{"succeeded", model.TaskStatusSuccess},
 		{"success", model.TaskStatusSuccess},
 		{"completed", model.TaskStatusSuccess},

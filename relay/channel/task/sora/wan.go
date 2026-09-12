@@ -30,23 +30,15 @@ type wanVideoRequest struct {
 	AspectRatio     string     `json:"aspect_ratio,omitempty"`
 	Ratio           string     `json:"ratio,omitempty"`
 	N               *int       `json:"n,omitempty"`
-	Media           []wanMedia `json:"media,omitempty"`
+	Media           []wanMedia `json:"-"`
 	ReferenceImages []wanMedia `json:"reference_images,omitempty"`
 	ReferenceVideos []wanMedia `json:"reference_videos,omitempty"`
 	ReferenceAudios []wanMedia `json:"reference_audios,omitempty"`
 }
 
-// validateWanVideoRequest normalizes the aliases used for both billing and relay.
+// validateWanVideoFields normalizes the aliases used for both billing and relay.
 // Defaults must also be sent upstream so omitted parameters cannot undercharge.
-func validateWanVideoRequest(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	var request wanVideoRequest
-	if err := common.UnmarshalBodyReusable(c, &request); err != nil {
-		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
-	}
-	return validateWanVideoFields(c, info, request, info.OriginModelName)
-}
-
-func validateWanVideoFields(c *gin.Context, info *relaycommon.RelayInfo, request wanVideoRequest, modelName string) *dto.TaskError {
+func validateWanVideoFields(c *gin.Context, info *relaycommon.RelayInfo, request wanVideoRequest) *dto.TaskError {
 	if strings.TrimSpace(request.Prompt) == "" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("prompt is required"), "invalid_request", http.StatusBadRequest)
 	}
@@ -78,7 +70,7 @@ func validateWanVideoFields(c *gin.Context, info *relaycommon.RelayInfo, request
 	if resolution == "" {
 		resolution = "720p"
 	}
-	if _, ok := common.WanVideoResolutionRatios(modelName)[resolution]; !ok {
+	if _, ok := common.WanVideoResolutionRatios(info.OriginModelName)[resolution]; !ok {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("resolution must be 480p, 720p, or 1080p"), "invalid_resolution", http.StatusBadRequest)
 	}
 	ratio := strings.TrimSpace(request.AspectRatio)
@@ -93,25 +85,6 @@ func validateWanVideoFields(c *gin.Context, info *relaycommon.RelayInfo, request
 	if len(request.ReferenceImages) > 10 || len(request.ReferenceVideos) > 5 || len(request.ReferenceAudios) > 5 {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("reference limits are 10 images, 5 videos, and 5 audios"), "invalid_media", http.StatusBadRequest)
 	}
-	mediaModel := modelName == "wan3.0-prime-r2v" || modelName == "wan3.0-i2v"
-	if mediaModel && (hasReferences || len(request.Media) == 0) || !mediaModel && len(request.Media) > 0 {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("media and reference_* fields must match the Wan model"), "invalid_media", http.StatusBadRequest)
-	}
-	counts := make(map[string]int)
-	for _, media := range request.Media {
-		counts[media.Type]++
-		validType := media.Type == "reference_image" || media.Type == "reference_video" || media.Type == "audio"
-		if modelName == "wan3.0-i2v" {
-			validType = media.Type == "first_frame" || media.Type == "last_frame"
-		}
-		if !validType {
-			return service.TaskErrorWrapperLocal(fmt.Errorf("invalid media type for Wan model"), "invalid_media", http.StatusBadRequest)
-		}
-	}
-	if modelName == "wan3.0-i2v" && (counts["first_frame"] != 1 || counts["last_frame"] != 1) ||
-		counts["reference_image"] > 10 || counts["reference_video"] > 5 || counts["audio"] > 5 {
-		return service.TaskErrorWrapperLocal(fmt.Errorf("invalid Wan media counts"), "invalid_media", http.StatusBadRequest)
-	}
 	for _, entries := range [][]wanMedia{request.Media, request.ReferenceImages, request.ReferenceVideos, request.ReferenceAudios} {
 		for _, media := range entries {
 			parsed, err := url.Parse(media.URL)
@@ -120,7 +93,8 @@ func validateWanVideoFields(c *gin.Context, info *relaycommon.RelayInfo, request
 			}
 		}
 	}
-	imageCount += counts["reference_image"] + counts["first_frame"] + counts["last_frame"]
+	// Media contains only the two frame inputs normalized by the unified validator.
+	imageCount += len(request.Media)
 	c.Set("task_request", relaycommon.TaskSubmitReq{
 		Model: request.Model, Prompt: request.Prompt, Duration: duration,
 		Seconds: strconv.Itoa(duration), Size: resolution,

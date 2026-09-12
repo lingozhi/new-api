@@ -97,11 +97,12 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 	if isLxmoneSeedanceRequest(info) {
 		return validateLxmoneSeedanceRequest(c, info)
 	}
-	if info.OriginModelName == "wan3.0" {
+	if common.WanVideoResolutionRatios(info.OriginModelName) != nil {
 		return validateUnifiedWanVideoRequest(c, info)
 	}
-	if common.WanVideoResolutionRatios(info.OriginModelName) != nil {
-		return validateWanVideoRequest(c, info)
+	switch info.OriginModelName {
+	case "wan3.0-video-prime", "wan3.0-prime-r2v", "wan3.0-i2v":
+		return service.TaskErrorWrapperLocal(fmt.Errorf("retired Wan model; use wan3.0"), "invalid_request", http.StatusBadRequest)
 	}
 	if isArgolinkSeedanceRequest(c, info) {
 		return validateArgolinkSeedanceRequest(c, info)
@@ -198,7 +199,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if strings.HasPrefix(contentType, "application/json") {
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
-			if info.OriginModelName == "wan3.0" {
+			if common.WanVideoResolutionRatios(info.OriginModelName) != nil {
 				normalized, ok := c.Get("wan_unified_body")
 				if !ok {
 					return nil, fmt.Errorf("missing normalized Wan request")
@@ -208,8 +209,8 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 					return nil, fmt.Errorf("invalid normalized Wan request")
 				}
 				bodyMap = normalizedBody
-				info.UpstreamModelName = c.GetString("wan_unified_model")
-				info.IsModelMapped = true
+				info.UpstreamModelName = "wan3.0-video"
+				info.IsModelMapped = info.OriginModelName != info.UpstreamModelName
 			}
 			bodyMap["model"] = info.UpstreamModelName
 			if isLxmoneSeedanceRequest(info) {
@@ -245,13 +246,6 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 					bodyMap["aspect_ratio"] = info.TaskRelayInfo.Video.Ratio
 					bodyMap["ratio"] = info.TaskRelayInfo.Video.Ratio
 				}
-			}
-			if common.IsAijiauVideoBaseURL(info.ChannelBaseUrl) && common.WanVideoResolutionRatios(info.OriginModelName) != nil {
-				if err := buildAijiauWanRequest(bodyMap); err != nil {
-					return nil, err
-				}
-				info.UpstreamModelName = "wan3.0-video"
-				info.IsModelMapped = info.OriginModelName != info.UpstreamModelName
 			}
 			if !isLxmoneSeedanceRequest(info) && isArgolinkSeedanceModel(info.OriginModelName) {
 				if value, ok := c.Get(argolinkSeedance25ContextKey); ok {
@@ -366,7 +360,7 @@ func (a *TaskAdaptor) DoResponse(c *gin.Context, resp *http.Response, info *rela
 	// 使用公开 task_xxxx ID 返回给客户端
 	dResp.ID = info.PublicTaskID
 	dResp.TaskID = info.PublicTaskID
-	if isLxmoneSeedanceRequest(info) || info.OriginModelName == "wan3.0" {
+	if isLxmoneSeedanceRequest(info) || common.WanVideoResolutionRatios(info.OriginModelName) != nil {
 		dResp.Model = info.OriginModelName
 		dResp.RequestID = info.PublicTaskID
 	}

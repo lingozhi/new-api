@@ -33,9 +33,6 @@ func buildAijiauWanRequest(body map[string]any) error {
 					mediaType = role
 				}
 			case "reference_videos":
-				if _, exists := entry["duration"]; exists {
-					return fmt.Errorf("Aijiau reference videos do not accept duration metadata")
-				}
 				mediaType = "reference_video"
 			case "reference_audios":
 				mediaType = "reference_audio"
@@ -44,11 +41,6 @@ func buildAijiauWanRequest(body map[string]any) error {
 			media = append(media, wanMedia{Type: mediaType, URL: mediaURL})
 		}
 		delete(body, field)
-	}
-	for i := range media {
-		if media[i].Type == "audio" {
-			media[i].Type = "reference_audio"
-		}
 	}
 	if len(media) > 0 {
 		body["media"] = media

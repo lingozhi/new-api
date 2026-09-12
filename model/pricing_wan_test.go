@@ -7,7 +7,7 @@ import (
 )
 
 func TestWanCatalogAdvertisesVideoEndpoint(t *testing.T) {
-	for _, name := range []string{"wan3.0", "wan3.0-video", "wan3.0-video-prime", "wan3.0-prime-r2v", "wan3.0-i2v"} {
+	for _, name := range []string{"wan3.0", "wan3.0-video"} {
 		t.Run(name, func(t *testing.T) {
 			endpoints := getPricingEndpointTypesForAbility(AbilityWithChannel{Ability: Ability{Model: name}, ChannelType: constant.ChannelTypeOpenAI}, nil)
 			assert.Equal(t, []constant.EndpointType{constant.EndpointTypeOpenAIVideo}, endpoints)
