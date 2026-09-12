@@ -21,17 +21,16 @@ The unified model does not accept multipart uploads, streaming, or the provider'
 
 ## Modes
 
-| mode | speed | Required input in addition to prompt |
-| --- | --- | --- |
-| general | standard | none; reference lists optional |
-| reference | standard | at least one reference image, video or audio |
-| frames | standard | both first_frame and last_frame |
+| mode | Required input in addition to prompt |
+| --- | --- |
+| general | none; reference lists optional |
+| reference | at least one reference image, video or audio |
+| frames | both first_frame and last_frame |
 
 `mode` defaults to `auto`: either top-level frame field selects `frames`, otherwise
-`general`. Reference lists alone do not select `reference`. Every mode defaults to
-`standard`; explicit `fast` returns HTTP 400 before quota reservation. Frames
-cannot contain non-empty reference lists. General/reference cannot contain
-these top-level frame fields.
+`general`. Reference lists alone do not select `reference`. `speed` is not a
+supported parameter; omit it. Frames cannot contain non-empty reference lists.
+General/reference cannot contain these top-level frame fields.
 
 ## Complete request fields
 
@@ -43,7 +42,6 @@ Required nested fields apply when an array entry exists.
 | model | string | required; `wan3.0` |
 | prompt | string | required; non-empty text, including media requests |
 | mode | string | `auto` (default), `general`, `reference`, `frames` |
-| speed | string | `standard` only (default) |
 | seconds | string | integer string, e.g. `"2"`; 2–30, default 5 |
 | duration | integer | alias of seconds; 2–30 |
 | size | string | `480P`, `720P` (default), `1080P`, case-insensitive |
@@ -89,25 +87,25 @@ workflows and the complete parameter inventory.
 Text to video:
 
 ```json
-{"model":"wan3.0","prompt":"A blue ball on a white table, fixed camera.","mode":"auto","speed":"standard","seconds":"2","size":"480P","aspect_ratio":"16:9","prompt_extend":false}
+{"model":"wan3.0","prompt":"A blue ball on a white table, fixed camera.","mode":"auto","seconds":"2","size":"480P","aspect_ratio":"16:9","prompt_extend":false}
 ```
 
 General with an image reference:
 
 ```json
-{"model":"wan3.0","prompt":"A slow camera move around the subject.","mode":"general","speed":"standard","duration":2,"resolution":"480P","reference_images":[{"url":"https://example.com/reference.jpg"}]}
+{"model":"wan3.0","prompt":"A slow camera move around the subject.","mode":"general","duration":2,"resolution":"480P","reference_images":[{"url":"https://example.com/reference.jpg"}]}
 ```
 
 Reference media (one or more lists is sufficient):
 
 ```json
-{"model":"wan3.0","prompt":"Animate the subject using the supplied references.","mode":"reference","speed":"standard","seconds":"2","size":"480P","reference_images":[{"url":"https://example.com/reference.jpg"}],"reference_videos":[{"url":"https://example.com/reference.mp4"}],"reference_audios":[{"url":"https://example.com/reference.mp3"}]}
+{"model":"wan3.0","prompt":"Animate the subject using the supplied references.","mode":"reference","seconds":"2","size":"480P","reference_images":[{"url":"https://example.com/reference.jpg"}],"reference_videos":[{"url":"https://example.com/reference.mp4"}],"reference_audios":[{"url":"https://example.com/reference.mp3"}]}
 ```
 
 First and last frames:
 
 ```json
-{"model":"wan3.0","prompt":"A smooth transition between the two frames.","mode":"frames","speed":"standard","seconds":"2","size":"480P","first_frame":"https://example.com/first.jpg","last_frame":"https://example.com/last.jpg"}
+{"model":"wan3.0","prompt":"A smooth transition between the two frames.","mode":"frames","seconds":"2","size":"480P","first_frame":"https://example.com/first.jpg","last_frame":"https://example.com/last.jpg"}
 ```
 
 ## Create once, query and download
@@ -207,11 +205,14 @@ website-only fields, stripped before forwarding upstream. See [video webhooks](v
 for the complete payload, HMAC verification, retries and deduplication. Polling
 remains available when a callback fails.
 
-## Provider configuration and legacy deployments
+## Provider configuration
 
 See [Aijiau setup](wan3-aijiau.md) for the current channel and verification scope.
-The website API tab and AI-copy guide describe that active channel. The adapter
-still contains [Lxmone legacy support](wan3-lxmone.md) for other deployments;
-that does not make its disabled model routes available here. Restoring another
-provider requires reviewing modes, pricing and public documentation together.
-No client-side provider model mapping is required.
+The website API tab and AI-copy guide describe the same supported parameters.
+The retired channel's model routing and parameter compatibility have been
+removed. `speed` (including `standard`) and nested reference-video `duration`
+return HTTP 400 before quota reservation. Retired Prime/R2V/I2V model IDs are
+unsupported.
+`wan3.0-video` is the current provider's model name and uses the same validation
+as `wan3.0`; it cannot bypass parameter validation. No client-side provider
+model mapping is required.
