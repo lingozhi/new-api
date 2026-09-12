@@ -63,12 +63,39 @@ A live `wan3.0` text request for 2 seconds at 480P completed successfully: playa
 Zero duration and fast speed returned HTTP 400 without a charge. The temporary
 test token was revoked after verification.
 
-Local fixtures cover reference/frame conversion, validation, status aliases,
-RFC3339 completion metadata, public IDs and content forwarding. Live generation
-has **not** exhaustively covered reference images/videos/audio, first/last frames,
-every duration/resolution combination, or webhook delivery. Those paths have
-request/contract coverage, not a blanket live-success guarantee. No provider
-retention period has been verified.
+Three additional live tasks on 2026-09-12 used the minimum output settings
+(2 requested seconds, 480P tier), with no repeated creation requests:
+
+| Workflow | Inputs | Aspect ratio | Actual output | Website charge |
+| --- | --- | --- | --- | --- |
+| general | one reference image | 1:1 | 640×640, 2.02 seconds | USD 0.50 |
+| reference | image + 2-second video + 2-second WAV audio | 9:16 | 480×854, 2.02 seconds | USD 0.50 |
+| frames | first and last frame | 16:9 | 854×480, 2.066 seconds | USD 0.50 |
+
+All tasks reached SUCCESS on channel 149. The provider fetched every supplied
+asset over HTTPS. Each result was playable H.264/AAC MP4, preserved the blue-ball
+reference subject, and passed authenticated full download (200) plus matching
+byte-range download (206). The 480P tier uses 640×640 for square output; callers
+must not assume its output height is always exactly 480 pixels.
+
+All three signed completion webhooks reached the HTTPS receiver. One receiver
+response deliberately returned 503; the gateway retried about 30 seconds later
+and received 204. The retry retained the delivery ID and identical payload bytes;
+HMAC verification passed and receiver deduplication applied the task once. The
+database confirmed all three outbox entries delivered. Callback retries added no
+generation charge. Total additional website charge was USD 1.50; the temporary
+token and HTTPS receiver were removed after verification.
+
+The exact spending cap initially left zero token quota, which the current v1 video
+query/download authentication rejects. Keeping one **unspent** quota unit allowed
+reads and did not change the USD 1.50 charge. Clients should keep their token active
+with positive remaining quota while retrieving existing video tasks.
+
+Local fixtures additionally cover unsafe duration/count/alias inputs, status
+aliases, RFC3339 metadata, failed callbacks and durable outbox behavior. Higher
+resolutions, longer durations, every media format/combination and perceptual audio
+reference fidelity were not exhaustively tested live. No provider retention
+period has been verified.
 
 Aijiau's live polling responses use `pending` and `running`; `running` is an
 in-progress state, not a failed task. The adapter also accepts its client-side
