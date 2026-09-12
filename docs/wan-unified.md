@@ -177,6 +177,11 @@ need callback corrections. Authentication and download errors may instead use
 `error.message`; check the website key, group and balance for authentication,
 routing or quota errors.
 
+Current v1 video query/download authentication requires an active token with
+positive remaining quota. A task that consumes its token's final quota may still
+complete and send its webhook while client reads return 401. Restore a small
+positive allowance and resume the saved ID; do not create another paid task.
+
 For GET network/429/5xx errors, respect Retry-After/backoff and resume the **same**
 ID. A polling timeout is not proof of task failure. Never automatically retry a
 timed-out POST: it may already be accepted and repeating it can charge twice.
