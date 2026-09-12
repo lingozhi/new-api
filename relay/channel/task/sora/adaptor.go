@@ -418,12 +418,12 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	switch resTask.Status {
 	case "queued", "pending":
 		taskResult.Status = model.TaskStatusQueued
-	case "processing", "in_progress", "archiving":
+	case "processing", "in_progress", "archiving", "running":
 		taskResult.Status = model.TaskStatusInProgress
-	case "completed", "done":
+	case "completed", "done", "succeeded", "success":
 		taskResult.Status = model.TaskStatusSuccess
 		// Url intentionally left empty — the caller constructs the proxy URL using the public task ID
-	case "failed", "cancelled", "expired":
+	case "failed", "cancelled", "canceled", "expired", "rejected":
 		taskResult.Status = model.TaskStatusFailure
 		if resTask.Error != nil {
 			taskResult.Reason = resTask.Error.Message
