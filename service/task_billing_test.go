@@ -1185,3 +1185,13 @@ func TestResolveTaskBillingOnCompleteClampsAdaptorQuota(t *testing.T) {
 	require.NotNil(t, clamp)
 	assert.Equal(t, common.QuotaClampOverflow, clamp.Kind)
 }
+
+func TestTaskSettlementPreservesAdaptorQuotaClamp(t *testing.T) {
+	quota, marker := common.QuotaFromFloatChecked(1e100)
+	require.NotNil(t, marker)
+	task := &model.Task{PrivateData: model.TaskPrivateData{FinalQuotaClamp: marker}}
+	actual, _, clamp, adjusted := resolveTaskBillingOnComplete(&mockAdaptor{adjustReturn: quota}, task, &relaycommon.TaskInfo{Status: model.TaskStatusSuccess})
+	require.True(t, adjusted)
+	assert.Equal(t, common.MaxQuota, actual)
+	assert.Equal(t, marker, clamp)
+}

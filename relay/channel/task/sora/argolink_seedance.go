@@ -227,7 +227,13 @@ func convertArgolinkSeedanceTask(task *model.Task) ([]byte, error) {
 
 // AdjustBillingOnComplete reconciles against delivered seconds using the saved price.
 func (a *TaskAdaptor) AdjustBillingOnComplete(task *model.Task, result *relaycommon.TaskInfo) int {
-	if task == nil || result == nil || result.Status != model.TaskStatusSuccess || (!isLxmoneSeedanceTask(task) && !isArgolinkSeedanceModel(task.Properties.OriginModelName)) {
+	if task == nil || result == nil {
+		return 0
+	}
+	if task.Properties.Video != nil && task.Properties.Video.Provider == "wan-unified" && task.Properties.Video.Duration == -1 && common.WanVideoResolutionRatios(task.Properties.OriginModelName) != nil {
+		return settleWanAutomaticDuration(task, result)
+	}
+	if result.Status != model.TaskStatusSuccess || (!isLxmoneSeedanceTask(task) && !isArgolinkSeedanceModel(task.Properties.OriginModelName)) {
 		return 0
 	}
 	billing := task.PrivateData.BillingContext

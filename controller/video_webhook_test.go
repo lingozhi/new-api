@@ -33,7 +33,11 @@ func TestVideoWebhookReachesDurableOutboxOnlyAfterAcceptanceAndCompletion(t *tes
 	for _, name := range []string{"wan3.0", "seedance-2"} {
 		t.Run(name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
-			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"`+name+`","prompt":"test","webhook_url":"https://8.8.8.8/hook","webhook_secret":"test-signing-secret"}`))
+			requestJSON := `{"model":"` + name + `","prompt":"test","webhook_url":"https://8.8.8.8/hook","webhook_secret":"test-signing-secret"}`
+			if name == "wan3.0" {
+				requestJSON = strings.Replace(requestJSON, `"prompt":"test"`, `"input":{"prompt":"test"}`, 1)
+			}
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(requestJSON))
 			c.Request.Header.Set("Content-Type", "application/json")
 			info := &relaycommon.RelayInfo{OriginModelName: name, ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://lxmone.xyz", UpstreamModelName: name}, TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
 			info.ChannelOtherSettings.LxmoneSeedanceResolutionRatios = map[string]map[string]float64{"seedance-2-pro": {"720p": 1}}

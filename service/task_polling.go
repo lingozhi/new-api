@@ -1125,7 +1125,7 @@ func resolveTaskBillingOnComplete(adaptor TaskPollingAdaptor, task *model.Task, 
 			boundedQuota, clamp := common.QuotaFromFloatChecked(float64(actualQuota))
 			return boundedQuota, "adaptor计费调整", clamp, true
 		}
-		return actualQuota, "adaptor计费调整", nil, true
+		return actualQuota, "adaptor计费调整", task.PrivateData.FinalQuotaClamp, true
 	}
 	// 2. 回退到 token 重算
 	if taskResult.TotalTokens > 0 {
