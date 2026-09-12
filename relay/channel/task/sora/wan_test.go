@@ -131,7 +131,7 @@ func TestWanRejectsInvalidOfficialInputsBeforeBilling(t *testing.T) {
 }
 
 func TestWanRejectsRemovedFlatParametersForBothNames(t *testing.T) {
-	for _, name := range []string{"wan3.0", "wan3.0-video"} {
+	for _, name := range []string{"wan3.0", "wan3.0-video", "wan3.0-video-prime"} {
 		for _, field := range []string{`"prompt":"test"`, `"mode":"auto"`, `"speed":"standard"`, `"seconds":"2"`, `"duration":2`, `"size":"480P"`, `"resolution":"480P"`, `"aspect_ratio":"16:9"`, `"ratio":"adaptive"`, `"n":1`, `"prompt_extend":false`, `"audio":false`, `"seed":0`, `"watermark":false`, `"first_frame":"https://example.com/a"`, `"last_frame":"https://example.com/a"`, `"reference_images":[]`, `"reference_videos":[]`, `"reference_audios":[]`, `"media":[]`} {
 			t.Run(name+field, func(t *testing.T) {
 				c, info := newWanContext(t, name, `{"model":"`+name+`","input":{"prompt":"test"},`+field+`}`)
@@ -215,7 +215,7 @@ func TestWanSubmissionURLAndRetiredModels(t *testing.T) {
 	endpoint, err := a.BuildRequestURL(info)
 	require.NoError(t, err)
 	assert.Equal(t, "https://tokens.aijiakefu.com/v1/videos/generations", endpoint)
-	for _, name := range []string{"wan3.0-video-prime", "wan3.0-prime-r2v", "wan3.0-i2v"} {
+	for _, name := range []string{"wan3.0-prime-r2v", "wan3.0-i2v"} {
 		c, info := newWanContext(t, name, `{"model":"`+name+`","input":{"prompt":"test"}}`)
 		require.NotNil(t, a.ValidateRequestAndSetAction(c, info))
 	}
@@ -241,7 +241,7 @@ func TestUnifiedWanResponseKeepsPublicIdentity(t *testing.T) {
 }
 
 func TestUnifiedWanCreationKeepsProviderIDPrivate(t *testing.T) {
-	for _, name := range []string{"wan3.0", "wan3.0-video"} {
+	for _, name := range []string{"wan3.0", "wan3.0-video", "wan3.0-video-prime"} {
 		t.Run(name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
@@ -295,4 +295,38 @@ func TestAijiauWanCompletionAcceptsProviderMetadata(t *testing.T) {
 	}`))
 	require.NoError(t, err)
 	assert.Equal(t, model.TaskStatusSuccess, result.Status)
+}
+
+func TestWanPrimeKeepsModelIdentityAndResolutionPricing(t *testing.T) {
+	for _, tc := range []struct {
+		resolution string
+		cost       float64
+	}{
+		{"480P", .90}, {"720P", 1.80}, {"1080P", 3.60},
+	} {
+		t.Run(tc.resolution, func(t *testing.T) {
+			c, info := newWanContext(t, "wan3.0-video-prime", `{"model":"wan3.0-video-prime","input":{"prompt":"test"},"parameters":{"duration":2,"resolution":"`+tc.resolution+`","audio":false,"seed":0}}`)
+			a := &TaskAdaptor{}
+			require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+			// A configured mapping must not silently turn a Prime request into standard.
+			info.UpstreamModelName = "wan3.0-video"
+			reader, err := a.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			var body map[string]any
+			require.NoError(t, common.DecodeJson(reader, &body))
+			assert.Equal(t, "wan3.0-video-prime", body["model"])
+			assert.Equal(t, "wan3.0-video-prime", info.UpstreamModelName)
+			assert.Equal(t, false, body["audio"])
+			assert.Equal(t, float64(0), body["seed"])
+			ratios := a.EstimateBilling(c, info)
+			assert.InDelta(t, tc.cost, .90*ratios["seconds"]*ratios["resolution"], 1e-9)
+		})
+	}
+}
+
+func TestWanPrimeAutomaticSettlementUsesPrimePriceSnapshot(t *testing.T) {
+	task := &model.Task{Data: []byte(`{"video":{"duration":2}}`), Properties: model.Properties{OriginModelName: "wan3.0-video-prime", Video: &relaycommon.TaskVideoProperties{Provider: "wan-unified", Duration: -1}}, PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{ModelPrice: .90, GroupRatio: 1, OtherRatios: map[string]float64{"seconds": 30, "resolution": .5}}}}
+	a := &TaskAdaptor{}
+	assert.Equal(t, common.QuotaFromFloat(.90*common.QuotaPerUnit), a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}))
+	assert.Zero(t, a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{Status: model.TaskStatusFailure}))
 }

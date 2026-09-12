@@ -101,7 +101,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		return validateUnifiedWanVideoRequest(c, info)
 	}
 	switch info.OriginModelName {
-	case "wan3.0-video-prime", "wan3.0-prime-r2v", "wan3.0-i2v":
+	case "wan3.0-prime-r2v", "wan3.0-i2v":
 		return service.TaskErrorWrapperLocal(fmt.Errorf("retired Wan model; use wan3.0"), "invalid_request", http.StatusBadRequest)
 	}
 	if isArgolinkSeedanceRequest(c, info) {
@@ -209,7 +209,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 					return nil, fmt.Errorf("invalid normalized Wan request")
 				}
 				bodyMap = normalizedBody
-				info.UpstreamModelName = "wan3.0-video"
+				info.UpstreamModelName = wanUpstreamModel(info.OriginModelName)
 				info.IsModelMapped = info.OriginModelName != info.UpstreamModelName
 			}
 			bodyMap["model"] = info.UpstreamModelName

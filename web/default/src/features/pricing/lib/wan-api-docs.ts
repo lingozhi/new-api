@@ -19,11 +19,19 @@ For commercial licensing, please contact support@quantumnous.com
 import { videoWebhookGuide } from './video-webhook-docs'
 
 export function isWanModel(model: string): boolean {
-  return model === 'wan3.0' || model === 'wan3.0-video'
+  return (
+    model === 'wan3.0' ||
+    model === 'wan3.0-video' ||
+    model === 'wan3.0-video-prime'
+  )
 }
 
 export const WAN_PARAMETERS = [
-  { name: 'model', type: 'string *', value: 'wan3.0-video | wan3.0' },
+  {
+    name: 'model',
+    type: 'string *',
+    value: 'wan3.0-video | wan3.0-video-prime | wan3.0',
+  },
   { name: 'input', type: 'object *', value: '{prompt?, media?}' },
   {
     name: 'input.prompt',
@@ -82,9 +90,9 @@ export const WAN_PARAMETERS = [
   { name: 'webhook_secret', type: 'string', value: '≤512 bytes' },
 ]
 
-export function wanRequest() {
+export function wanRequest(modelName = 'wan3.0-video') {
   return {
-    model: 'wan3.0-video',
+    model: modelName,
     input: { prompt: 'A blue ball on a white table, fixed camera.' },
     parameters: {
       resolution: '480P',
@@ -167,14 +175,18 @@ export const WAN_EXAMPLES = [
   },
 ]
 
-export function wanPythonExample(): string {
+export function wanExamples(modelName = 'wan3.0-video') {
+  return WAN_EXAMPLES.map((request) => ({ ...request, model: modelName }))
+}
+
+export function wanPythonExample(modelName = 'wan3.0-video'): string {
   return `import json, os, time
 from pathlib import Path
 import requests
 
 base = os.environ["NEW_API_BASE_URL"].rstrip("/")
 headers = {"Authorization": "Bearer " + os.environ["NEW_API_KEY"]}
-body = json.loads(${JSON.stringify(JSON.stringify(wanRequest()))})
+body = json.loads(${JSON.stringify(JSON.stringify(wanRequest(modelName)))})
 r = requests.post(base + "/v1/videos", headers=headers, json=body, timeout=120)
 r.raise_for_status()
 job = r.json()
@@ -203,7 +215,10 @@ else:
     raise TimeoutError("Query the saved ID later; do not create a duplicate task.")`
 }
 
-export function buildWanAiIntegrationGuide(origin: string): string {
+export function buildWanAiIntegrationGuide(
+  origin: string,
+  modelName = 'wan3.0-video'
+): string {
   const base = origin.replace(/\/$/, '')
   return [
     '# Wan 3.0 website API',
@@ -217,7 +232,7 @@ export function buildWanAiIntegrationGuide(origin: string): string {
     `GET ${base}/v1/videos/{id}`,
     `GET ${base}/v1/videos/{id}/content`,
     'The website uses its own endpoints, key, public task IDs and response schema. The DashScope endpoint, SDK response format and X-DashScope-Async header are not required here. Do not send a provider key from clients.',
-    'Use model wan3.0-video (standard); wan3.0 is a website alias with identical validation. The official Prime model is not enabled on the current Aijiau channel. Do not select a separate model or mode for different media workflows.',
+    `Examples on this page use model ${modelName}. wan3.0-video-prime is the high-speed version, with the same official input/parameters/media contract as wan3.0-video. wan3.0 aliases the standard model. Prime requires an upstream key/channel authorized for Prime and is never silently mapped to standard. Select the workflow through media and prompt, without a mode or speed field.`,
     '',
     '## Complete field inventory (* required; nested * applies when an item exists)',
     '| Field | Type | Values |',
@@ -254,7 +269,9 @@ export function buildWanAiIntegrationGuide(origin: string): string {
     '## Billing',
     '- Fixed duration: reserve and charge the requested output seconds at the website resolution rate and group multiplier. Reference-video length and delivered length do not change this fixed-duration charge. Failed tasks refund the reservation.',
     '- Automatic duration (-1): reserve 30 output seconds at the selected rate; success settles the provider-reported video.duration, bounded to 2–30 seconds, and refunds the unused reserve. If duration metadata is missing or invalid, charge the minimum 2 seconds, release the rest and log the anomaly. Failures refund the reservation.',
-    '- At the current group multiplier 1 and USD 0.30 base price, 480P/720P/1080P cost USD 0.25/0.30/0.35 per second. A 2-second 480P task costs USD 0.50; automatic 480P reserves USD 7.50. Defaults reserve USD 1.75 for 5 seconds at 1080P. Check current website pricing before use; these are website charges, not Alibaba or Aijiau upstream prices.',
+    modelName === 'wan3.0-video-prime'
+      ? '- Prime has independent pricing: 480P/720P/1080P multipliers are 0.5/1/2 relative to its configured 720P base price. At USD 0.90 base and group multiplier 1, rates are USD 0.45/0.90/1.80 per second: 2-second 480P costs USD 0.90; automatic 480P reserves USD 13.50; default 5-second 1080P reserves USD 9.00. Check the actual website model and group prices before use.'
+      : '- Standard at group multiplier 1 and USD 0.30 base price: 480P/720P/1080P cost USD 0.25/0.30/0.35 per second. A 2-second 480P task costs USD 0.50; automatic 480P reserves USD 7.50; default 5-second 1080P reserves USD 1.75. Prime uses separate model pricing and resolution multipliers (0.5/1/2). Check actual website pricing; these are website charges, not upstream prices.',
     '',
     '## Responses and recovery',
     '- Creation returns HTTP 200. Save id immediately; id/task_id/request_id refer to the same public task ID and model is the requested website model. Creation status may be pending. GET normalizes status to queued,in_progress,completed,failed.',
@@ -268,7 +285,7 @@ export function buildWanAiIntegrationGuide(origin: string): string {
     videoWebhookGuide(),
     '## Eight separate examples',
     'In order: text, single first frame, first/last frames, mixed references, document, webpage, edit, extension. Replace all media URLs. These examples use fixed 2-second 480P output; each POST creates a separate paid task. Do not merge all examples.',
-    ...WAN_EXAMPLES.flatMap((request) => [
+    ...wanExamples(modelName).flatMap((request) => [
       '```json',
       JSON.stringify(request, null, 2),
       '```',
@@ -276,7 +293,7 @@ export function buildWanAiIntegrationGuide(origin: string): string {
     '## Python: create once, save ID, poll and download',
     `Requires requests; set NEW_API_BASE_URL=${base} and NEW_API_KEY=<website key>. Running this creates one paid task.`,
     '```python',
-    wanPythonExample(),
+    wanPythonExample(modelName),
     '```',
     '## Resume without creating another task',
     '```bash',
@@ -288,6 +305,6 @@ export function buildWanAiIntegrationGuide(origin: string): string {
     'curl --fail-with-body --location "$NEW_API_BASE_URL/v1/videos/$TASK_ID/content" -H "Authorization: Bearer $NEW_API_KEY" --output wan.mp4',
     '```',
     '## Migration',
-    'Replace the previous flat request with input.prompt/input.media and parameters. mode, speed, seconds, size, top-level duration/resolution/aspect_ratio/ratio, n, first_frame/last_frame and reference_images/reference_videos/reference_audios are removed and return 400. audio/seed/prompt_extend/watermark belong inside parameters. Prime/R2V/I2V model routing is not enabled. Existing saved public task IDs can still be queried and downloaded.',
+    'Replace the previous flat request with input.prompt/input.media and parameters. mode, speed, seconds, size, top-level duration/resolution/aspect_ratio/ratio, n, first_frame/last_frame and reference_images/reference_videos/reference_audios are removed and return 400. audio/seed/prompt_extend/watermark belong inside parameters. Retired wan3.0-prime-r2v and wan3.0-i2v remain unsupported. wan3.0-video-prime uses the official nested contract and requires a Prime-enabled channel. Existing saved public task IDs can still be queried and downloaded.',
   ].join('\n')
 }

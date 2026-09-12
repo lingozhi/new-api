@@ -13,10 +13,10 @@ import (
 )
 
 func TestVideoWebhookStoredForGatewayAndStrippedUpstream(t *testing.T) {
-	for _, name := range []string{"wan3.0", "wan3.0-video", "seedance-2"} {
+	for _, name := range []string{"wan3.0", "wan3.0-video", "wan3.0-video-prime", "seedance-2"} {
 		t.Run(name, func(t *testing.T) {
 			requestJSON := `{"model":"` + name + `","prompt":"test","webhook_url":"https://8.8.8.8/hook","webhook_secret":"callback-private-value"}`
-			if name == "wan3.0" || name == "wan3.0-video" {
+			if common.WanVideoResolutionRatios(name) != nil {
 				requestJSON = strings.Replace(requestJSON, `"prompt":"test"`, `"input":{"prompt":"test"}`, 1)
 			}
 			c, info := newWanContext(t, name, requestJSON)
@@ -40,7 +40,7 @@ func TestVideoWebhookStoredForGatewayAndStrippedUpstream(t *testing.T) {
 }
 
 func TestVideoWebhookRejectsUnsafeEndpointsAndInvalidOptions(t *testing.T) {
-	for _, name := range []string{"wan3.0", "wan3.0-video", "seedance-2"} {
+	for _, name := range []string{"wan3.0", "wan3.0-video", "wan3.0-video-prime", "seedance-2"} {
 		for _, options := range []string{
 			`"webhook_url":"http://8.8.8.8/hook"`,
 			`"webhook_url":"https://127.0.0.1/hook"`,
@@ -51,7 +51,7 @@ func TestVideoWebhookRejectsUnsafeEndpointsAndInvalidOptions(t *testing.T) {
 			`"webhook_url":"https://8.8.8.8/hook","webhook_secret":"` + strings.Repeat("x", 513) + `"`,
 		} {
 			requestJSON := `{"model":"` + name + `","prompt":"test",` + options + `}`
-			if name == "wan3.0" || name == "wan3.0-video" {
+			if common.WanVideoResolutionRatios(name) != nil {
 				requestJSON = strings.Replace(requestJSON, `"prompt":"test"`, `"input":{"prompt":"test"}`, 1)
 			}
 			c, info := newWanContext(t, name, requestJSON)

@@ -31,13 +31,13 @@ import { copyToClipboard } from '@/lib/copy-to-clipboard'
 
 import {
   WAN_PARAMETERS,
-  WAN_EXAMPLES,
+  wanExamples,
   wanPythonExample,
   buildWanAiIntegrationGuide,
 } from '../lib/wan-api-docs'
 import { VideoWebhookDocs } from './video-webhook-docs'
 
-export function WanApiDocs() {
+export function WanApiDocs(props: { modelName: string }) {
   const { t } = useTranslation()
   const { status } = useStatus()
   const configured = (status as Record<string, unknown> | null)?.server_address
@@ -46,7 +46,9 @@ export function WanApiDocs() {
       ? configured.replace(/\/$/, '')
       : window.location.origin
   const copyGuide = async () => {
-    const copied = await copyToClipboard(buildWanAiIntegrationGuide(baseUrl))
+    const copied = await copyToClipboard(
+      buildWanAiIntegrationGuide(baseUrl, props.modelName)
+    )
     if (copied) toast.success(t('Copied to clipboard'))
     else toast.error(t('Failed to copy'))
   }
@@ -62,7 +64,7 @@ export function WanApiDocs() {
         </div>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Use wan3.0-video (or wan3.0) with a website key in the official group. Requests use the official input, parameters and media structure; task endpoints and responses use this website API.'
+            'Use wan3.0-video-prime for the high-speed version, or wan3.0-video (wan3.0 alias) for standard. Both use the official input, parameters and media structure. Use a website key in the official group and a channel authorized for the selected model.'
           )}
         </p>
         <CodeBlock
@@ -135,7 +137,7 @@ export function WanApiDocs() {
         </p>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Use public HTTP(S) URLs; images also accept Base64 data URLs up to 20 MB. This channel does not accept DashScope OSS URLs or Prime models. The provider checks file formats, dimensions, page counts and actual durations. See the copied guide for all media limits.'
+            'Use public HTTP(S) URLs; images also accept Base64 data URLs up to 20 MB. This channel does not accept DashScope OSS URLs. The provider checks file formats, dimensions, page counts and actual durations. See the copied guide for all media limits.'
           )}
         </p>
         <p className='text-muted-foreground text-sm'>
@@ -161,7 +163,7 @@ export function WanApiDocs() {
             'Eight separate examples: text, first frame, first/last frames, mixed references, document, webpage, editing and extension. Each uses 2-second 480P output. Replace media URLs; each POST creates a paid task.'
           )}
         </p>
-        {WAN_EXAMPLES.map((request) => (
+        {wanExamples(props.modelName).map((request) => (
           <CodeBlock
             key={request.input.prompt}
             language='json'
@@ -184,7 +186,7 @@ export function WanApiDocs() {
             'Check HTTP status first. Invalid parameters return 400 with code and message; authentication and download errors may use error.message. Correct the input, key, group or balance before retrying. The copied AI guide includes error handling and commands to resume a saved task.'
           )}
         </p>
-        <CodeBlock language='python' code={wanPythonExample()}>
+        <CodeBlock language='python' code={wanPythonExample(props.modelName)}>
           <CodeBlockCopyButton />
         </CodeBlock>
       </section>

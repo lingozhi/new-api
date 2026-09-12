@@ -6,19 +6,19 @@ See [the complete website contract](wan-unified.md) for fields, defaults, media 
 ## Channel setup and translation
 
 - Type: OpenAI; base URL: `https://tokens.aijiakefu.com` (trailing `/v1` accepted).
-- Credential: Aijiau API key authorized for `wan3.0-video`.
-- Models: `wan3.0-video` and website alias `wan3.0`; no client model mapping.
+- Credential: Aijiau API key authorized for the selected model. Aijiau currently lists standard and Prime in separate groups; use a key from the matching group.
+- Models: `wan3.0-video`, website alias `wan3.0`, and `wan3.0-video-prime`; no client model mapping.
 - Provider endpoints: `/v1/videos/generations`, `/{id}` and `/{id}/content` beneath it.
 - Website endpoints: `POST /v1/videos`, `GET /v1/videos/{id}`, `GET /v1/videos/{id}/content`.
 - Aijiau dashboard and [API documentation](https://api.aijiau.com/docs/api) are at `api.aijiau.com`.
 
 The adapter converts `input.prompt` and `input.media` to Aijiau's top-level `prompt` and `media`, preserving media order and type. `parameters.ratio` becomes `aspect_ratio`; resolution, duration, audio, seed, prompt_extend and watermark become top-level provider fields. The provider also receives the matching string `seconds`. Website webhook fields stay in the gateway. Defaults are explicitly sent so provider defaults cannot diverge from billing. No DashScope key or async header is needed for website clients.
 
-This channel supports the standard model. Prime is not enabled, and Alibaba workspace-scoped `oss://` URLs are rejected; callers can use public HTTP(S) URLs or image Base64 data URLs. File contents and actual media duration are validated by the upstream service. The published Aijiau studio uses this flat payload, but its implementation is not proof that every official media format has passed a live task.
+The adapter supports standard and Prime without substituting one for the other. Prime must have an eligible Aijiau key/channel; a standard-only key is not sufficient. Alibaba workspace-scoped `oss://` URLs are rejected; callers can use public HTTP(S) URLs or image Base64 data URLs. File contents and actual media duration are validated by the upstream service. The published Aijiau studio uses this flat payload, but its implementation is not proof that every official media format has passed a live task.
 
 ## Billing and migration
 
-Configure the 720P per-second base price and group multiplier before enabling requests. Resolution multipliers remain 480P = 0.25/0.30, 720P = 1, 1080P = 0.35/0.30. The official default is now 1080P, adaptive ratio, 5 seconds. Use explicit 480P and 2 seconds when testing.
+Configure the 720P per-second base price and group multiplier before enabling requests. Resolution multipliers remain 480P = 0.25/0.30, 720P = 1, 1080P = 0.35/0.30. Prime has separate 480P/720P/1080P multipliers of 0.5/1/2, matching the provider catalog tiers 0.45/0.90/1.80. Set a distinct Prime 720P base price and group multiplier; do not inherit a retired channel’s price blindly. The official default is 1080P, adaptive ratio, 5 seconds. Use explicit 480P and 2 seconds when testing.
 
 Fixed duration charges requested output seconds. Automatic `parameters.duration=-1` reserves 30 output seconds, then settles the provider's `video.duration` bounded to 2–30 seconds using the saved price snapshot. Missing/invalid duration settles at the 2-second minimum and emits an accounting error; failed tasks refund. The maximum reserve must never become a maximum charge merely because metadata is absent. Quota conversion uses checked saturation and carries the marker into settlement logs.
 
@@ -84,3 +84,18 @@ and become downloadable.
 Local contract tests cover official defaults, all seven media types and combination rules, media-only input, Unicode prompt truncation, pointer zero values, URL/Base64 validation, retired flat fields, duration/seed bounds, automatic reserve/settlement, public task identity and website webhooks. Documentation and copied examples use the same request builders.
 
 The earlier paid tasks above used the previous flat public request. They establish provider media generation, download and webhook behavior for that version, not live verification of every newly exposed parameter. Release verification for the nested contract is recorded separately after deployment.
+
+## Prime channel requirements
+
+The official `wan3.0-video-prime` model is the high-speed counterpart of standard,
+with identical request parameters. It remains Prime through validation, upstream
+submission, task identity, billing, polling, download and website webhooks.
+Per-model page examples, Python and copied guides retain the selected model.
+
+Aijiau’s catalog lists standard in `Wan3.0视频` (group 26) and Prime in
+`Wan3.0视频Prime` (group 32). Use a separate OpenAI-compatible channel with the
+Prime group's key, base URL `https://tokens.aijiakefu.com`, model
+`wan3.0-video-prime`, and website group `官方渠道`. The supplied Prime key has been
+verified to list this exact model. Set its independent website base price before
+enabling production traffic. Never enable the retired Lxmone channel or route
+Prime to standard as a fallback.

@@ -12,8 +12,8 @@ import (
 )
 
 // Aijiau accepts a flat payload; public requests use the official nested shape.
-func buildAijiauWanRequest(prompt string, media []wanMedia, parameters wanVideoParameters, duration int, resolution, ratio string) map[string]any {
-	body := map[string]any{"model": "wan3.0-video", "prompt": prompt, "duration": duration, "seconds": strconv.Itoa(duration), "resolution": resolution, "aspect_ratio": ratio, "audio": true, "seed": int64(-1), "prompt_extend": true, "watermark": false}
+func buildAijiauWanRequest(modelName, prompt string, media []wanMedia, parameters wanVideoParameters, duration int, resolution, ratio string) map[string]any {
+	body := map[string]any{"model": wanUpstreamModel(modelName), "prompt": prompt, "duration": duration, "seconds": strconv.Itoa(duration), "resolution": resolution, "aspect_ratio": ratio, "audio": true, "seed": int64(-1), "prompt_extend": true, "watermark": false}
 	if len(media) > 0 {
 		body["media"] = media
 	}

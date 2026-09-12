@@ -118,6 +118,6 @@ func validateUnifiedWanVideoRequest(c *gin.Context, info *relaycommon.RelayInfo)
 	if info.TaskRelayInfo != nil {
 		info.TaskRelayInfo.Video = &relaycommon.TaskVideoProperties{Provider: "wan-unified", Resolution: strings.ToLower(resolution), Duration: duration, Ratio: ratio, InputImageCount: counts["reference_image"] + frames}
 	}
-	c.Set("wan_unified_body", buildAijiauWanRequest(prompt, request.Input.Media, parameters, duration, resolution, ratio))
+	c.Set("wan_unified_body", buildAijiauWanRequest(info.OriginModelName, prompt, request.Input.Media, parameters, duration, resolution, ratio))
 	return nil
 }
