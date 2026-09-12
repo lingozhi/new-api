@@ -9,12 +9,12 @@ POST https://api.opwan.ai/v1/videos
 GET https://api.opwan.ai/v1/videos/{id}
 GET https://api.opwan.ai/v1/videos/{id}/content
 The website uses its own endpoints, key, public task IDs and response schema. The DashScope endpoint, SDK response format and X-DashScope-Async header are not required here. Do not send a provider key from clients.
-Use model wan3.0-video (standard); wan3.0 is a website alias with identical validation. The official Prime model is not enabled on the current Aijiau channel. Do not select a separate model or mode for different media workflows.
+Examples on this page use model wan3.0-video. wan3.0-video-prime is the high-speed version, with the same official input/parameters/media contract as wan3.0-video. wan3.0 aliases the standard model. Prime requires an upstream key/channel authorized for Prime and is never silently mapped to standard. Select the workflow through media and prompt, without a mode or speed field.
 
 ## Complete field inventory (* required; nested * applies when an item exists)
 | Field | Type | Values |
 | --- | --- | --- |
-| model | string * | wan3.0-video / wan3.0 |
+| model | string * | wan3.0-video / wan3.0-video-prime / wan3.0 |
 | input | object * | {prompt?, media?} |
 | input.prompt | string | ≤20000; prompt / media |
 | input.media | object[] | ≤20; {type, url} |
@@ -59,7 +59,7 @@ Use model wan3.0-video (standard); wan3.0 is a website alias with identical vali
 ## Billing
 - Fixed duration: reserve and charge the requested output seconds at the website resolution rate and group multiplier. Reference-video length and delivered length do not change this fixed-duration charge. Failed tasks refund the reservation.
 - Automatic duration (-1): reserve 30 output seconds at the selected rate; success settles the provider-reported video.duration, bounded to 2–30 seconds, and refunds the unused reserve. If duration metadata is missing or invalid, charge the minimum 2 seconds, release the rest and log the anomaly. Failures refund the reservation.
-- At the current group multiplier 1 and USD 0.30 base price, 480P/720P/1080P cost USD 0.25/0.30/0.35 per second. A 2-second 480P task costs USD 0.50; automatic 480P reserves USD 7.50. Defaults reserve USD 1.75 for 5 seconds at 1080P. Check current website pricing before use; these are website charges, not Alibaba or Aijiau upstream prices.
+- Standard at group multiplier 1 and USD 0.30 base price: 480P/720P/1080P cost USD 0.25/0.30/0.35 per second. A 2-second 480P task costs USD 0.50; automatic 480P reserves USD 7.50; default 5-second 1080P reserves USD 1.75. Prime uses separate model pricing and resolution multipliers (0.5/1/2). Check actual website pricing; these are website charges, not upstream prices.
 
 ## Responses and recovery
 - Creation returns HTTP 200. Save id immediately; id/task_id/request_id refer to the same public task ID and model is the requested website model. Creation status may be pending. GET normalizes status to queued,in_progress,completed,failed.
@@ -338,4 +338,4 @@ curl --fail-with-body "$NEW_API_BASE_URL/v1/videos/$TASK_ID" -H "Authorization: 
 curl --fail-with-body --location "$NEW_API_BASE_URL/v1/videos/$TASK_ID/content" -H "Authorization: Bearer $NEW_API_KEY" --output wan.mp4
 ```
 ## Migration
-Replace the previous flat request with input.prompt/input.media and parameters. mode, speed, seconds, size, top-level duration/resolution/aspect_ratio/ratio, n, first_frame/last_frame and reference_images/reference_videos/reference_audios are removed and return 400. audio/seed/prompt_extend/watermark belong inside parameters. Prime/R2V/I2V model routing is not enabled. Existing saved public task IDs can still be queried and downloaded.
+Replace the previous flat request with input.prompt/input.media and parameters. mode, speed, seconds, size, top-level duration/resolution/aspect_ratio/ratio, n, first_frame/last_frame and reference_images/reference_videos/reference_audios are removed and return 400. audio/seed/prompt_extend/watermark belong inside parameters. Retired wan3.0-prime-r2v and wan3.0-i2v remain unsupported. wan3.0-video-prime uses the official nested contract and requires a Prime-enabled channel. Existing saved public task IDs can still be queried and downloaded.

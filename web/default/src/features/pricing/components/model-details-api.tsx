@@ -1304,7 +1304,7 @@ export function ModelDetailsApi(props: {
     ''
 
   if (isWanModel(props.model.model_name || '')) {
-    return <WanApiDocs />
+    return <WanApiDocs modelName={props.model.model_name || 'wan3.0-video'} />
   }
 
   if (props.model.video_provider === 'lxmone-seedance') {

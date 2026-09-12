@@ -5,6 +5,7 @@ var ModelList = []string{
 	"sora-2-pro",
 	"wan3.0",
 	"wan3.0-video",
+	"wan3.0-video-prime",
 	"seedance-2",
 	"seedance-2-pro",
 	"seedance-2-fast",

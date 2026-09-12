@@ -78,3 +78,11 @@ func validateWanMediaURL(media wanMedia) error {
 	}
 	return nil
 }
+
+// Only the website alias is mapped. Prime must retain its upstream identity.
+func wanUpstreamModel(modelName string) string {
+	if modelName == "wan3.0" {
+		return "wan3.0-video"
+	}
+	return modelName
+}
