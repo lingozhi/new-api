@@ -62,7 +62,7 @@ export function WanApiDocs() {
         </div>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Use one public model, wan3.0. The server selects the standard, fast, reference or frame workflow from mode and speed. Your client does not need the four upstream model IDs.'
+            'Use model wan3.0 with a website key in the official group. The current channel supports text, reference media and first/last frames at standard speed only. The previous Wan channel is disabled.'
           )}
         </p>
         <CodeBlock
@@ -73,7 +73,7 @@ export function WanApiDocs() {
         </CodeBlock>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'mode defaults to auto: frame fields select frames, otherwise general. general supports standard (default) or fast speed. reference requires reference lists and supports fast only. frames requires both first_frame and last_frame and supports standard only. Unsupported combinations are rejected.'
+            'mode defaults to auto: frame fields select frames, otherwise general. reference requires at least one reference image, video or audio; frames requires both first_frame and last_frame. Omit speed or use standard in every mode. fast returns HTTP 400.'
           )}
         </p>
       </section>
@@ -111,7 +111,7 @@ export function WanApiDocs() {
         />
         <p className='text-muted-foreground text-sm'>
           {t(
-            'general and reference accept the same reference lists: up to 10 images, 5 videos and 5 audios. general allows image roles reference_image, first_frame and last_frame; reference allows reference_image only. Optional reference video duration is supported only in general mode. All media URLs must be publicly accessible HTTPS URLs without credentials.'
+            'general and reference accept up to 10 images, 5 videos and 5 audios. general allows image roles reference_image, first_frame and last_frame; reference allows reference_image only. reference_videos entries accept url only; duration metadata is rejected. Use public HTTPS URLs without credentials that remain accessible until completion. File formats and actual media limits are checked by the provider.'
           )}
         </p>
         <p className='text-muted-foreground text-sm'>
@@ -121,25 +121,25 @@ export function WanApiDocs() {
         </p>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Wan uses USD per second at the effective resolution and group price. Failed tasks refund the website reservation. The four legacy model IDs retain their original request formats for compatibility; new integrations should use wan3.0.'
+            'Wan uses USD per second at the effective resolution and group price. Use wan3.0 for all modes; the previous fast, reference and frame model IDs are unavailable on the current official channel.'
           )}
         </p>
       </section>
       <p className='text-muted-foreground text-sm'>
         {t(
-          'Wan currently charges the requested output seconds. Reference video duration is not added to the website charge, and actual output duration does not change the final charge. Failed tasks are refunded. The 3600-second reference duration bound is a gateway safety limit, not a provider capability guarantee.'
+          'Wan charges the requested output seconds at the current website price. Input video length and actual output length do not change the final charge. Failed tasks refund the website reservation.'
         )}
       </p>
       <p className='text-muted-foreground text-sm'>
         {t(
-          'Download after completion. Earlier requests return 409. Range and If-Range support resumable downloads with 206; an unsatisfiable range returns 416. The provider normally retains results for 48 hours, but may change this period. Download promptly; permanent storage is not guaranteed.'
+          'Download after completion; earlier requests return 409. Range and If-Range support partial downloads with 206; an unsatisfiable range returns 416, and an If-Range mismatch may return the full file with 200. Download promptly: the current channel has no verified retention period or permanent storage guarantee.'
         )}
       </p>
       <section className='space-y-3'>
         <h3 className='text-sm font-semibold'>{t('Example')}</h3>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'These are four alternative JSON requests: standard, fast references, R2V references and first/last frames. Replace media URL placeholders with real files. Do not merge all optional fields into one request.'
+            'These are four alternative JSON requests: text, general with a reference image, reference media, and first/last frames. All use standard speed. Replace media URL placeholders with real files. Do not merge all optional fields into one request.'
           )}
         </p>
         {WAN_EXAMPLES.map((request) => (
@@ -157,7 +157,12 @@ export function WanApiDocs() {
         <h3 className='text-sm font-semibold'>{t('Generate and download')}</h3>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'Create returns HTTP 200; save the public id. Query states are queued, in_progress, completed and failed. Poll every 10–15 seconds with the same token, then download content after completed. On timeouts resume the saved ID instead of creating another paid task. Python requires requests, NEW_API_BASE_URL and NEW_API_KEY.'
+            'Create returns HTTP 200; save id. Creation status may be pending. GET query states are queued, in_progress, completed and failed. Progress and error details may be absent; timestamps may be strings. Poll every 10–15 seconds with the same token and download after completed. If creation times out without an ID, check task logs before retrying; otherwise resume the saved ID. Python requires requests, NEW_API_BASE_URL (origin without /v1) and NEW_API_KEY.'
+          )}
+        </p>
+        <p className='text-muted-foreground text-sm'>
+          {t(
+            'Check HTTP status first. Invalid parameters return 400 with code and message; authentication and download errors may use error.message. Correct the input, key, group or balance before retrying. The copied AI guide includes error handling and commands to resume a saved task.'
           )}
         </p>
         <CodeBlock language='python' code={wanPythonExample()}>

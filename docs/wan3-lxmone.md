@@ -1,5 +1,10 @@
 # Wan 3.0 through lxmone.xyz
 
+> Legacy provider reference: this deployment disabled the Lxmone Wan channel on
+> 2026-09-12. For the active API, use [Unified Wan 3.0](wan-unified.md) and
+> [Aijiau setup](wan3-aijiau.md). The model variants below require an enabled
+> Lxmone channel and are not capabilities of the current official channel.
+
 The OpenAI channel adapter supports `wan3.0-video`, `wan3.0-video-prime`,
 `wan3.0-prime-r2v`, and `wan3.0-i2v` through the asynchronous video API.
 Provider documentation: <https://lxmone.xyz/user-api-docs.html#wan>.

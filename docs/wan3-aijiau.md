@@ -50,9 +50,25 @@ family, forwarding the provider key only upstream. Existing unified Wan
 validation, billing, public task IDs and webhooks remain available; see
 [Unified Wan 3.0](wan-unified.md).
 
-Tests use local fixtures for the documented request, task status and content
-download protocols. A real provider key is still required to verify generation,
-model availability and charges end to end.
+## Verification and deployment record
+
+On 2026-09-12, production enabled Aijiau channel 149 and disabled Lxmone Wan
+channel 147. GPT Image and Seedance channels were unchanged. The configured
+models are `wan3.0` and `wan3.0-video`; the provider key's model list confirmed
+`wan3.0-video`. Former fast/reference/frame model IDs are not enabled here.
+
+A live `wan3.0` text request for 2 seconds at 480P completed successfully: playable
+854×480 H.264/AAC MP4 (2.02 seconds), HTTP 200 full download, and a matching HTTP
+206 byte-range download. Net website charge: USD 0.50 at group multiplier 1.
+Zero duration and fast speed returned HTTP 400 without a charge. The temporary
+test token was revoked after verification.
+
+Local fixtures cover reference/frame conversion, validation, status aliases,
+RFC3339 completion metadata, public IDs and content forwarding. Live generation
+has **not** exhaustively covered reference images/videos/audio, first/last frames,
+every duration/resolution combination, or webhook delivery. Those paths have
+request/contract coverage, not a blanket live-success guarantee. No provider
+retention period has been verified.
 
 Aijiau's live polling responses use `pending` and `running`; `running` is an
 in-progress state, not a failed task. The adapter also accepts its client-side
