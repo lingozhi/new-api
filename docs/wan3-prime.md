@@ -30,9 +30,12 @@ Create with `POST /v1/videos`, save `id`, query `GET /v1/videos/{id}`, then down
 Automatic duration reserves 30 seconds and settles using the saved Prime price.
 
 Prime has independent resolution multipliers: 480P = 0.5, 720P = 1, 1080P = 2.
-For a configured 720P base price of USD 0.90 and group multiplier 1, the per-second
-prices are USD 0.45 / 0.90 / 1.80. The example costs USD 0.90; default 5-second
-1080P would cost USD 9.00. Check the configured website price before submitting.
+The configured discounted 720P base price is USD 0.63 with group multiplier 1.
+Per-second prices are USD 0.315 / 0.63 / 1.26 for 480P / 720P / 1080P. The
+0.7 discount is already included in the base price; do not apply it again.
+The example costs USD 0.63; automatic 480P reserves USD 9.45, and default
+5-second 1080P costs USD 6.30. Prices are configured in USD as requested.
+Check the current website price before submitting.
 
 Aijiau currently lists Prime in its separate `Wan3.0视频Prime` group (32). A key
 that only lists standard `wan3.0-video` must not be assumed to authorize Prime.
