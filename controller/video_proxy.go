@@ -146,7 +146,7 @@ func VideoProxy(c *gin.Context) {
 				return
 			}
 		case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
-			videoURL = fmt.Sprintf("%s/v1/videos/%s/content", baseURL, task.GetUpstreamTaskID())
+			videoURL = fmt.Sprintf("%s/%s/content", common.OpenAIVideoBaseURL(baseURL), task.GetUpstreamTaskID())
 			key, keyErr := service.ResolveTaskPollingChannelKey(channel, task.PrivateData)
 			if keyErr != nil {
 				videoProxyError(c, http.StatusBadGateway, "server_error", "Unable to resolve task credentials")

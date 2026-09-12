@@ -170,7 +170,7 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	if info.Action == constant.TaskActionRemix {
 		return fmt.Sprintf("%s/v1/videos/%s/remix", a.baseURL, info.OriginTaskID), nil
 	}
-	return fmt.Sprintf("%s/v1/videos", a.baseURL), nil
+	return common.OpenAIVideoBaseURL(a.baseURL), nil
 }
 
 // BuildRequestHeader sets required headers.
@@ -245,6 +245,13 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 					bodyMap["aspect_ratio"] = info.TaskRelayInfo.Video.Ratio
 					bodyMap["ratio"] = info.TaskRelayInfo.Video.Ratio
 				}
+			}
+			if common.IsAijiauVideoBaseURL(info.ChannelBaseUrl) && common.WanVideoResolutionRatios(info.OriginModelName) != nil {
+				if err := buildAijiauWanRequest(bodyMap); err != nil {
+					return nil, err
+				}
+				info.UpstreamModelName = "wan3.0-video"
+				info.IsModelMapped = info.OriginModelName != info.UpstreamModelName
 			}
 			if !isLxmoneSeedanceRequest(info) && isArgolinkSeedanceModel(info.OriginModelName) {
 				if value, ok := c.Get(argolinkSeedance25ContextKey); ok {
@@ -374,7 +381,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
-	uri := fmt.Sprintf("%s/v1/videos/%s", baseUrl, taskID)
+	uri := fmt.Sprintf("%s/%s", common.OpenAIVideoBaseURL(baseUrl), taskID)
 
 	req, err := http.NewRequest(http.MethodGet, uri, nil)
 	if err != nil {

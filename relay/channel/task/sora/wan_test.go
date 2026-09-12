@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -255,5 +256,103 @@ func TestUnifiedWanRejectsOtherSubmissionProtocols(t *testing.T) {
 			require.NotNil(t, taskErr)
 			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 		})
+	}
+}
+
+func TestAijiauWanSubmissionAndPolling(t *testing.T) {
+	for _, modelName := range []string{"wan3.0", "wan3.0-video"} {
+		t.Run(modelName, func(t *testing.T) {
+			c, info := newWanContext(t, modelName, `{"prompt":"海边日出，镜头缓慢向前移动","resolution":"720P","duration":5,"aspect_ratio":"16:9"}`)
+			info.ChannelBaseUrl = "https://tokens.aijiakefu.com/v1/"
+			info.ApiKey = "test-key"
+			adaptor := &TaskAdaptor{}
+			adaptor.Init(info)
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			body, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			var payload map[string]any
+			require.NoError(t, common.DecodeJson(body, &payload))
+			assert.Equal(t, "wan3.0-video", payload["model"])
+			assert.Equal(t, float64(5), payload["duration"])
+			assert.Equal(t, "720P", payload["resolution"])
+			assert.Equal(t, "16:9", payload["aspect_ratio"])
+			assert.Equal(t, map[string]float64{"seconds": 5, "resolution": 1}, adaptor.EstimateBilling(c, info))
+			endpoint, err := adaptor.BuildRequestURL(info)
+			require.NoError(t, err)
+			assert.Equal(t, "https://tokens.aijiakefu.com/v1/videos/generations", endpoint)
+			request, err := http.NewRequest(http.MethodPost, endpoint, nil)
+			require.NoError(t, err)
+			require.NoError(t, adaptor.BuildRequestHeader(c, request, info))
+			assert.Equal(t, "Bearer test-key", request.Header.Get("Authorization"))
+			assert.Equal(t, "application/json", request.Header.Get("Content-Type"))
+		})
+	}
+
+	// A local HTTP proxy records the provider URL without contacting the provider.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "tokens.aijiakefu.com", r.URL.Host)
+		assert.Equal(t, "/v1/videos/generations/upstream-id", r.URL.Path)
+		assert.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"upstream-id","status":"completed"}`))
+	}))
+	defer upstream.Close()
+	t.Cleanup(service.ResetProxyClientCache)
+	adaptor := &TaskAdaptor{}
+	response, err := adaptor.FetchTask("http://tokens.aijiakefu.com/v1", "test-key", map[string]any{"task_id": "upstream-id"}, upstream.URL)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	raw, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	result, err := adaptor.ParseTaskResult(raw)
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusSuccess, result.Status)
+}
+
+func TestAijiauWanMediaWorkflowsUseAvailableModel(t *testing.T) {
+	for _, tc := range []struct {
+		name, model, fields string
+		media               []wanMedia
+	}{
+		{"general", "wan3.0", `,"reference_images":[{"url":"https://example.com/a.jpg","role":"first_frame"}],"reference_videos":[{"url":"https://example.com/v.mp4"}],"reference_audios":[{"url":"https://example.com/a.mp3"}]`, []wanMedia{{Type: "first_frame", URL: "https://example.com/a.jpg"}, {Type: "reference_video", URL: "https://example.com/v.mp4"}, {Type: "reference_audio", URL: "https://example.com/a.mp3"}}},
+		{"reference", "wan3.0", `,"mode":"reference","reference_images":[{"url":"https://example.com/a.jpg"}],"reference_audios":[{"url":"https://example.com/a.mp3"}]`, []wanMedia{{Type: "reference_image", URL: "https://example.com/a.jpg"}, {Type: "reference_audio", URL: "https://example.com/a.mp3"}}},
+		{"frames", "wan3.0", `,"first_frame":"https://example.com/a.jpg","last_frame":"https://example.com/b.jpg"`, []wanMedia{{Type: "first_frame", URL: "https://example.com/a.jpg"}, {Type: "last_frame", URL: "https://example.com/b.jpg"}}},
+		{"legacy", "wan3.0-video", `,"reference_images":[{"url":"https://example.com/a.jpg"}]`, []wanMedia{{Type: "reference_image", URL: "https://example.com/a.jpg"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, info := newWanContext(t, tc.model, `{"prompt":"test","duration":2,"resolution":"480P","prompt_extend":false`+tc.fields+`}`)
+			info.ChannelBaseUrl = "https://tokens.aijiakefu.com"
+			adaptor := &TaskAdaptor{}
+			require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+			body, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			var payload struct {
+				Model        string     `json:"model"`
+				Media        []wanMedia `json:"media"`
+				PromptExtend *bool      `json:"prompt_extend"`
+			}
+			raw, err := io.ReadAll(body)
+			require.NoError(t, err)
+			require.NoError(t, common.Unmarshal(raw, &payload))
+			assert.Equal(t, "wan3.0-video", payload.Model)
+			assert.Equal(t, payload.Model, info.UpstreamModelName)
+			assert.Equal(t, tc.media, payload.Media)
+			require.NotNil(t, payload.PromptExtend)
+			assert.False(t, *payload.PromptExtend)
+			var fields map[string]any
+			require.NoError(t, common.Unmarshal(raw, &fields))
+			for _, field := range []string{"reference_images", "reference_videos", "reference_audios", "mode", "speed", "first_frame", "last_frame"} {
+				assert.NotContains(t, fields, field)
+			}
+			assert.Equal(t, map[string]float64{"seconds": 2, "resolution": .25 / .30}, adaptor.EstimateBilling(c, info))
+		})
+	}
+	for _, fields := range []string{`,"speed":"fast"`, `,"mode":"reference","speed":"fast","reference_images":[{"url":"https://example.com/a.jpg"}]`, `,"reference_videos":[{"url":"https://example.com/v.mp4","duration":2}]`} {
+		c, info := newWanContext(t, "wan3.0", `{"prompt":"test"`+fields+`}`)
+		info.ChannelBaseUrl = "https://tokens.aijiakefu.com"
+		taskErr := (&TaskAdaptor{}).ValidateRequestAndSetAction(c, info)
+		require.NotNil(t, taskErr)
+		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 	}
 }

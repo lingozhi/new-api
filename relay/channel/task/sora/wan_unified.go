@@ -59,13 +59,17 @@ func validateUnifiedWanVideoRequest(c *gin.Context, info *relaycommon.RelayInfo)
 		return service.TaskErrorWrapperLocal(fmt.Errorf("mode must be auto, general, reference, or frames"), "invalid_request", http.StatusBadRequest)
 	}
 	speed := "standard"
-	if mode == "reference" {
+	isAijiau := common.IsAijiauVideoBaseURL(info.ChannelBaseUrl)
+	if mode == "reference" && !isAijiau {
 		speed = "fast"
 	}
 	if controls.Speed != nil {
 		speed = *controls.Speed
 	}
-	if speed != "standard" && speed != "fast" || mode == "reference" && speed != "fast" || mode == "frames" && speed != "standard" {
+	if isAijiau && speed != "standard" {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("Aijiau Wan supports standard speed only"), "invalid_request", http.StatusBadRequest)
+	}
+	if speed != "standard" && speed != "fast" || mode == "reference" && speed != "fast" && !isAijiau || mode == "frames" && speed != "standard" {
 		return service.TaskErrorWrapperLocal(fmt.Errorf("general supports standard/fast; reference supports fast; frames supports standard"), "invalid_request", http.StatusBadRequest)
 	}
 	target := "wan3.0-video"
@@ -109,6 +113,9 @@ func validateUnifiedWanVideoRequest(c *gin.Context, info *relaycommon.RelayInfo)
 					duration, ok := raw.(float64)
 					if !ok || duration <= 0 || duration > relaycommon.MaxTaskDurationSeconds || math.IsNaN(duration) || math.IsInf(duration, 0) {
 						return service.TaskErrorWrapperLocal(fmt.Errorf("invalid reference video duration"), "invalid_media", http.StatusBadRequest)
+					}
+					if isAijiau {
+						return service.TaskErrorWrapperLocal(fmt.Errorf("Aijiau reference videos do not accept duration metadata"), "invalid_media", http.StatusBadRequest)
 					}
 					if mode == "reference" {
 						return service.TaskErrorWrapperLocal(fmt.Errorf("reference video duration is supported only in general mode"), "invalid_media", http.StatusBadRequest)
