@@ -406,7 +406,15 @@ func (a *TaskAdaptor) GetChannelName() string {
 }
 
 func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
-	resTask := responseTask{}
+	// Polling only needs state. Provider metadata can use different types, such
+	// as Aijiau's RFC3339 completed_at instead of OpenAI's Unix timestamp.
+	var resTask struct {
+		Status   string `json:"status"`
+		Progress int    `json:"progress"`
+		Error    *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
 	if err := common.Unmarshal(respBody, &resTask); err != nil {
 		return nil, errors.Wrap(err, "unmarshal task result failed")
 	}

@@ -57,3 +57,6 @@ model availability and charges end to end.
 Aijiau's live polling responses use `pending` and `running`; `running` is an
 in-progress state, not a failed task. The adapter also accepts its client-side
 terminal aliases `succeeded`/`success` and `canceled`/`rejected`.
+Completion timestamps use RFC3339 strings. Polling parses state independently
+of provider-specific video metadata and timestamps so successful tasks settle
+and become downloadable.
