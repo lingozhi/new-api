@@ -356,3 +356,26 @@ func TestAijiauWanMediaWorkflowsUseAvailableModel(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
 	}
 }
+
+func TestAijiauWanPollingStatusAliases(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		want   string
+	}{
+		{"pending", model.TaskStatusQueued},
+		{"running", model.TaskStatusInProgress},
+		{"succeeded", model.TaskStatusSuccess},
+		{"success", model.TaskStatusSuccess},
+		{"completed", model.TaskStatusSuccess},
+		{"canceled", model.TaskStatusFailure},
+		{"rejected", model.TaskStatusFailure},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			body, err := common.Marshal(map[string]string{"id": "provider-id", "model": "wan3.0-video", "status": tc.status})
+			require.NoError(t, err)
+			result, err := (&TaskAdaptor{}).ParseTaskResult(body)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, result.Status)
+		})
+	}
+}

@@ -53,3 +53,7 @@ validation, billing, public task IDs and webhooks remain available; see
 Tests use local fixtures for the documented request, task status and content
 download protocols. A real provider key is still required to verify generation,
 model availability and charges end to end.
+
+Aijiau's live polling responses use `pending` and `running`; `running` is an
+in-progress state, not a failed task. The adapter also accepts its client-side
+terminal aliases `succeeded`/`success` and `canceled`/`rejected`.
