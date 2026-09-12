@@ -18,7 +18,7 @@ The adapter supports standard and Prime without substituting one for the other. 
 
 ## Billing and migration
 
-Configure the 720P per-second base price and group multiplier before enabling requests. Resolution multipliers remain 480P = 0.25/0.30, 720P = 1, 1080P = 0.35/0.30. Prime has separate 480P/720P/1080P multipliers of 0.5/1/2, matching the provider catalog tiers 0.45/0.90/1.80. Set a distinct Prime 720P base price and group multiplier; do not inherit a retired channel’s price blindly. The official default is 1080P, adaptive ratio, 5 seconds. Use explicit 480P and 2 seconds when testing.
+Configure the 720P per-second base price and group multiplier before enabling requests. Resolution multipliers remain 480P = 0.25/0.30, 720P = 1, 1080P = 0.35/0.30. Prime has separate 480P/720P/1080P multipliers of 0.5/1/2, matching the provider catalog tiers 0.45/0.90/1.80. Prime is configured in USD with the 0.7 discount included: set its 720P base price to 0.63 and group multiplier to 1, giving 0.315/0.63/1.26 per second. Do not apply the discount twice or inherit a retired channel’s price blindly. The official default is 1080P, adaptive ratio, 5 seconds. Use explicit 480P and 2 seconds when testing.
 
 Fixed duration charges requested output seconds. Automatic `parameters.duration=-1` reserves 30 output seconds, then settles the provider's `video.duration` bounded to 2–30 seconds using the saved price snapshot. Missing/invalid duration settles at the 2-second minimum and emits an accounting error; failed tasks refund. The maximum reserve must never become a maximum charge merely because metadata is absent. Quota conversion uses checked saturation and carries the marker into settlement logs.
 
