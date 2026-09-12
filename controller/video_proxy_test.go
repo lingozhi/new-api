@@ -8,6 +8,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
@@ -84,6 +85,7 @@ func TestVideoProxyResumesNewVideoTasksWithoutChangingLegacyDownloads(t *testing
 		pending                        bool
 	}{
 		{"wan partial", "wan-unified", "bytes=3-", 206, 206, false},
+		{"aijiau wan partial", "wan-unified", "bytes=3-", 206, 206, false},
 		{"seedance partial", "lxmone-seedance", "bytes=3-", 206, 206, false},
 		{"range unsatisfiable", "wan-unified", "bytes=99-", 416, 416, false},
 		{"if range fallback", "wan-unified", "bytes=3-", 200, 200, false},
@@ -97,7 +99,12 @@ func TestVideoProxyResumesNewVideoTasksWithoutChangingLegacyDownloads(t *testing
 			calls := 0
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
-				assert.Equal(t, "/v1/videos/upstream/content", r.URL.Path)
+				if tc.name == "aijiau wan partial" {
+					assert.Equal(t, "tokens.aijiakefu.com", r.URL.Host)
+					assert.Equal(t, "/v1/videos/generations/upstream/content", r.URL.Path)
+				} else {
+					assert.Equal(t, "/v1/videos/upstream/content", r.URL.Path)
+				}
 				assert.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
 				if tc.provider != "" && tc.rangeHeader != "" {
 					assert.Equal(t, tc.rangeHeader, r.Header.Get("Range"))
@@ -123,6 +130,12 @@ func TestVideoProxyResumesNewVideoTasksWithoutChangingLegacyDownloads(t *testing
 			}))
 			defer upstream.Close()
 			channel := model.Channel{Type: constant.ChannelTypeOpenAI, Key: "test-key", BaseURL: &upstream.URL}
+			if tc.name == "aijiau wan partial" {
+				baseURL := "http://tokens.aijiakefu.com/v1/"
+				channel.BaseURL = &baseURL
+				channel.SetSetting(dto.ChannelSettings{Proxy: upstream.URL})
+				t.Cleanup(service.ResetProxyClientCache)
+			}
 			require.NoError(t, db.Create(&channel).Error)
 			task := model.Task{TaskID: "task_" + tc.name, UserId: 91, ChannelId: channel.Id, Platform: "sora", Status: model.TaskStatusSuccess}
 			task.PrivateData.UpstreamTaskID = "upstream"
