@@ -379,3 +379,15 @@ func TestAijiauWanPollingStatusAliases(t *testing.T) {
 		})
 	}
 }
+
+func TestAijiauWanCompletionAcceptsProviderMetadata(t *testing.T) {
+	result, err := (&TaskAdaptor{}).ParseTaskResult([]byte(`{
+		"completed_at":"2026-09-12T05:18:41.229Z",
+		"id":"provider-id",
+		"model":"wan3.0-video",
+		"status":"completed",
+		"video":{"duration":2,"resolution":"480P","url":"https://example.com/result.mp4"}
+	}`))
+	require.NoError(t, err)
+	assert.Equal(t, model.TaskStatusSuccess, result.Status)
+}
