@@ -3,6 +3,8 @@ package model
 import (
 	"sync"
 	"time"
+
+	"github.com/QuantumNous/new-api/setting"
 )
 
 type channelCooldown struct {
@@ -39,6 +41,9 @@ func setChannelCooldown(channelId int, reason string, duration time.Duration, bl
 }
 
 func setChannelCooldownUntil(channelId int, reason string, expires time.Time, blockFallback bool) {
+	if setting.IsChannelCooldownDisabled(channelId) {
+		return
+	}
 	channelCooldowns.Lock()
 	defer channelCooldowns.Unlock()
 
@@ -81,6 +86,9 @@ func IsChannelCoolingFallbackAllowed(channelId int) bool {
 }
 
 func getChannelCooldownState(channelId int) channelCooldownState {
+	if setting.IsChannelCooldownDisabled(channelId) {
+		return channelCooldownState{}
+	}
 	now := time.Now()
 	channelCooldowns.RLock()
 	cooldown, ok := channelCooldowns.items[channelId]

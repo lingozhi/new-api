@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -23,6 +24,9 @@ type persistentChannelCooldown struct {
 // then persists it when Redis is enabled. Redis failures never weaken the local
 // protection or prevent the request from failing over to another channel.
 func CooldownChannelPersistentWithoutFallback(channelId int, reason string, duration time.Duration) error {
+	if setting.IsChannelCooldownDisabled(channelId) {
+		return nil
+	}
 	expires := time.Now().Add(duration)
 	setChannelCooldownUntil(channelId, reason, expires, true)
 

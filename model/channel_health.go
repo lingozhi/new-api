@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting"
 )
 
 type ChannelHealthState string
@@ -719,6 +720,9 @@ func RecordChannelOutcome(key ChannelHealthKey, outcome ChannelOutcome) {
 }
 
 func AcquireChannelHealth(key ChannelHealthKey) bool {
+	if setting.IsChannelCooldownDisabled(key.ChannelID) {
+		return true
+	}
 	return adaptiveChannelHealth.Acquire(key)
 }
 
@@ -726,10 +730,16 @@ func AcquireChannelHealth(key ChannelHealthKey) bool {
 // already holds a prompt cache on it: it rides out slowness (the cache keeps it
 // fast) and yields only on failures. See acquireForAffinity.
 func AcquireChannelHealthForAffinity(key ChannelHealthKey) bool {
+	if setting.IsChannelCooldownDisabled(key.ChannelID) {
+		return true
+	}
 	return adaptiveChannelHealth.acquireForAffinity(key)
 }
 
 func IsChannelHealthAvailable(key ChannelHealthKey) bool {
+	if setting.IsChannelCooldownDisabled(key.ChannelID) {
+		return true
+	}
 	return adaptiveChannelHealth.Available(key)
 }
 

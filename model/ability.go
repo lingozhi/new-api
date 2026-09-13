@@ -238,7 +238,7 @@ func getChannelWithOptions(group string, model string, retry int, options Channe
 				continue
 			}
 			_, avoided := avoidedChannelIDs[ability.ChannelId]
-			if shouldEnforceChannelHostCircuit(channelHosts[ability.ChannelId], model, options.Path) {
+			if shouldEnforceChannelHostCircuit(ability.ChannelId, channelHosts[ability.ChannelId], model, options.Path) {
 				if avoided {
 					blockedAvoided = append(blockedAvoided, ability)
 				} else {

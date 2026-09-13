@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/setting"
 )
 
 const (
@@ -175,8 +176,9 @@ func IsChannelHostCoolingDown(host, modelName, path string) bool {
 	return channelHostCircuits.isOpen(key)
 }
 
-func shouldEnforceChannelHostCircuit(host, modelName, path string) bool {
-	return common.UpstreamHostCircuitMode == common.UpstreamHostCircuitModeEnforce &&
+func shouldEnforceChannelHostCircuit(channelID int, host, modelName, path string) bool {
+	return !setting.IsChannelCooldownDisabled(channelID) &&
+		common.UpstreamHostCircuitMode == common.UpstreamHostCircuitModeEnforce &&
 		IsChannelHostCoolingDown(host, modelName, path)
 }
 
@@ -197,7 +199,7 @@ func IsChannelRouteHostCoolingDown(channel *Channel, modelName, requestPath, pat
 			config = channel.GetOtherSettings().AdvancedCustom
 		}
 	}
-	return shouldEnforceChannelHostCircuit(channelRetryHost(channel, config, requestPath, modelName), modelName, path)
+	return shouldEnforceChannelHostCircuit(channel.Id, channelRetryHost(channel, config, requestPath, modelName), modelName, path)
 }
 
 func ClearChannelHostCooldownsForTest() {
