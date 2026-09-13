@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 )
@@ -35,6 +36,9 @@ var streamChannelQuality = struct {
 }{items: make(map[streamChannelQualityKey]streamChannelQualityState)}
 
 func ObserveStreamChannelQuality(relayInfo *relaycommon.RelayInfo) {
+	if relayInfo != nil && setting.IsChannelCooldownDisabled(relayInfo.ChannelId) {
+		return
+	}
 	if relayInfo == nil || relayInfo.IsChannelTest || relayInfo.StreamStatus == nil || relayInfo.ChannelId == 0 {
 		return
 	}
@@ -75,7 +79,7 @@ func ObserveStreamChannelQualityForRequest(c *gin.Context, relayInfo *relaycommo
 	}
 	if snapshot.EndReason == relaycommon.StreamEndReasonUpstreamFailed &&
 		isImmediateStreamCapacityFailure(snapshot) &&
-		!relayInfo.ChannelIsMultiKey {
+		!relayInfo.ChannelIsMultiKey && !setting.IsChannelCooldownDisabled(relayInfo.ChannelId) {
 		modelName := relayInfo.OriginModelName
 		if modelName == "" {
 			modelName = relayInfo.UpstreamModelName

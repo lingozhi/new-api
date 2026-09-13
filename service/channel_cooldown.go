@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/types"
 )
 
@@ -245,6 +246,9 @@ func ShouldCooldownChannelForUpstreamError(err *types.NewAPIError) bool {
 }
 
 func CooldownChannel(channelError types.ChannelError, err *types.NewAPIError) {
+	if setting.IsChannelCooldownDisabled(channelError.ChannelId) {
+		return
+	}
 	if !ShouldCooldownChannel(err) {
 		return
 	}
@@ -253,6 +257,9 @@ func CooldownChannel(channelError types.ChannelError, err *types.NewAPIError) {
 }
 
 func CooldownChannelForUpstreamError(channelError types.ChannelError, err *types.NewAPIError) {
+	if setting.IsChannelCooldownDisabled(channelError.ChannelId) {
+		return
+	}
 	if !ShouldCooldownChannelForUpstreamError(err) {
 		return
 	}
@@ -262,6 +269,9 @@ func CooldownChannelForUpstreamError(channelError types.ChannelError, err *types
 }
 
 func CooldownChannelForUpstreamRateLimit(channelError types.ChannelError, err *types.NewAPIError) {
+	if setting.IsChannelCooldownDisabled(channelError.ChannelId) {
+		return
+	}
 	if !IsUpstreamRateLimitError(err) {
 		return
 	}
@@ -273,6 +283,9 @@ func CooldownChannelForUpstreamRateLimit(channelError types.ChannelError, err *t
 // CooldownChannelForRetry records a retry-triggering channel failure so later
 // requests prefer healthy alternatives.
 func CooldownChannelForRetry(channelError types.ChannelError, err *types.NewAPIError) {
+	if setting.IsChannelCooldownDisabled(channelError.ChannelId) {
+		return
+	}
 	if IsUpstreamRateLimitError(err) {
 		CooldownChannelForUpstreamRateLimit(channelError, err)
 		return
@@ -329,6 +342,9 @@ func ShouldQuarantineAsyncImageChannel(err *types.NewAPIError) bool {
 }
 
 func QuarantineAsyncImageChannel(channelError types.ChannelError, err *types.NewAPIError) {
+	if setting.IsChannelCooldownDisabled(channelError.ChannelId) {
+		return
+	}
 	if !ShouldQuarantineAsyncImageChannel(err) {
 		return
 	}
@@ -360,6 +376,9 @@ func QuarantineAsyncImageChannel(channelError types.ChannelError, err *types.New
 // an otherwise-successful request had a first-response-time above
 // SlowChannelFRTThreshold, i.e. the upstream is up but unstably slow.
 func CooldownSlowChannel(channelError types.ChannelError, frt time.Duration) {
+	if setting.IsChannelCooldownDisabled(channelError.ChannelId) {
+		return
+	}
 	reason := fmt.Sprintf("slow_upstream first_token=%s threshold=%s", frt.Round(time.Millisecond), SlowChannelFRTThreshold)
 	common.SysLog(fmt.Sprintf("通道冷却：#%d，持续 %s，原因：%s", channelError.ChannelId, ChannelCooldownDuration, reason))
 	model.CooldownChannel(channelError.ChannelId, reason, ChannelCooldownDuration)

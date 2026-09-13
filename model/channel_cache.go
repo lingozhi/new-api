@@ -263,7 +263,7 @@ func getRandomSatisfiedChannelWithOptions(group string, model string, retry int,
 				return nil, nil
 			}
 		}
-		if shouldEnforceChannelHostCircuit(host, model, options.Path) && !options.AllowCoolingFallback {
+		if shouldEnforceChannelHostCircuit(channel.Id, host, model, options.Path) && !options.AllowCoolingFallback {
 			return nil, nil
 		}
 		key := ChannelHealthKey{ChannelID: channel.Id, Model: model, Path: options.Path}
@@ -334,7 +334,7 @@ func getRandomSatisfiedChannelWithOptions(group string, model string, retry int,
 			}
 			host := channelRetryHost(channel, channel2advancedCustomConfig[channel.Id], options.RequestPath, model)
 			_, avoided := options.AvoidChannelHosts[host]
-			if shouldEnforceChannelHostCircuit(host, model, options.Path) {
+			if shouldEnforceChannelHostCircuit(channel.Id, host, model, options.Path) {
 				if avoided && host != "" {
 					blockedAvoided = append(blockedAvoided, channel)
 				} else {
